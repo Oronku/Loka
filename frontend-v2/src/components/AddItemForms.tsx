@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import SearchAutocomplete from './SearchAutocomplete';
+import PDFUploadButton from './PDFUploadButton';
 import type { Trip } from '../types/domain';
 import {
   TextField,
@@ -290,6 +291,46 @@ export function AddFlightForm({
           {err}
         </Alert>
       )}
+
+      {/* PDF Upload */}
+      <Card sx={{ mb: 3, bgcolor: 'info.50' }}>
+        <CardContent>
+          <Typography variant="subtitle2" gutterBottom>
+            📄 Quick Import from PDF
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            mb={2}
+          >
+            Upload your flight ticket PDF to automatically fill in details
+          </Typography>
+          <PDFUploadButton
+            acceptedType="flight"
+            onDataExtracted={(data) => {
+              // Auto-fill manual form with extracted data
+              setMode('manual');
+              if (data.type === 'flight') {
+                setAirline(data.airline || '');
+                setFlightNumber(data.flightNumber || '');
+                setDepartureAirport(data.departureAirportCode || '');
+                setArrivalAirport(data.arrivalAirportCode || '');
+                setDate(data.departureDateTime?.split(' ')[0] || '');
+                setDepartureTime(
+                  data.departureDateTime?.split(' ')[1]?.slice(0, 5) || ''
+                );
+                setArrivalTime(
+                  data.arrivalDateTime?.split(' ')[1]?.slice(0, 5) || ''
+                );
+                if (data.bookingNumber) {
+                  setBookingNumber(data.bookingNumber);
+                }
+              }
+            }}
+          />
+        </CardContent>
+      </Card>
 
       {/* Mode Selector */}
       <Card sx={{ mb: 3 }}>
@@ -1137,6 +1178,44 @@ export function AddHotelForm({
           {err}
         </Alert>
       )}
+
+      {/* PDF Upload */}
+      <Card sx={{ mb: 3, bgcolor: 'success.50' }}>
+        <CardContent>
+          <Typography variant="subtitle2" gutterBottom>
+            📄 Quick Import from PDF
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            mb={2}
+          >
+            Upload your hotel reservation PDF to automatically fill in details
+          </Typography>
+          <PDFUploadButton
+            acceptedType="hotel"
+            onDataExtracted={(data) => {
+              if (data.type === 'hotel') {
+                // Auto-fill form with extracted data
+                setSearchQuery(data.name || '');
+                setCheckIn(data.checkIn || '');
+                setCheckOut(data.checkOut || '');
+                if (data.numberOfRooms) {
+                  setNumberOfRooms(data.numberOfRooms.toString());
+                }
+                if (data.guestName) {
+                  setReservationNames([data.guestName]);
+                }
+                if (data.confirmationNumber) {
+                  setBookedFrom(`Confirmation: ${data.confirmationNumber}`);
+                }
+                // searchQuery update will automatically trigger hotel search via useEffect
+              }
+            }}
+          />
+        </CardContent>
+      </Card>
 
       <Grid container spacing={3}>
         {/* Left side - Search */}

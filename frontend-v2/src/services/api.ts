@@ -20,6 +20,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Add response interceptor to handle 401 errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid - clear auth and redirect to login
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('user');
+      window.location.href = '/';
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const GOOGLE_MAPS_API_KEY =
   import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
@@ -297,9 +311,13 @@ export async function placeDetails(place_id: string) {
 // Trip Sharing
 export async function shareTrip(
   tripId: string,
-  emails: string[]
+  emails: string[],
+  expensePermissions?: Record<string, 'disable' | 'view' | 'edit'>
 ): Promise<{ message: string; sharedWith: any[] }> {
-  const res = await api.post(`/trips/${tripId}/share`, { emails });
+  const res = await api.post(`/trips/${tripId}/share`, {
+    emails,
+    expensePermissions,
+  });
   return res.data;
 }
 

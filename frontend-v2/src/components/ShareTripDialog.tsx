@@ -16,6 +16,10 @@ import {
   Chip,
   Alert,
   CircularProgress,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -50,6 +54,9 @@ export default function ShareTripDialog({
 }: ShareTripDialogProps) {
   const [email, setEmail] = useState('');
   const [emails, setEmails] = useState<string[]>([]);
+  const [expensePermissions, setExpensePermissions] = useState<
+    Record<string, 'disable' | 'view' | 'edit'>
+  >({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -72,12 +79,20 @@ export default function ShareTripDialog({
     }
 
     setEmails([...emails, trimmedEmail]);
+    // Set default permission to 'edit' for new users
+    setExpensePermissions({
+      ...expensePermissions,
+      [trimmedEmail]: 'edit',
+    });
     setEmail('');
     setError('');
   };
 
   const handleRemoveEmail = (emailToRemove: string) => {
     setEmails(emails.filter((e) => e !== emailToRemove));
+    const newPermissions = { ...expensePermissions };
+    delete newPermissions[emailToRemove];
+    setExpensePermissions(newPermissions);
   };
 
   const handleShare = async () => {
@@ -91,9 +106,10 @@ export default function ShareTripDialog({
     setSuccess('');
 
     try {
-      const result = await shareTrip(tripId, emails);
+      const result = await shareTrip(tripId, emails, expensePermissions);
       setSuccess(result.message);
       setEmails([]);
+      setExpensePermissions({});
       onUpdate();
 
       // Close dialog after 2 seconds
@@ -191,16 +207,51 @@ export default function ShareTripDialog({
           </Box>
 
           {emails.length > 0 && (
-            <Box sx={{ mt: 1, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="caption" color="text.secondary" gutterBottom>
+                Pending invitations with expense permissions:
+              </Typography>
               {emails.map((e) => (
-                <Chip
+                <Box
                   key={e}
-                  label={e}
-                  size="small"
-                  onDelete={() => handleRemoveEmail(e)}
-                  color="primary"
-                  variant="outlined"
-                />
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    py: 1,
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Chip
+                    label={e}
+                    size="small"
+                    onDelete={() => handleRemoveEmail(e)}
+                    color="primary"
+                    variant="outlined"
+                    sx={{ minWidth: 200 }}
+                  />
+                  <FormControl size="small" sx={{ minWidth: 150 }}>
+                    <InputLabel>Expense Permission</InputLabel>
+                    <Select
+                      value={expensePermissions[e] || 'edit'}
+                      label="Expense Permission"
+                      onChange={(event) => {
+                        setExpensePermissions({
+                          ...expensePermissions,
+                          [e]: event.target.value as
+                            | 'disable'
+                            | 'view'
+                            | 'edit',
+                        });
+                      }}
+                    >
+                      <MenuItem value="disable">Disable</MenuItem>
+                      <MenuItem value="view">View Only</MenuItem>
+                      <MenuItem value="edit">View + Add</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
               ))}
             </Box>
           )}

@@ -400,7 +400,7 @@ router.delete("/:id", async (req, res) => {
 // Share trip with users by email
 router.post("/:id/share", async (req, res) => {
   try {
-    const { emails } = req.body;
+    const { emails, expensePermissions = {} } = req.body;
 
     if (!Array.isArray(emails) || emails.length === 0) {
       return res.status(400).json({ error: "emails array is required" });
@@ -449,6 +449,7 @@ router.post("/:id/share", async (req, res) => {
         email: user.email,
         name: user.name,
         sharedAt: new Date().toISOString(),
+        expensePermission: expensePermissions[user.email] || "edit", // Default to edit if not specified
       }));
 
     if (newShares.length === 0) {
