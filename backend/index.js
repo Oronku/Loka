@@ -8,6 +8,7 @@ import rideRoutes from "./routes/rides.js";
 import placesRoutes from "./routes/places.js";
 import flightRoutes from "./routes/flights.js";
 import tripRoutes from "./routes/trips.js";
+import quicketRoutes from "./routes/quicket.js";
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ app.use("/api/rides", rideRoutes);
 app.use("/api/places", placesRoutes);
 app.use("/api/flights", flightRoutes);
 app.use("/api/trips", tripRoutes);
+app.use("/api/quicket", quicketRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

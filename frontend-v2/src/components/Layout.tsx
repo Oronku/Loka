@@ -19,6 +19,7 @@ import {
   Dashboard,
   Logout,
   Menu as MenuIcon,
+  LocalOffer,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../context/AuthContext';
@@ -123,6 +124,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   <Flight fontSize="small" sx={{ mr: 1 }} />
                   New Trip
                 </MenuItem>
+                <MenuItem onClick={() => goTo('/quicket')}>
+                  <LocalOffer fontSize="small" sx={{ mr: 1 }} />
+                  Quicket
+                </MenuItem>
               </Menu>
             </>
           ) : (
@@ -156,6 +161,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 }}
               >
                 New Trip
+              </Button>
+              <Button
+                component={NavLink}
+                to="/quicket"
+                startIcon={<LocalOffer />}
+                sx={{
+                  color: 'text.secondary',
+                  '&.active': {
+                    color: 'primary.main',
+                    bgcolor: 'primary.50',
+                    fontWeight: 700,
+                  },
+                }}
+              >
+                Quicket
               </Button>
             </Box>
           )}

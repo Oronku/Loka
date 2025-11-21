@@ -7,6 +7,8 @@ import Home from './pages/Home';
 import NewTripWizard from './pages/NewTripWizard';
 import TripDetails from './pages/TripDetails';
 import Login from './pages/Login';
+import Quicket from './pages/Quicket';
+import QuicketItemDetail from './pages/QuicketItemDetail';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -55,6 +57,26 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <TripDetails />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/quicket"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Quicket />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/quicket/item/:id"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <QuicketItemDetail />
                 </Layout>
               </ProtectedRoute>
             }
