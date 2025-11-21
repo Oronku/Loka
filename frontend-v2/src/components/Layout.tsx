@@ -20,6 +20,7 @@ import {
   Logout,
   Menu as MenuIcon,
   LocalOffer,
+  Settings,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../context/AuthContext';
@@ -224,6 +225,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     </MenuItem>,
                     <Divider key="divider" sx={{ my: 0.5 }} />,
                   ]}
+                  <MenuItem
+                    onClick={() => {
+                      handleMenuClose();
+                      navigate('/profile');
+                    }}
+                  >
+                    <Settings sx={{ mr: 1 }} fontSize="small" />
+                    Profile Settings
+                  </MenuItem>
                   <MenuItem onClick={handleLogout}>
                     <Logout sx={{ mr: 1 }} fontSize="small" />
                     Logout

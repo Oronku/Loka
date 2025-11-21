@@ -9,6 +9,7 @@ import TripDetails from './pages/TripDetails';
 import Login from './pages/Login';
 import Quicket from './pages/Quicket';
 import QuicketItemDetail from './pages/QuicketItemDetail';
+import ProfileSettings from './pages/ProfileSettings';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -77,6 +78,16 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <QuicketItemDetail />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ProfileSettings />
                 </Layout>
               </ProtectedRoute>
             }

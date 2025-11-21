@@ -42,6 +42,8 @@ export interface User {
   email: string;
   name: string;
   picture?: string;
+  preferredCurrency?: string;
+  provider?: string;
 }
 
 export async function login(
@@ -326,5 +328,30 @@ export async function revokeAccess(
   userId: string
 ): Promise<{ message: string; sharedWith: any[] }> {
   const res = await api.delete(`/trips/${tripId}/share/${userId}`);
+  return res.data;
+}
+
+// User Profile
+export async function getUserProfile(): Promise<User> {
+  const res = await api.get<User>('/auth/profile');
+  return res.data;
+}
+
+export async function updateUserProfile(data: {
+  name?: string;
+  preferredCurrency?: string;
+}): Promise<User> {
+  const res = await api.put<User>('/auth/profile', data);
+  return res.data;
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ message: string }> {
+  const res = await api.put<{ message: string }>('/auth/change-password', {
+    currentPassword,
+    newPassword,
+  });
   return res.data;
 }
