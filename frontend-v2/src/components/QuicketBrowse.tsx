@@ -401,6 +401,20 @@ export default function QuicketBrowse() {
                   }}
                   onClick={() => navigate(`/quicket/item/${item._id}`)}
                 >
+                  {/* Place Photo if available */}
+                  {item.metadata?.photoUrl && (
+                    <Box
+                      component="img"
+                      src={item.metadata.photoUrl}
+                      alt={item.title}
+                      sx={{
+                        width: '100%',
+                        height: 160,
+                        objectFit: 'cover',
+                      }}
+                    />
+                  )}
+
                   <CardContent sx={{ flexGrow: 1, pb: 1 }}>
                     <Stack
                       direction="row"
@@ -433,6 +447,14 @@ export default function QuicketBrowse() {
                     <Typography variant="h6" gutterBottom noWrap>
                       {item.title}
                     </Typography>
+
+                    {item.metadata?.placeRating && (
+                      <Chip
+                        label={`⭐ ${item.metadata.placeRating}`}
+                        size="small"
+                        sx={{ mb: 1 }}
+                      />
+                    )}
 
                     <Typography
                       variant="body2"

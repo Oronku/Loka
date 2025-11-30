@@ -51,6 +51,7 @@ export interface QuicketMessage {
   chatId: string;
   senderId: string;
   senderEmail: string;
+  senderName?: string;
   text: string;
   attachments: string[];
   timestamp: string;

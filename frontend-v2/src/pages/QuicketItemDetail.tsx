@@ -264,6 +264,20 @@ export default function QuicketItemDetail() {
           {/* Main Item Details */}
           <Grid item xs={12} md={8}>
             <Card>
+              {/* Place Photo if available */}
+              {item.metadata?.photoUrl && (
+                <Box
+                  component="img"
+                  src={item.metadata.photoUrl}
+                  alt={item.title}
+                  sx={{
+                    width: '100%',
+                    height: 300,
+                    objectFit: 'cover',
+                  }}
+                />
+              )}
+
               <CardContent>
                 <Stack
                   direction="row"
@@ -280,6 +294,16 @@ export default function QuicketItemDetail() {
                 <Typography variant="h4" fontWeight="bold" gutterBottom>
                   {item.title}
                 </Typography>
+
+                {item.metadata?.placeRating && (
+                  <Chip
+                    label={`⭐ ${item.metadata.placeRating}`}
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                    sx={{ mb: 2 }}
+                  />
+                )}
 
                 <Stack direction="row" spacing={2} mb={3}>
                   <Chip
@@ -552,8 +576,9 @@ export default function QuicketItemDetail() {
                     >
                       <Typography variant="caption" color="text.secondary">
                         {chat.status === 'accepted'
-                          ? msg.senderEmail
-                          : getDisplayName(msg.senderEmail)}{' '}
+                          ? msg.senderName || msg.senderEmail
+                          : msg.senderName ||
+                            getDisplayName(msg.senderEmail)}{' '}
                         - {new Date(msg.timestamp).toLocaleTimeString()}
                       </Typography>
                       <Typography variant="body2">{msg.text}</Typography>

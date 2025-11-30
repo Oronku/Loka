@@ -40,7 +40,7 @@ const CURRENCIES = [
 
 export default function ProfileSettings() {
   const navigate = useNavigate();
-  const { user: authUser, logout } = useAuth();
+  const { user: authUser, logout, updateUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,14 +91,11 @@ export default function ProfileSettings() {
         preferredCurrency,
       });
 
-      // Update local storage
-      const storedUser = localStorage.getItem('user');
-      if (storedUser) {
-        const userData = JSON.parse(storedUser);
-        userData.name = updatedUser.name;
-        userData.preferredCurrency = updatedUser.preferredCurrency;
-        localStorage.setItem('user', JSON.stringify(userData));
-      }
+      // Update the auth context with the new user data
+      updateUser({
+        name: updatedUser.name,
+        preferredCurrency: updatedUser.preferredCurrency,
+      });
 
       setSuccess('Profile updated successfully!');
       setTimeout(() => setSuccess(null), 3000);

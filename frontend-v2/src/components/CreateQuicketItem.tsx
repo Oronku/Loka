@@ -19,6 +19,7 @@ import {
 } from '@mui/material';
 import { Add, Close } from '@mui/icons-material';
 import PDFUploadButton from './PDFUploadButton';
+import QuicketPlaceSearch, { type PlaceData } from './QuicketPlaceSearch';
 import { createQuicketItem } from '../services/quicketApi';
 
 interface CreateQuicketItemProps {
@@ -58,9 +59,31 @@ export default function CreateQuicketItem({
   const [numberOfRooms, setNumberOfRooms] = useState('');
   const [mealPlan, setMealPlan] = useState('');
 
+  // Place data (for hotels, attractions, restaurants)
+  const [selectedPlace, setSelectedPlace] = useState<PlaceData | null>(null);
+  const [photoUrl, setPhotoUrl] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  const handlePlaceSelect = (place: PlaceData) => {
+    setSelectedPlace(place);
+    setLocation(place.address);
+    setPhotoUrl(place.photoUrl || '');
+
+    if (type === 'hotel') {
+      setHotelName(place.name);
+      setTitle(place.name);
+    } else if (type === 'attraction') {
+      setTitle(place.name);
+    }
+  };
+
+  const handleClearPlace = () => {
+    setSelectedPlace(null);
+    setPhotoUrl('');
+  };
 
   const handlePDFExtracted = (data: any) => {
     if (data.type === 'flight') {
@@ -110,6 +133,16 @@ export default function CreateQuicketItem({
 
       // Build metadata based on type
       const metadata: any = {};
+
+      // Add place data if available
+      if (selectedPlace) {
+        metadata.placeId = selectedPlace.placeId;
+        metadata.placeName = selectedPlace.name;
+        metadata.placeAddress = selectedPlace.address;
+        metadata.placeLocation = selectedPlace.location;
+        metadata.placeRating = selectedPlace.rating;
+        if (photoUrl) metadata.photoUrl = photoUrl;
+      }
 
       if (type === 'flight') {
         if (flightNumber) metadata.flightNumber = flightNumber;
@@ -268,15 +301,44 @@ export default function CreateQuicketItem({
             />
           </Grid>
 
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="Location"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="City or route"
-            />
-          </Grid>
+          {/* Place Search for Hotels, Attractions */}
+          {(type === 'hotel' || type === 'attraction') && (
+            <Grid item xs={12}>
+              <QuicketPlaceSearch
+                onPlaceSelect={handlePlaceSelect}
+                selectedPlace={selectedPlace}
+                onClear={handleClearPlace}
+                label={
+                  type === 'hotel'
+                    ? 'Search for Hotel'
+                    : 'Search for Attraction/Restaurant'
+                }
+                placeholder={
+                  type === 'hotel'
+                    ? 'e.g., Hilton Dubai, Marriott...'
+                    : 'e.g., Eiffel Tower, Central Park...'
+                }
+                types={
+                  type === 'hotel'
+                    ? 'lodging'
+                    : 'tourist_attraction|restaurant|point_of_interest'
+                }
+              />
+            </Grid>
+          )}
+
+          {/* Manual Location Input for Flights and Events */}
+          {(type === 'flight' || type === 'event') && (
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="City or route"
+              />
+            </Grid>
+          )}
 
           <Grid item xs={12} sm={6}>
             <TextField

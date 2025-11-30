@@ -546,6 +546,7 @@ router.post("/chat/:chatId/message", async (req, res) => {
       chatId: chatId, // Store as string for easy querying
       senderId: req.user.id,
       senderEmail: req.user.email,
+      senderName: req.user.name,
       text,
       attachments: attachments || [],
       timestamp: new Date(),
