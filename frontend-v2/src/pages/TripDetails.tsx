@@ -110,7 +110,9 @@ import {
   BarChart as GanttIcon,
   ChecklistRtl as ChecklistIcon,
   AttachMoney as ExpensesIcon,
+  Chat as ChatIcon,
 } from '@mui/icons-material';
+import ChatWindow from '../components/ChatWindow';
 
 // Helper function to get attraction type label
 function getAttractionTypeLabel(type?: string, customType?: string): string {
@@ -427,6 +429,8 @@ export default function TripDetails() {
     }>
   >([]);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [showTripChat, setShowTripChat] = useState(false);
+  const [tripChatId, setTripChatId] = useState<string | null>(null);
 
   // Edit dialog autocomplete state
   const [editSearchQuery, setEditSearchQuery] = useState('');
@@ -533,6 +537,78 @@ export default function TripDetails() {
       } catch (e: any) {
         setError(e.message);
       }
+    }
+  };
+
+  const handleOpenTripChat = async () => {
+    if (!trip || !user) return;
+
+    try {
+      const token = localStorage.getItem('token');
+
+      // Check if chat already exists for this trip
+      const response = await fetch(
+        `http://localhost:3001/api/chats?contextType=trip&contextId=${trip._id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.chats && data.chats.length > 0) {
+          // Chat exists, open it
+          setTripChatId(data.chats[0]._id);
+          setShowTripChat(true);
+          return;
+        }
+      }
+
+      // Chat doesn't exist, create it
+      const participants = [
+        {
+          userId: trip.userId,
+          email: trip.userEmail || user.email,
+          name: trip.userName || user.name || user.email.split('@')[0],
+          role: 'owner',
+        },
+        ...(trip.sharedWith || []).map((member: any) => ({
+          userId: member.userId,
+          email: member.email || `user${member.userId.slice(-4)}@example.com`,
+          name:
+            member.name ||
+            member.email?.split('@')[0] ||
+            `User ${member.userId.slice(-4)}`,
+          role: 'member',
+        })),
+      ];
+
+      const createResponse = await fetch('http://localhost:3001/api/chats', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          contextType: 'trip',
+          contextId: trip._id,
+          participants,
+          metadata: {
+            tripId: trip._id,
+            tripName: trip.name,
+          },
+        }),
+      });
+
+      if (createResponse.ok) {
+        const createData = await createResponse.json();
+        setTripChatId(createData.chatId);
+        setShowTripChat(true);
+      }
+    } catch (err) {
+      console.error('Error opening trip chat:', err);
     }
   };
 
@@ -1045,6 +1121,35 @@ export default function TripDetails() {
                   },
                 }}
               />
+            )}
+            {(isOwner || isShared) && (
+              <>
+                <Button
+                  startIcon={<ChatIcon />}
+                  onClick={handleOpenTripChat}
+                  sx={{
+                    color: 'primary.main',
+                    borderColor: 'rgba(255,255,255,0.5)',
+                    '&:hover': {
+                      bgcolor: 'rgba(255,255,255,0.2)',
+                      borderColor: 'rgba(255,255,255,0.8)',
+                    },
+                    minWidth: { xs: 'auto', sm: 'auto' },
+                    px: { xs: 1, sm: 2 },
+                    '& .MuiButton-startIcon': {
+                      margin: { xs: 0, sm: '0 8px 0 0' },
+                    },
+                  }}
+                  variant="outlined"
+                >
+                  <Box
+                    component="span"
+                    sx={{ display: { xs: 'none', sm: 'inline' } }}
+                  >
+                    Chat
+                  </Box>
+                </Button>
+              </>
             )}
             {isOwner && (
               <>
@@ -5890,6 +5995,16 @@ export default function TripDetails() {
             tripName={trip.name}
             sharedWith={trip.sharedWith || []}
             onUpdate={refreshTrip}
+          />
+        )}
+
+        {/* Trip Chat Window */}
+        {showTripChat && tripChatId && (
+          <ChatWindow
+            chatId={tripChatId}
+            onClose={() => setShowTripChat(false)}
+            initialPosition={{ x: window.innerWidth - 450, y: 100 }}
+            contextType="trip"
           />
         )}
       </Stack>

@@ -546,16 +546,53 @@ export default function QuicketBrowse() {
                   </CardContent>
 
                   <CardActions sx={{ pt: 0, px: 2, pb: 2 }}>
-                    <Button
-                      fullWidth
-                      variant="contained"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/quicket/item/${item._id}`);
-                      }}
-                    >
-                      View Details
-                    </Button>
+                    <Stack direction="row" spacing={1} width="100%">
+                      <Button
+                        fullWidth
+                        variant="outlined"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/quicket/item/${item._id}`);
+                        }}
+                      >
+                        View Details
+                      </Button>
+                      <Button
+                        fullWidth
+                        variant="contained"
+                        color="success"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const response = await expressInterest(item._id);
+                            console.log('Express interest response:', response);
+
+                            // The backend now returns if chat already existed
+                            const chatMessage =
+                              response.message === 'Chat already exists'
+                                ? '💬 Chat with seller opened!\n\nClick the chat icon (💬) in the bottom-right to continue your conversation.'
+                                : '✅ Chat created with seller!\n\nClick the chat icon (💬) in the bottom-right to start chatting.';
+
+                            alert(chatMessage);
+                            loadItems();
+                          } catch (err: any) {
+                            console.error('Express interest error:', err);
+                            if (err.response?.status === 401) {
+                              alert(
+                                '⚠️ Your session has expired.\n\nPlease refresh the page and log in again.'
+                              );
+                            } else {
+                              alert(
+                                err.response?.data?.error ||
+                                  'Failed to express interest'
+                              );
+                            }
+                          }
+                        }}
+                      >
+                        I'm Interested
+                      </Button>
+                    </Stack>
                   </CardActions>
                 </Card>
               </Grid>

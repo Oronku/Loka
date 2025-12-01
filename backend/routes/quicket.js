@@ -396,7 +396,7 @@ router.post("/items/:id/dislike", async (req, res) => {
   }
 });
 
-// Express interest / Create or get chat
+// Express interest / Create or get chat (using unified chat system)
 router.post("/items/:id/interest", async (req, res) => {
   try {
     const db = getDb();
@@ -421,10 +421,12 @@ router.post("/items/:id/interest", async (req, res) => {
         .json({ error: "Cannot express interest in your own item" });
     }
 
-    // Check if chat already exists
-    const existingChat = await db.collection("quicket_chats").findOne({
-      itemId: id,
-      buyerId: req.user.id,
+    // Check if chat already exists in new unified system
+    const existingChat = await db.collection("chats").findOne({
+      contextType: "quicket_item",
+      contextId: id,
+      "participants.userId": req.user.id,
+      "participants.role": "buyer",
     });
 
     if (existingChat) {
@@ -435,19 +437,97 @@ router.post("/items/:id/interest", async (req, res) => {
       });
     }
 
-    // Create new chat
-    const newChat = {
+    // Create new chat using unified schema
+    const participants = [
+      {
+        userId: req.user.id,
+        email: req.user.email,
+        name: req.user.name || req.user.email.split("@")[0],
+        role: "buyer",
+        joinedAt: new Date(),
+      },
+      {
+        userId: item.sellerId,
+        email: item.sellerEmail,
+        name: item.sellerName || item.sellerEmail.split("@")[0],
+        role: "seller",
+        joinedAt: new Date(),
+      },
+    ];
+
+    // Build comprehensive metadata
+    const metadata = {
       itemId: id,
-      buyerId: req.user.id,
-      buyerEmail: req.user.email,
-      sellerId: item.sellerId,
-      sellerEmail: item.sellerEmail,
-      status: "pending", // pending, accepted, declined, completed
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      itemType: item.type,
+      itemTitle: item.title || item.name,
+      itemImage: item.metadata?.photoUrl || item.imageUrl,
+      itemDate: item.startDatetime || item.date,
+      itemPrice: {
+        original: item.priceOriginal,
+        selling: item.priceSelling,
+      },
     };
 
-    const result = await db.collection("quicket_chats").insertOne(newChat);
+    // Initialize unread counts
+    const unreadCount = {};
+    participants.forEach((p) => {
+      unreadCount[p.userId] = 0;
+    });
+
+    // Create automatic first message with item details
+    const firstMessageText =
+      `🎟️ **${item.title || item.name}**\n\n` +
+      `📅 Date: ${item.startDatetime ? new Date(item.startDatetime).toLocaleDateString() : "TBD"}\n` +
+      `💰 Original Price: $${item.priceOriginal}\n` +
+      `💵 Selling Price: $${item.priceSelling}\n` +
+      `📍 Location: ${item.location || "N/A"}\n\n` +
+      `Hi! I'm interested in this ${item.type}. Is it still available?`;
+
+    const newChat = {
+      contextType: "quicket_item",
+      contextId: id,
+      participants,
+      permissions: {
+        canInvite: [],
+        canRemove: [],
+        canMessage: ["buyer", "seller"],
+      },
+      status: "pending",
+      metadata,
+      unreadCount,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastMessageAt: new Date(),
+      lastMessage: firstMessageText.substring(0, 100),
+    };
+
+    const result = await db.collection("chats").insertOne(newChat);
+    const chatId = result.insertedId.toString();
+
+    // Insert the automatic first message
+    const firstMessage = {
+      chatId,
+      senderId: req.user.id,
+      senderEmail: req.user.email,
+      senderName: req.user.name,
+      text: firstMessageText,
+      attachments: [],
+      timestamp: new Date(),
+      readBy: [{ userId: req.user.id, readAt: new Date() }],
+      isSystemMessage: false,
+    };
+
+    await db.collection("messages").insertOne(firstMessage);
+
+    // Increment seller's unread count
+    await db.collection("chats").updateOne(
+      { _id: result.insertedId },
+      {
+        $set: {
+          [`unreadCount.${item.sellerId}`]: 1,
+        },
+      }
+    );
 
     res.status(201).json({
       message: "Interest expressed successfully",
@@ -460,7 +540,7 @@ router.post("/items/:id/interest", async (req, res) => {
   }
 });
 
-// Get chat messages
+// Get chat messages (supports both old and new schema)
 router.get("/chat/:chatId", async (req, res) => {
   try {
     const db = getDb();
@@ -470,33 +550,53 @@ router.get("/chat/:chatId", async (req, res) => {
       return res.status(400).json({ error: "Invalid chat ID" });
     }
 
-    const chat = await db
-      .collection("quicket_chats")
+    // Try new unified schema first
+    let chat = await db
+      .collection("chats")
       .findOne({ _id: new ObjectId(chatId) });
 
-    if (!chat) {
-      return res.status(404).json({ error: "Chat not found" });
+    let messages;
+
+    if (chat) {
+      // New unified schema
+      const isParticipant = chat.participants.some(
+        (p) => p.userId === req.user.id
+      );
+
+      if (!isParticipant) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to view this chat" });
+      }
+
+      messages = await db
+        .collection("messages")
+        .find({ chatId })
+        .sort({ timestamp: 1 })
+        .toArray();
+    } else {
+      // Fallback to old schema for backward compatibility
+      chat = await db
+        .collection("quicket_chats")
+        .findOne({ _id: new ObjectId(chatId) });
+
+      if (!chat) {
+        return res.status(404).json({ error: "Chat not found" });
+      }
+
+      // Verify user is part of this chat (old schema)
+      if (chat.buyerId !== req.user.id && chat.sellerId !== req.user.id) {
+        return res
+          .status(403)
+          .json({ error: "Not authorized to view this chat" });
+      }
+
+      messages = await db
+        .collection("quicket_messages")
+        .find({ chatId })
+        .sort({ timestamp: 1 })
+        .toArray();
     }
-
-    // Verify user is part of this chat
-    console.log("Chat auth check:", {
-      chatBuyerId: chat.buyerId,
-      chatSellerId: chat.sellerId,
-      userSub: req.user.id,
-      match: chat.buyerId === req.user.id || chat.sellerId === req.user.id,
-    });
-
-    if (chat.buyerId !== req.user.id && chat.sellerId !== req.user.id) {
-      return res
-        .status(403)
-        .json({ error: "Not authorized to view this chat" });
-    }
-
-    const messages = await db
-      .collection("quicket_messages")
-      .find({ chatId })
-      .sort({ timestamp: 1 })
-      .toArray();
 
     res.json({ chat, messages });
   } catch (error) {
@@ -505,7 +605,7 @@ router.get("/chat/:chatId", async (req, res) => {
   }
 });
 
-// Send message in chat
+// Send message in chat (supports both old and new schema)
 router.post("/chat/:chatId/message", async (req, res) => {
   try {
     const db = getDb();
@@ -520,30 +620,44 @@ router.post("/chat/:chatId/message", async (req, res) => {
       return res.status(400).json({ error: "Message text is required" });
     }
 
-    const chat = await db
-      .collection("quicket_chats")
+    // Try new unified schema first
+    let chat = await db
+      .collection("chats")
       .findOne({ _id: new ObjectId(chatId) });
+
+    let isAuthorized = false;
+    let messageCollection = "messages";
+    let chatCollection = "chats";
+
+    if (chat) {
+      // New unified schema - check participant list
+      isAuthorized = chat.participants.some((p) => p.userId === req.user.id);
+    } else {
+      // Fallback to old schema
+      chat = await db
+        .collection("quicket_chats")
+        .findOne({ _id: new ObjectId(chatId) });
+
+      if (chat) {
+        isAuthorized =
+          chat.buyerId === req.user.id || chat.sellerId === req.user.id;
+        messageCollection = "quicket_messages";
+        chatCollection = "quicket_chats";
+      }
+    }
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
     }
 
-    // Verify user is part of this chat
-    console.log("Message auth check:", {
-      chatBuyerId: chat.buyerId,
-      chatSellerId: chat.sellerId,
-      userSub: req.user.id,
-      match: chat.buyerId === req.user.id || chat.sellerId === req.user.id,
-    });
-
-    if (chat.buyerId !== req.user.id && chat.sellerId !== req.user.id) {
+    if (!isAuthorized) {
       return res
         .status(403)
         .json({ error: "Not authorized to send messages in this chat" });
     }
 
     const newMessage = {
-      chatId: chatId, // Store as string for easy querying
+      chatId: chatId,
       senderId: req.user.id,
       senderEmail: req.user.email,
       senderName: req.user.name,
@@ -552,17 +666,22 @@ router.post("/chat/:chatId/message", async (req, res) => {
       timestamp: new Date(),
     };
 
-    const result = await db
-      .collection("quicket_messages")
-      .insertOne(newMessage);
+    // Add readBy for new schema
+    if (messageCollection === "messages") {
+      newMessage.readBy = [{ userId: req.user.id, readAt: new Date() }];
+    }
+
+    const result = await db.collection(messageCollection).insertOne(newMessage);
 
     // Update chat timestamp
+    const updateFields = { updatedAt: new Date() };
+    if (messageCollection === "messages") {
+      updateFields.lastMessageAt = new Date();
+    }
+
     await db
-      .collection("quicket_chats")
-      .updateOne(
-        { _id: new ObjectId(chatId) },
-        { $set: { updatedAt: new Date() } }
-      );
+      .collection(chatCollection)
+      .updateOne({ _id: new ObjectId(chatId) }, { $set: updateFields });
 
     res.status(201).json({
       message: "Message sent successfully",
@@ -575,7 +694,7 @@ router.post("/chat/:chatId/message", async (req, res) => {
   }
 });
 
-// Update chat status (accept/decline)
+// Update chat status (accept/decline) - supports both old and new schema
 router.put("/chat/:chatId/status", async (req, res) => {
   try {
     const db = getDb();
@@ -586,28 +705,57 @@ router.put("/chat/:chatId/status", async (req, res) => {
       return res.status(400).json({ error: "Invalid chat ID" });
     }
 
-    const validStatuses = ["pending", "accepted", "declined", "completed"];
+    const validStatuses = [
+      "pending",
+      "accepted",
+      "declined",
+      "completed",
+      "active",
+      "archived",
+    ];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: "Invalid status" });
     }
 
-    const chat = await db
-      .collection("quicket_chats")
+    // Try new unified schema first
+    let chat = await db
+      .collection("chats")
       .findOne({ _id: new ObjectId(chatId) });
+
+    let chatCollection = "chats";
+    let isSeller = false;
+
+    if (chat) {
+      // New unified schema - find seller role
+      const sellerParticipant = chat.participants.find(
+        (p) => p.role === "seller"
+      );
+      isSeller = sellerParticipant && sellerParticipant.userId === req.user.id;
+    } else {
+      // Fallback to old schema
+      chat = await db
+        .collection("quicket_chats")
+        .findOne({ _id: new ObjectId(chatId) });
+
+      if (chat) {
+        chatCollection = "quicket_chats";
+        isSeller = chat.sellerId === req.user.id;
+      }
+    }
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
     }
 
     // Only seller can accept/decline
-    if (chat.sellerId !== req.user.id) {
+    if (!isSeller) {
       return res
         .status(403)
         .json({ error: "Only the seller can update chat status" });
     }
 
     await db
-      .collection("quicket_chats")
+      .collection(chatCollection)
       .updateOne(
         { _id: new ObjectId(chatId) },
         { $set: { status, updatedAt: new Date() } }

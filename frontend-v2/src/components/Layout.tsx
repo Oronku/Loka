@@ -14,6 +14,7 @@ import {
   useMediaQuery,
   Divider,
 } from '@mui/material';
+import { ChatProvider } from '../context/ChatContext';
 import {
   Flight,
   Dashboard,
@@ -21,11 +22,16 @@ import {
   Menu as MenuIcon,
   LocalOffer,
   Settings,
+  People as PeopleIcon,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../context/AuthContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import CloudsBackground from './CloudsBackground';
+import ChatFab from './ChatFab';
+import ChatSidebar from './ChatSidebar';
+import ChatWindowModern from './ChatWindowModern';
+import ChatContextSelector from './ChatContextSelector';
 import logo from '../svgs/logo.svg';
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -33,6 +39,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [navMenuEl, setNavMenuEl] = useState<null | HTMLElement>(null);
+  const [chatSidebarOpen, setChatSidebarOpen] = useState(false);
+  const [chatSelectorOpen, setChatSelectorOpen] = useState(false);
+  const [selectedContextType, setSelectedContextType] = useState<
+    'quicket_item' | 'trip' | 'direct' | null
+  >(null);
+  const [openChats, setOpenChats] = useState<
+    Array<{ chatId: string; contextType: string }>
+  >([]);
+  const [totalUnreadCount, setTotalUnreadCount] = useState(0);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -61,6 +76,94 @@ export function Layout({ children }: { children: React.ReactNode }) {
     logout();
     navigate('/login');
     handleMenuClose();
+  };
+
+  const handleChatSelect = (chatId: string, contextType: string = 'direct') => {
+    // Close sidebar
+    setChatSidebarOpen(false);
+
+    // Check if chat is already open
+    const existingChat = openChats.find((c) => c.chatId === chatId);
+    if (!existingChat) {
+      setOpenChats([...openChats, { chatId, contextType }]);
+    }
+  };
+
+  const handleNewChat = (contextType: string) => {
+    // Open the context selector modal
+    setSelectedContextType(contextType as any);
+    setChatSelectorOpen(true);
+    setChatSidebarOpen(false);
+  };
+
+  // Fetch total unread count
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchUnreadCount = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/chats', {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('authToken')}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const chats = data.chats || data; // Handle both {chats: []} and [] formats
+          const total = Array.isArray(chats)
+            ? chats.reduce((sum: number, chat: any) => {
+                const unreadCount = chat.unreadCount?.[user.id] || 0;
+                return sum + unreadCount;
+              }, 0)
+            : 0;
+          setTotalUnreadCount(total);
+        }
+      } catch (error) {
+        console.error('Error fetching unread count:', error);
+      }
+    };
+
+    fetchUnreadCount();
+    const interval = setInterval(fetchUnreadCount, 5000); // Update every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [user]);
+
+  const handleCreateChat = async (
+    contextType: string,
+    contextId: string,
+    participants: any[],
+    metadata: any
+  ) => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch('http://localhost:3001/api/chats', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          contextType,
+          contextId,
+          participants,
+          metadata,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Open the new chat window
+        setOpenChats([...openChats, { chatId: data.chatId, contextType }]);
+      }
+    } catch (err) {
+      console.error('Error creating chat:', err);
+    }
+  };
+
+  const handleCloseChat = (chatId: string) => {
+    setOpenChats(openChats.filter((c) => c.chatId !== chatId));
   };
 
   return (
@@ -129,6 +232,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   <LocalOffer fontSize="small" sx={{ mr: 1 }} />
                   Quicket
                 </MenuItem>
+                <MenuItem onClick={() => goTo('/friends')}>
+                  <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
+                  Friends
+                </MenuItem>
               </Menu>
             </>
           ) : (
@@ -177,6 +284,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 }}
               >
                 Quicket
+              </Button>
+              <Button
+                component={NavLink}
+                to="/friends"
+                startIcon={<PeopleIcon />}
+                sx={{
+                  color: 'text.secondary',
+                  '&.active': {
+                    color: 'primary.main',
+                    bgcolor: 'primary.50',
+                    fontWeight: 700,
+                  },
+                }}
+              >
+                Friends
               </Button>
             </Box>
           )}
@@ -255,8 +377,46 @@ export function Layout({ children }: { children: React.ReactNode }) {
           px: { xs: 2, sm: 3, md: 4 },
         }}
       >
-        {children}
+        <ChatProvider onOpenChat={handleChatSelect}>{children}</ChatProvider>
       </Container>
+
+      {/* Global Chat FAB */}
+      {user && (
+        <ChatFab
+          onClick={() => setChatSidebarOpen(true)}
+          unreadCount={totalUnreadCount}
+        />
+      )}
+
+      {/* Chat Sidebar */}
+      <ChatSidebar
+        open={chatSidebarOpen}
+        onClose={() => setChatSidebarOpen(false)}
+        onChatSelect={handleChatSelect}
+        onNewChat={handleNewChat}
+      />
+
+      {/* Chat Context Selector Modal */}
+      <ChatContextSelector
+        open={chatSelectorOpen}
+        onClose={() => setChatSelectorOpen(false)}
+        contextType={
+          selectedContextType === 'direct'
+            ? 'friend_group'
+            : selectedContextType
+        }
+        onCreateChat={handleCreateChat}
+      />
+
+      {/* Open Chat Windows */}
+      {openChats.map((chat, index) => (
+        <ChatWindowModern
+          key={chat.chatId}
+          chatId={chat.chatId}
+          onClose={() => handleCloseChat(chat.chatId)}
+          initialPosition={{ x: 100 + index * 50, y: 100 + index * 50 }}
+        />
+      ))}
     </Box>
   );
 }

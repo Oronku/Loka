@@ -47,6 +47,7 @@ import {
   type QuicketMessage,
 } from '../services/quicketApi';
 import { useAuth } from '../context/AuthContext';
+import ChatWindow from '../components/ChatWindow';
 
 const typeIcons: Record<string, React.ReactNode> = {
   flight: <Flight />,
@@ -490,15 +491,14 @@ export default function QuicketItemDetail() {
                   </Stack>
                 </Box>
 
-                {!item.isSeller && (
+                {!item.isSeller && !showChat && (
                   <Button
                     fullWidth
                     variant="contained"
                     size="large"
                     onClick={handleExpressInterest}
-                    disabled={showChat}
                   >
-                    {showChat ? 'Chat Open' : "I'm Interested"}
+                    I'm Interested
                   </Button>
                 )}
 
@@ -508,108 +508,14 @@ export default function QuicketItemDetail() {
               </CardContent>
             </Card>
 
-            {/* Chat Panel */}
+            {/* Chat Window - Now using reusable draggable component */}
             {showChat && chat && (
-              <Paper sx={{ mt: 2, p: 2 }}>
-                <Stack
-                  direction="row"
-                  justifyContent="space-between"
-                  alignItems="center"
-                  mb={2}
-                >
-                  <Typography variant="h6">Chat</Typography>
-                  <IconButton size="small" onClick={() => setShowChat(false)}>
-                    <Close />
-                  </IconButton>
-                </Stack>
-
-                {chat.status === 'pending' &&
-                  chat.sellerId === (user as any)?.sub && (
-                    <Stack direction="row" spacing={1} mb={2}>
-                      <Button
-                        size="small"
-                        variant="contained"
-                        color="success"
-                        startIcon={<Check />}
-                        onClick={() => handleChatStatusChange('accepted')}
-                      >
-                        Accept
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        color="error"
-                        startIcon={<Close />}
-                        onClick={() => handleChatStatusChange('declined')}
-                      >
-                        Decline
-                      </Button>
-                    </Stack>
-                  )}
-
-                {chat.status === 'accepted' && (
-                  <Alert severity="success" sx={{ mb: 2 }}>
-                    Chat accepted! You can now exchange details.
-                  </Alert>
-                )}
-
-                {chat.status === 'declined' && (
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    This chat request was declined.
-                  </Alert>
-                )}
-
-                {/* Messages */}
-                <Box sx={{ maxHeight: 300, overflowY: 'auto', mb: 2 }}>
-                  {messages.map((msg) => (
-                    <Box
-                      key={msg._id}
-                      sx={{
-                        mb: 1,
-                        p: 1,
-                        bgcolor:
-                          msg.senderId === (user as any)?.sub
-                            ? 'primary.50'
-                            : 'grey.100',
-                        borderRadius: 1,
-                      }}
-                    >
-                      <Typography variant="caption" color="text.secondary">
-                        {chat.status === 'accepted'
-                          ? msg.senderName || msg.senderEmail
-                          : msg.senderName ||
-                            getDisplayName(msg.senderEmail)}{' '}
-                        - {new Date(msg.timestamp).toLocaleTimeString()}
-                      </Typography>
-                      <Typography variant="body2">{msg.text}</Typography>
-                    </Box>
-                  ))}
-                </Box>
-
-                {/* Message Input */}
-                {chat.status !== 'declined' && (
-                  <Stack direction="row" spacing={1}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      placeholder="Type a message..."
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyPress={(e) =>
-                        e.key === 'Enter' && handleSendMessage()
-                      }
-                      disabled={sendingMessage}
-                    />
-                    <IconButton
-                      color="primary"
-                      onClick={handleSendMessage}
-                      disabled={!newMessage.trim() || sendingMessage}
-                    >
-                      <Send />
-                    </IconButton>
-                  </Stack>
-                )}
-              </Paper>
+              <ChatWindow
+                chatId={chat._id}
+                onClose={() => setShowChat(false)}
+                initialPosition={{ x: window.innerWidth - 450, y: 100 }}
+                contextType="quicket_item"
+              />
             )}
           </Grid>
         </Grid>

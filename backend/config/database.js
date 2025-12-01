@@ -59,6 +59,21 @@ export async function connectToDatabase() {
       .createIndex({ chatId: 1, timestamp: 1 });
     await db.collection("quicket_saved_searches").createIndex({ userId: 1 });
 
+    // Create indexes for unified chat system
+    await db.collection("chats").createIndex({ "participants.userId": 1 });
+    await db.collection("chats").createIndex({ contextType: 1, contextId: 1 });
+    await db.collection("chats").createIndex({ lastMessageAt: -1 });
+    await db.collection("messages").createIndex({ chatId: 1, timestamp: -1 });
+    await db.collection("messages").createIndex({ senderId: 1 });
+
+    // Create indexes for friends system
+    await db
+      .collection("friendships")
+      .createIndex({ senderId: 1, receiverId: 1 });
+    await db.collection("friendships").createIndex({ status: 1 });
+    await db.collection("users").createIndex({ email: 1 }, { unique: true });
+    await db.collection("users").createIndex({ name: "text", email: "text" });
+
     console.log("✓ Database indexes created");
 
     return db;

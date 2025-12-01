@@ -9,6 +9,8 @@ import placesRoutes from "./routes/places.js";
 import flightRoutes from "./routes/flights.js";
 import tripRoutes from "./routes/trips.js";
 import quicketRoutes from "./routes/quicket.js";
+import chatRoutes from "./routes/chats.js";
+import friendRoutes from "./routes/friends.js";
 
 dotenv.config();
 
@@ -36,6 +38,8 @@ app.use("/api/places", placesRoutes);
 app.use("/api/flights", flightRoutes);
 app.use("/api/trips", tripRoutes);
 app.use("/api/quicket", quicketRoutes);
+app.use("/api/chats", chatRoutes);
+app.use("/api/friends", friendRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

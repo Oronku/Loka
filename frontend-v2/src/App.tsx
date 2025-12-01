@@ -10,6 +10,7 @@ import Login from './pages/Login';
 import Quicket from './pages/Quicket';
 import QuicketItemDetail from './pages/QuicketItemDetail';
 import ProfileSettings from './pages/ProfileSettings';
+import Friends from './pages/Friends';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -88,6 +89,21 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <ProfileSettings />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/friends"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Friends
+                    onStartChat={(friendId) => {
+                      // This will be handled by the Layout's chat system
+                      console.log('Starting chat with friend:', friendId);
+                    }}
+                  />
                 </Layout>
               </ProtectedRoute>
             }
