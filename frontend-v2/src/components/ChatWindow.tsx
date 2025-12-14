@@ -26,9 +26,12 @@ import {
   AttachFile as AttachFileIcon,
   Info as InfoIcon,
   People as PeopleIcon,
+  Lock as LockIcon,
+  CheckCircle as SoldIcon,
 } from '@mui/icons-material';
 import Draggable from 'react-draggable';
 import { useAuth } from '../context/AuthContext';
+import { chatApi } from '../services/chatApi';
 
 interface Participant {
   userId: string;
@@ -66,6 +69,7 @@ interface Chat {
     canMessage: string[];
   };
   status: 'pending' | 'active' | 'archived';
+  locked?: boolean;
   metadata: {
     itemId?: string;
     itemType?: string;
@@ -182,7 +186,7 @@ export default function ChatWindow({
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || chat?.locked) return;
 
     try {
       const token = localStorage.getItem('authToken');
@@ -215,6 +219,35 @@ export default function ChatWindow({
     }
   };
 
+  const handleMarkAsSold = async () => {
+    if (
+      !confirm(
+        'Are you sure you want to mark this item as sold? This will lock the chat.'
+      )
+    )
+      return;
+
+    try {
+      await chatApi.markItemAsSold(chatId);
+      await fetchChat();
+      await fetchMessages();
+      alert('Item marked as sold successfully!');
+    } catch (err: any) {
+      console.error('Error marking as sold:', err);
+      alert(err.response?.data?.error || 'Failed to mark item as sold');
+    }
+  };
+
+  const isSellerInQuicketChat = (): boolean => {
+    if (!chat || !user) return false;
+    if (chat.contextType !== 'quicket_item') return false;
+
+    const currentUserParticipant = chat.participants?.find(
+      (p) => p.userId === user.id
+    );
+    return currentUserParticipant?.role === 'seller';
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -223,7 +256,7 @@ export default function ChatWindow({
   };
 
   const getParticipantRole = (userId: string): string => {
-    if (!chat) return '';
+    if (!chat || !chat.participants) return '';
     const participant = chat.participants.find((p) => p.userId === userId);
     return participant?.role || '';
   };
@@ -232,7 +265,7 @@ export default function ChatWindow({
     if (!chat) return 'Chat';
 
     // For Quicket items, show the other person's name
-    if (chat.contextType === 'quicket_item') {
+    if (chat.contextType === 'quicket_item' && chat.participants) {
       const otherParticipant = chat.participants.find(
         (p) => p.userId !== user?.id
       );
@@ -250,17 +283,17 @@ export default function ChatWindow({
     }
 
     // Default: show participant count
-    return `Chat (${chat.participants.length} members)`;
+    return `Chat (${chat.participants?.length || 0} members)`;
   };
 
   const getChatSubtitle = (): string => {
     if (!chat) return '';
 
-    if (chat.contextType === 'quicket_item' && chat.metadata.itemTitle) {
+    if (chat.contextType === 'quicket_item' && chat.metadata?.itemTitle) {
       return `About: ${chat.metadata.itemTitle}`;
     }
 
-    return chat.contextType.replace('_', ' ').toUpperCase();
+    return chat.contextType?.replace('_', ' ').toUpperCase() || '';
   };
 
   if (loading && !chat) {
@@ -359,7 +392,10 @@ export default function ChatWindow({
               onClick={() => setShowParticipants(!showParticipants)}
               sx={{ color: 'white' }}
             >
-              <Badge badgeContent={chat?.participants.length} color="secondary">
+              <Badge
+                badgeContent={chat?.participants?.length || 0}
+                color="secondary"
+              >
                 <PeopleIcon fontSize="small" />
               </Badge>
             </IconButton>
@@ -397,7 +433,7 @@ export default function ChatWindow({
                   Participants
                 </Typography>
                 <List dense>
-                  {chat?.participants.map((participant) => (
+                  {chat?.participants?.map((participant) => (
                     <ListItem key={participant.userId}>
                       <ListItemAvatar>
                         <Avatar sx={{ width: 24, height: 24 }}>
@@ -513,6 +549,41 @@ export default function ChatWindow({
                   </Typography>
                 )}
 
+              {/* Locked Chat Alert */}
+              {chat?.locked && (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    mb: 1,
+                    px: 1,
+                    py: 0.5,
+                    bgcolor: 'warning.light',
+                    borderRadius: 1,
+                  }}
+                >
+                  <LockIcon fontSize="small" />
+                  <Typography variant="caption">
+                    This chat is locked. The item has been sold.
+                  </Typography>
+                </Box>
+              )}
+
+              {/* Mark as Sold Button (Seller only, before item is sold) */}
+              {isSellerInQuicketChat() && !chat?.locked && (
+                <Button
+                  variant="contained"
+                  color="success"
+                  size="small"
+                  startIcon={<SoldIcon />}
+                  onClick={handleMarkAsSold}
+                  sx={{ mb: 1, width: '100%' }}
+                >
+                  Mark as Sold
+                </Button>
+              )}
+
               <Box sx={{ display: 'flex', gap: 1 }}>
                 <IconButton size="small" disabled>
                   <AttachFileIcon fontSize="small" />
@@ -521,22 +592,25 @@ export default function ChatWindow({
                 <TextField
                   fullWidth
                   size="small"
-                  placeholder="Type a message..."
+                  placeholder={
+                    chat?.locked ? 'Chat is locked' : 'Type a message...'
+                  }
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={handleKeyPress}
                   multiline
                   maxRows={3}
                   disabled={
-                    chat?.status === 'pending' &&
-                    getParticipantRole(user?.id || '') === 'buyer'
+                    chat?.locked ||
+                    (chat?.status === 'pending' &&
+                      getParticipantRole(user?.id || '') === 'buyer')
                   }
                 />
 
                 <IconButton
                   color="primary"
                   onClick={sendMessage}
-                  disabled={!newMessage.trim()}
+                  disabled={!newMessage.trim() || chat?.locked}
                 >
                   <SendIcon />
                 </IconButton>

@@ -26,7 +26,12 @@ router.get("/items", async (req, res) => {
       limit = 20,
     } = req.query;
 
-    const query = { isActive: true, isDeleted: { $ne: true } };
+    const query = {
+      isActive: true,
+      isDeleted: { $ne: true },
+      status: { $ne: "sold" }, // Don't show sold items in marketplace
+      sellerId: { $ne: req.user.id }, // Don't show user's own items in Browse
+    };
 
     // Apply filters
     if (type) query.type = type;

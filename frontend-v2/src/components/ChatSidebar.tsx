@@ -191,6 +191,19 @@ export default function ChatSidebar({
     return chat.unreadCount?.[user?.id || ''] || 0;
   };
 
+  // Calculate unread counts per tab
+  const getTabUnreadCount = (
+    contextType: 'direct' | 'trip' | 'quicket_item'
+  ) => {
+    return chats
+      .filter((chat) => chat.contextType === contextType)
+      .reduce((sum, chat) => sum + getUnreadCount(chat), 0);
+  };
+
+  const friendsUnread = getTabUnreadCount('direct');
+  const tripsUnread = getTabUnreadCount('trip');
+  const quicketUnread = getTabUnreadCount('quicket_item');
+
   const formatTimestamp = (date?: Date) => {
     if (!date) return '';
     const d = new Date(date);
@@ -245,19 +258,31 @@ export default function ChatSidebar({
           sx={{ borderBottom: 1, borderColor: 'divider' }}
         >
           <Tab
-            icon={<FriendsIcon />}
+            icon={
+              <Badge badgeContent={friendsUnread} color="error">
+                <FriendsIcon />
+              </Badge>
+            }
             label="Friends"
             iconPosition="start"
             sx={{ minHeight: 56 }}
           />
           <Tab
-            icon={<TripIcon />}
+            icon={
+              <Badge badgeContent={tripsUnread} color="error">
+                <TripIcon />
+              </Badge>
+            }
             label="Trips"
             iconPosition="start"
             sx={{ minHeight: 56 }}
           />
           <Tab
-            icon={<QuicketIcon />}
+            icon={
+              <Badge badgeContent={quicketUnread} color="error">
+                <QuicketIcon />
+              </Badge>
+            }
             label="Quicket"
             iconPosition="start"
             sx={{ minHeight: 56 }}

@@ -13,6 +13,7 @@ import {
   MenuItem,
   useMediaQuery,
   Divider,
+  Badge,
 } from '@mui/material';
 import { ChatProvider } from '../context/ChatContext';
 import {
@@ -32,6 +33,7 @@ import ChatFab from './ChatFab';
 import ChatSidebar from './ChatSidebar';
 import ChatWindowModern from './ChatWindowModern';
 import ChatContextSelector from './ChatContextSelector';
+import { friendsApi } from '../services/friendsApi';
 import logo from '../svgs/logo.svg';
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -48,6 +50,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     Array<{ chatId: string; contextType: string }>
   >([]);
   const [totalUnreadCount, setTotalUnreadCount] = useState(0);
+  const [friendRequestCount, setFriendRequestCount] = useState(0);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -126,6 +129,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
     fetchUnreadCount();
     const interval = setInterval(fetchUnreadCount, 5000); // Update every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [user]);
+
+  // Fetch friend request count
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchFriendRequestCount = async () => {
+      try {
+        const requests = await friendsApi.getFriendRequests();
+        setFriendRequestCount(requests.length);
+      } catch (error) {
+        console.error('Error fetching friend requests:', error);
+      }
+    };
+
+    fetchFriendRequestCount();
+    const interval = setInterval(fetchFriendRequestCount, 10000); // Update every 10 seconds
 
     return () => clearInterval(interval);
   }, [user]);
@@ -233,7 +255,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   Quicket
                 </MenuItem>
                 <MenuItem onClick={() => goTo('/friends')}>
-                  <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
+                  <Badge badgeContent={friendRequestCount} color="error">
+                    <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
+                  </Badge>
                   Friends
                 </MenuItem>
               </Menu>
@@ -288,7 +312,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Button
                 component={NavLink}
                 to="/friends"
-                startIcon={<PeopleIcon />}
+                startIcon={
+                  <Badge badgeContent={friendRequestCount} color="error">
+                    <PeopleIcon />
+                  </Badge>
+                }
                 sx={{
                   color: 'text.secondary',
                   '&.active': {

@@ -47,6 +47,7 @@ import {
 } from '../services/quicketApi';
 import { useNavigate } from 'react-router-dom';
 import CreateQuicketItem from './CreateQuicketItem';
+import { useChat } from '../context/ChatContext';
 
 const typeIcons = {
   flight: <Flight />,
@@ -57,6 +58,7 @@ const typeIcons = {
 
 export default function QuicketBrowse() {
   const navigate = useNavigate();
+  const { openChat } = useChat();
   const [items, setItems] = useState<QuicketItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -567,11 +569,16 @@ export default function QuicketBrowse() {
                             const response = await expressInterest(item._id);
                             console.log('Express interest response:', response);
 
-                            // The backend now returns if chat already existed
+                            // Open the chat automatically
+                            if (response.chatId) {
+                              openChat(response.chatId, 'quicket_item');
+                            }
+
+                            // Show message based on whether chat already existed
                             const chatMessage =
                               response.message === 'Chat already exists'
-                                ? '💬 Chat with seller opened!\n\nClick the chat icon (💬) in the bottom-right to continue your conversation.'
-                                : '✅ Chat created with seller!\n\nClick the chat icon (💬) in the bottom-right to start chatting.';
+                                ? '💬 Chat with seller opened!'
+                                : '✅ Chat created with seller!';
 
                             alert(chatMessage);
                             loadItems();
