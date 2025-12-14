@@ -24,6 +24,7 @@ import {
   LocalOffer,
   Settings,
   People as PeopleIcon,
+  LocationOn,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../context/AuthContext';
@@ -276,6 +277,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   </Badge>
                   Friends
                 </MenuItem>
+                <MenuItem onClick={() => goTo('/check-in')}>
+                  <LocationOn fontSize="small" sx={{ mr: 1 }} />
+                  Check In
+                </MenuItem>
               </Menu>
             </>
           ) : (
@@ -293,6 +298,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   ),
                   label: 'Friends',
                 },
+                { to: '/check-in', icon: <LocationOn />, label: 'Check In' },
               ].map((item) => (
                 <Button
                   key={item.to}

@@ -11,6 +11,7 @@ import tripRoutes from "./routes/trips.js";
 import quicketRoutes from "./routes/quicket.js";
 import chatRoutes from "./routes/chats.js";
 import friendRoutes from "./routes/friends.js";
+import checkInRoutes from "./routes/checkins.js";
 
 dotenv.config();
 
@@ -40,6 +41,7 @@ app.use("/api/trips", tripRoutes);
 app.use("/api/quicket", quicketRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/friends", friendRoutes);
+app.use("/api/checkins", checkInRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {
