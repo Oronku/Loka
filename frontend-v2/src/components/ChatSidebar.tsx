@@ -222,40 +222,49 @@ export default function ChatSidebar({
 
   return (
     <Drawer
-      anchor="left"
+      anchor="right"
       open={open}
       onClose={onClose}
-      sx={{
-        '& .MuiDrawer-paper': {
+      PaperProps={{
+        sx: {
           width: { xs: '100%', sm: 400 },
-          maxWidth: '100%',
+          bgcolor: 'rgba(255, 255, 255, 0.9)',
+          backdropFilter: 'blur(12px)',
+          boxShadow: '-4px 0 20px rgba(0,0,0,0.1)',
         },
       }}
     >
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        {/* Header */}
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            p: 2,
-            borderBottom: 1,
-            borderColor: 'divider',
-          }}
-        >
-          <Typography variant="h6">Messages</Typography>
-          <IconButton onClick={onClose}>
-            <CloseIcon />
-          </IconButton>
-        </Box>
+      <Box
+        sx={{
+          p: 2,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+        }}
+      >
+        <Typography variant="h6" fontWeight={700}>
+          Messages
+        </Typography>
+        <IconButton onClick={onClose} size="small">
+          <CloseIcon />
+        </IconButton>
+      </Box>
 
-        {/* Tabs */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs
           value={activeTab}
-          onChange={(_, newValue) => setActiveTab(newValue)}
+          onChange={(_, v) => setActiveTab(v)}
           variant="fullWidth"
-          sx={{ borderBottom: 1, borderColor: 'divider' }}
+          indicatorColor="primary"
+          textColor="primary"
+          sx={{
+            '& .MuiTab-root': {
+              minHeight: 64,
+              fontWeight: 600,
+            },
+          }}
         >
           <Tab
             icon={
@@ -288,190 +297,186 @@ export default function ChatSidebar({
             sx={{ minHeight: 56 }}
           />
         </Tabs>
+      </Box>
 
-        {/* Search */}
-        <Box sx={{ p: 2 }}>
-          <TextField
-            fullWidth
-            size="small"
-            placeholder="Search chats..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
+      {/* Search */}
+      <Box sx={{ p: 2 }}>
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Search chats..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            ),
+          }}
+        />
+      </Box>
+
+      {/* Chat List */}
+      <Box sx={{ flex: 1, overflow: 'auto' }}>
+        {loading ? (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              height: 200,
             }}
-          />
-        </Box>
+          >
+            <CircularProgress />
+          </Box>
+        ) : filteredChats.length === 0 ? (
+          <Box sx={{ p: 4, textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary">
+              {searchQuery
+                ? 'No chats found'
+                : activeTab === 0
+                  ? 'No friend chats yet. Add friends to start chatting!'
+                  : activeTab === 1
+                    ? 'No trip chats yet. Share a trip with friends!'
+                    : 'No Quicket chats yet. Express interest in an item to start!'}
+            </Typography>
+          </Box>
+        ) : (
+          <List sx={{ p: 0 }}>
+            {filteredChats.map((chat) => {
+              const unreadCount = getUnreadCount(chat);
+              const chatImage = getChatImage(chat);
 
-        {/* Chat List */}
-        <Box sx={{ flex: 1, overflow: 'auto' }}>
-          {loading ? (
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                height: 200,
-              }}
-            >
-              <CircularProgress />
-            </Box>
-          ) : filteredChats.length === 0 ? (
-            <Box sx={{ p: 4, textAlign: 'center' }}>
-              <Typography variant="body2" color="text.secondary">
-                {searchQuery
-                  ? 'No chats found'
-                  : activeTab === 0
-                    ? 'No friend chats yet. Add friends to start chatting!'
-                    : activeTab === 1
-                      ? 'No trip chats yet. Share a trip with friends!'
-                      : 'No Quicket chats yet. Express interest in an item to start!'}
-              </Typography>
-            </Box>
-          ) : (
-            <List sx={{ p: 0 }}>
-              {filteredChats.map((chat) => {
-                const unreadCount = getUnreadCount(chat);
-                const chatImage = getChatImage(chat);
-
-                return (
-                  <React.Fragment key={chat._id}>
-                    <ListItem
-                      button
-                      onClick={() => onChatSelect(chat._id, chat.contextType)}
-                      sx={{
-                        py: 2,
-                        bgcolor:
-                          unreadCount > 0 ? 'action.hover' : 'transparent',
-                        '&:hover': { bgcolor: 'action.selected' },
-                      }}
-                    >
-                      <ListItemAvatar>
-                        <Badge
-                          badgeContent={unreadCount}
-                          color="error"
-                          overlap="circular"
+              return (
+                <React.Fragment key={chat._id}>
+                  <ListItem
+                    button
+                    onClick={() => onChatSelect(chat._id, chat.contextType)}
+                    sx={{
+                      py: 2,
+                      bgcolor: unreadCount > 0 ? 'action.hover' : 'transparent',
+                      '&:hover': { bgcolor: 'action.selected' },
+                    }}
+                  >
+                    <ListItemAvatar>
+                      <Badge
+                        badgeContent={unreadCount}
+                        color="error"
+                        overlap="circular"
+                      >
+                        <Avatar
+                          src={chatImage || undefined}
+                          sx={{ width: 50, height: 50 }}
                         >
-                          <Avatar
-                            src={chatImage || undefined}
-                            sx={{ width: 50, height: 50 }}
-                          >
-                            {chat.contextType === 'quicket_item' && (
-                              <QuicketIcon />
-                            )}
-                            {chat.contextType === 'trip' && <TripIcon />}
-                            {chat.contextType === 'direct' &&
-                              getOtherParticipant(chat)?.name[0]?.toUpperCase()}
-                          </Avatar>
-                        </Badge>
-                      </ListItemAvatar>
+                          {chat.contextType === 'quicket_item' && (
+                            <QuicketIcon />
+                          )}
+                          {chat.contextType === 'trip' && <TripIcon />}
+                          {chat.contextType === 'direct' &&
+                            getOtherParticipant(chat)?.name[0]?.toUpperCase()}
+                        </Avatar>
+                      </Badge>
+                    </ListItemAvatar>
 
-                      <ListItemText
-                        primaryTypographyProps={{ component: 'div' }}
-                        secondaryTypographyProps={{ component: 'div' }}
-                        primary={
+                    <ListItemText
+                      primaryTypographyProps={{ component: 'div' }}
+                      secondaryTypographyProps={{ component: 'div' }}
+                      primary={
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                          }}
+                        >
                           <Box
                             sx={{
                               display: 'flex',
-                              justifyContent: 'space-between',
                               alignItems: 'center',
+                              gap: 0.5,
+                              flex: 1,
+                              minWidth: 0,
                             }}
                           >
-                            <Box
+                            <Typography
+                              variant="subtitle2"
                               sx={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 0.5,
-                                flex: 1,
-                                minWidth: 0,
+                                fontWeight: unreadCount > 0 ? 700 : 400,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
                               }}
                             >
-                              <Typography
-                                variant="subtitle2"
-                                sx={{
-                                  fontWeight: unreadCount > 0 ? 700 : 400,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {getChatTitle(chat)}
-                              </Typography>
+                              {getChatTitle(chat)}
+                            </Typography>
+                            <Chip
+                              size="small"
+                              label={
+                                chat.contextType === 'quicket_item'
+                                  ? 'Quicket'
+                                  : chat.contextType === 'trip'
+                                    ? 'Trip'
+                                    : 'Friend'
+                              }
+                              color={
+                                chat.contextType === 'quicket_item'
+                                  ? 'primary'
+                                  : chat.contextType === 'trip'
+                                    ? 'info'
+                                    : 'default'
+                              }
+                              sx={{ height: 18, fontSize: '0.65rem' }}
+                            />
+                          </Box>
+                          <Typography variant="caption" color="text.secondary">
+                            {formatTimestamp(chat.lastMessageAt)}
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={
+                        <Box>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block' }}
+                          >
+                            {getChatSubtitle(chat)}
+                          </Typography>
+                          {chat.lastMessage && (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{
+                                mt: 0.5,
+                                fontWeight: unreadCount > 0 ? 600 : 400,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {chat.lastMessage}
+                            </Typography>
+                          )}
+                          {chat.contextType === 'quicket_item' &&
+                            chat.status === 'pending' && (
                               <Chip
+                                label="Pending"
                                 size="small"
-                                label={
-                                  chat.contextType === 'quicket_item'
-                                    ? 'Quicket'
-                                    : chat.contextType === 'trip'
-                                      ? 'Trip'
-                                      : 'Friend'
-                                }
-                                color={
-                                  chat.contextType === 'quicket_item'
-                                    ? 'primary'
-                                    : chat.contextType === 'trip'
-                                      ? 'info'
-                                      : 'default'
-                                }
-                                sx={{ height: 18, fontSize: '0.65rem' }}
+                                color="warning"
+                                sx={{ mt: 0.5, height: 20 }}
                               />
-                            </Box>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {formatTimestamp(chat.lastMessageAt)}
-                            </Typography>
-                          </Box>
-                        }
-                        secondary={
-                          <Box>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ display: 'block' }}
-                            >
-                              {getChatSubtitle(chat)}
-                            </Typography>
-                            {chat.lastMessage && (
-                              <Typography
-                                variant="body2"
-                                color="text.secondary"
-                                sx={{
-                                  mt: 0.5,
-                                  fontWeight: unreadCount > 0 ? 600 : 400,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {chat.lastMessage}
-                              </Typography>
                             )}
-                            {chat.contextType === 'quicket_item' &&
-                              chat.status === 'pending' && (
-                                <Chip
-                                  label="Pending"
-                                  size="small"
-                                  color="warning"
-                                  sx={{ mt: 0.5, height: 20 }}
-                                />
-                              )}
-                          </Box>
-                        }
-                      />
-                    </ListItem>
-                    <Divider variant="inset" component="li" />
-                  </React.Fragment>
-                );
-              })}
-            </List>
-          )}
-        </Box>
+                        </Box>
+                      }
+                    />
+                  </ListItem>
+                  <Divider variant="inset" component="li" />
+                </React.Fragment>
+              );
+            })}
+          </List>
+        )}
       </Box>
     </Drawer>
   );

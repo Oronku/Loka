@@ -361,7 +361,11 @@ export default function ChatWindow({
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          boxShadow: 4,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.2)',
+          borderRadius: 3,
+          border: '1px solid rgba(255,255,255,0.5)',
+          bgcolor: 'rgba(255, 255, 255, 0.95)',
+          backdropFilter: 'blur(10px)',
         }}
       >
         {/* Header */}
@@ -371,10 +375,11 @@ export default function ChatWindow({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            p: 1.5,
-            bgcolor: 'primary.main',
+            p: 2,
+            background: 'linear-gradient(90deg, #009D85, #00BFA5)',
             color: 'white',
             cursor: 'move',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
           }}
         >
           <Box sx={{ flex: 1 }}>

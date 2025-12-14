@@ -63,39 +63,86 @@ export default function Home() {
       <Paper
         elevation={0}
         sx={{
-          bgcolor: 'primary.main',
+          bgcolor: 'transparent',
           color: 'white',
-          borderRadius: 3,
-          mb: 4,
+          borderRadius: 4,
+          mb: 6,
           overflow: 'hidden',
           position: 'relative',
+          boxShadow: '0 20px 40px rgba(0, 157, 133, 0.15)',
         }}
       >
         <Box
           sx={{
             background:
-              'linear-gradient(135deg, --color-primary 0%, --color-primary 100%)',
-            py: { xs: 4, md: 6 },
-            px: { xs: 2, md: 4 },
+              'linear-gradient(135deg, #009D85 0%, #00BFA5 50%, #00E5FF 100%)',
+            py: { xs: 6, md: 10 },
+            px: { xs: 3, md: 6 },
+            position: 'relative',
           }}
         >
-          <Container maxWidth="lg">
-            <Stack spacing={3} alignItems="center" textAlign="center">
-              <TravelExplore sx={{ fontSize: { xs: 48, md: 64 }, opacity: 0.9 }} />
-              <Typography
-                variant="h3"
-                component="h1"
-                fontWeight={900}
-                sx={{ fontSize: { xs: '2.2rem', sm: '2.75rem', md: '3rem' } }}
+          {/* Decorative circles */}
+          <Box
+            sx={{
+              position: 'absolute',
+              top: -100,
+              right: -100,
+              width: 400,
+              height: 400,
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.1)',
+            }}
+          />
+          <Box
+            sx={{
+              position: 'absolute',
+              bottom: -50,
+              left: -50,
+              width: 200,
+              height: 200,
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.1)',
+            }}
+          />
+
+          <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
+            <Stack spacing={4} alignItems="center" textAlign="center">
+              <Box
+                sx={{
+                  p: 2,
+                  borderRadius: '50%',
+                  background: 'rgba(255,255,255,0.2)',
+                  backdropFilter: 'blur(10px)',
+                  display: 'inline-flex',
+                }}
               >
-                Plan Your Perfect Trip
-              </Typography>
+                <TravelExplore
+                  sx={{ fontSize: { xs: 40, md: 56 }, color: 'white' }}
+                />
+              </Box>
+
               <Typography
-                variant="h6"
+                variant="h1"
+                component="h1"
+                sx={{
+                  fontSize: { xs: '2.5rem', sm: '3.5rem', md: '4.5rem' },
+                  textShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  lineHeight: 1.1,
+                }}
+              >
+                Plan Your{' '}
+                <Box component="span" sx={{ color: '#F1FFFD' }}>
+                  Perfect Trip
+                </Box>
+              </Typography>
+
+              <Typography
+                variant="h5"
                 sx={{
                   opacity: 0.95,
-                  maxWidth: 600,
-                  fontSize: { xs: '1rem', sm: '1.1rem' },
+                  maxWidth: 700,
+                  fontWeight: 500,
+                  lineHeight: 1.6,
                 }}
               >
                 Organize flights, hotels, attractions, and transportation all in
@@ -107,17 +154,18 @@ export default function Home() {
                 startIcon={<Add />}
                 onClick={() => setOpenNew(true)}
                 sx={{
-                  bgcolor: 'white',
-                  color: 'primary.main',
+                  bgcolor: '#FF7D54', // Coral accent
+                  color: 'white',
                   mt: 2,
                   px: { xs: 3, sm: 4 },
                   py: { xs: 1.25, sm: 1.5 },
                   fontSize: { xs: '1rem', sm: '1.1rem' },
-                  fontWeight: 700,
+                  fontWeight: 800,
+                  boxShadow: '0 8px 20px rgba(255, 125, 84, 0.3)',
                   '&:hover': {
-                    bgcolor: 'grey.100',
+                    bgcolor: '#FF6B3D',
                     transform: 'translateY(-2px)',
-                    boxShadow: 4,
+                    boxShadow: '0 12px 24px rgba(255, 125, 84, 0.4)',
                   },
                   transition: 'all 0.3s ease',
                   width: { xs: '100%', sm: 'auto' },
@@ -150,10 +198,17 @@ export default function Home() {
           My Trips {trips && `(${ownedTrips.length})`}
         </Typography>
         <Button
-          variant="outlined"
-          size="small"
+          variant="contained"
+          size="medium"
           startIcon={<Add />}
           onClick={() => setOpenNew(true)}
+          sx={{
+            background: 'linear-gradient(45deg, #009D85, #00BFA5)',
+            boxShadow: '0 4px 12px rgba(0, 157, 133, 0.3)',
+            '&:hover': {
+              boxShadow: '0 6px 16px rgba(0, 157, 133, 0.4)',
+            },
+          }}
         >
           New Trip
         </Button>
@@ -236,50 +291,81 @@ export default function Home() {
           <Grid item xs={12} sm={6} md={4} key={t.id}>
             <Fade in timeout={500 + index * 100}>
               <Card
-                elevation={0}
                 sx={{
                   height: '100%',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  transition: 'all 0.3s ease',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  position: 'relative',
+                  overflow: 'hidden',
                   '&:hover': {
-                    transform: 'translateY(-4px)',
-                    boxShadow: 4,
-                    borderColor: 'primary.main',
+                    transform: 'translateY(-8px)',
+                    boxShadow: '0 12px 30px rgba(0, 157, 133, 0.15)',
+                    '& .card-header-bg': {
+                      transform: 'scale(1.05)',
+                    },
                   },
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                 }}
               >
+                <Box
+                  className="card-header-bg"
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: 6,
+                    background: 'linear-gradient(90deg, #009D85, #00E5FF)',
+                    transition: 'transform 0.3s ease',
+                    transformOrigin: 'top',
+                  }}
+                />
                 <CardActionArea
                   component={Link}
                   to={`/trips/${t.id}`}
-                  sx={{ height: '100%' }}
+                  sx={{ height: '100%', pt: 1 }}
                 >
-                  <CardContent sx={{ p: 3 }}>
-                    <Typography variant="h6" fontWeight={700} gutterBottom>
+                  <CardContent
+                    sx={{
+                      p: 3,
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
+                    <Typography
+                      variant="h6"
+                      fontWeight={800}
+                      gutterBottom
+                      sx={{ mb: 1 }}
+                    >
                       {t.name || 'Untitled Trip'}
                     </Typography>
 
                     {t.startDate && t.endDate && (
                       <Stack
                         direction="row"
-                        spacing={1}
+                        spacing={1.5}
                         alignItems="center"
-                        sx={{ mt: 2, mb: 2 }}
+                        sx={{ mb: 3, color: 'text.secondary' }}
                       >
-                        <CalendarMonth
-                          fontSize="small"
-                          sx={{ color: 'primary.main' }}
-                        />
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          fontWeight={500}
+                        <Box
+                          sx={{
+                            p: 0.5,
+                            borderRadius: 1,
+                            bgcolor: 'primary.50',
+                            color: 'primary.main',
+                            display: 'flex',
+                          }}
                         >
+                          <CalendarMonth fontSize="small" />
+                        </Box>
+                        <Typography variant="body2" fontWeight={600}>
                           {new Date(t.startDate).toLocaleDateString('en-US', {
                             month: 'short',
                             day: 'numeric',
                           })}
-                          {' → '}
+                          {' - '}
                           {new Date(t.endDate).toLocaleDateString('en-US', {
                             month: 'short',
                             day: 'numeric',
@@ -289,41 +375,51 @@ export default function Home() {
                       </Stack>
                     )}
 
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      sx={{ mt: 2 }}
-                      flexWrap="wrap"
-                      gap={1}
-                    >
-                      {t.flights?.length > 0 && (
-                        <Chip
-                          size="small"
-                          icon={<Flight sx={{ fontSize: 16 }} />}
-                          label={`${t.flights.length}`}
-                          variant="outlined"
-                          color="primary"
-                        />
-                      )}
-                      {t.hotels?.length > 0 && (
-                        <Chip
-                          size="small"
-                          icon={<Hotel sx={{ fontSize: 16 }} />}
-                          label={`${t.hotels.length}`}
-                          variant="outlined"
-                          color="secondary"
-                        />
-                      )}
-                      {t.attractions?.length > 0 && (
-                        <Chip
-                          size="small"
-                          icon={<Attractions sx={{ fontSize: 16 }} />}
-                          label={`${t.attractions.length}`}
-                          variant="outlined"
-                          color="success"
-                        />
-                      )}
-                    </Stack>
+                    <Box sx={{ mt: 'auto' }}>
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        flexWrap="wrap"
+                        gap={1}
+                      >
+                        {t.flights?.length > 0 && (
+                          <Chip
+                            size="small"
+                            icon={<Flight sx={{ fontSize: 14 }} />}
+                            label={`${t.flights.length} Flights`}
+                            sx={{
+                              bgcolor: 'primary.50',
+                              color: 'primary.dark',
+                              borderColor: 'transparent',
+                            }}
+                          />
+                        )}
+                        {t.hotels?.length > 0 && (
+                          <Chip
+                            size="small"
+                            icon={<Hotel sx={{ fontSize: 14 }} />}
+                            label={`${t.hotels.length} Hotels`}
+                            sx={{
+                              bgcolor: 'secondary.50',
+                              color: 'secondary.dark',
+                              borderColor: 'transparent',
+                            }}
+                          />
+                        )}
+                        {t.attractions?.length > 0 && (
+                          <Chip
+                            size="small"
+                            icon={<Attractions sx={{ fontSize: 14 }} />}
+                            label={`${t.attractions.length} Activities`}
+                            sx={{
+                              bgcolor: 'success.50',
+                              color: 'success.dark',
+                              borderColor: 'transparent',
+                            }}
+                          />
+                        )}
+                      </Stack>
+                    </Box>
                   </CardContent>
                 </CardActionArea>
               </Card>
@@ -370,26 +466,48 @@ export default function Home() {
               <Grid item xs={12} sm={6} md={4} key={t.id}>
                 <Fade in timeout={500 + index * 100}>
                   <Card
-                    elevation={0}
                     sx={{
                       height: '100%',
-                      border: '1px solid',
-                      borderColor: 'info.light',
-                      bgcolor: 'info.50',
-                      transition: 'all 0.3s ease',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      position: 'relative',
+                      overflow: 'hidden',
                       '&:hover': {
-                        transform: 'translateY(-4px)',
-                        boxShadow: 4,
-                        borderColor: 'info.main',
+                        transform: 'translateY(-8px)',
+                        boxShadow: '0 12px 30px rgba(2, 136, 209, 0.15)',
+                        '& .card-header-bg-shared': {
+                          transform: 'scale(1.05)',
+                        },
                       },
+                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                     }}
                   >
+                    <Box
+                      className="card-header-bg-shared"
+                      sx={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: 6,
+                        background: 'linear-gradient(90deg, #0288d1, #29b6f6)',
+                        transition: 'transform 0.3s ease',
+                        transformOrigin: 'top',
+                      }}
+                    />
                     <CardActionArea
                       component={Link}
                       to={`/trips/${t.id}`}
-                      sx={{ height: '100%' }}
+                      sx={{ height: '100%', pt: 1 }}
                     >
-                      <CardContent sx={{ p: 3 }}>
+                      <CardContent
+                        sx={{
+                          p: 3,
+                          height: '100%',
+                          display: 'flex',
+                          flexDirection: 'column',
+                        }}
+                      >
                         <Stack
                           direction="row"
                           justifyContent="space-between"
@@ -398,41 +516,44 @@ export default function Home() {
                         >
                           <Typography
                             variant="h6"
-                            fontWeight={600}
+                            fontWeight={800}
                             sx={{ flex: 1 }}
                           >
                             {t.name || 'Untitled Trip'}
                           </Typography>
                           <Chip
-                            icon={<VisibilityIcon sx={{ fontSize: 16 }} />}
+                            icon={<VisibilityIcon sx={{ fontSize: 14 }} />}
                             label="View Only"
                             size="small"
                             color="info"
-                            sx={{ ml: 1 }}
+                            sx={{ ml: 1, height: 24, fontSize: '0.75rem' }}
                           />
                         </Stack>
 
                         {t.startDate && t.endDate && (
                           <Stack
                             direction="row"
-                            spacing={1}
+                            spacing={1.5}
                             alignItems="center"
-                            sx={{ mb: 2 }}
+                            sx={{ mb: 3, color: 'text.secondary' }}
                           >
-                            <CalendarMonth
-                              fontSize="small"
-                              sx={{ color: 'info.main' }}
-                            />
-                            <Typography
-                              variant="body2"
-                              color="text.secondary"
-                              fontWeight={500}
+                            <Box
+                              sx={{
+                                p: 0.5,
+                                borderRadius: 1,
+                                bgcolor: 'info.50',
+                                color: 'info.main',
+                                display: 'flex',
+                              }}
                             >
+                              <CalendarMonth fontSize="small" />
+                            </Box>
+                            <Typography variant="body2" fontWeight={600}>
                               {new Date(t.startDate).toLocaleDateString(
                                 'en-US',
                                 { month: 'short', day: 'numeric' }
                               )}
-                              {' → '}
+                              {' - '}
                               {new Date(t.endDate).toLocaleDateString('en-US', {
                                 month: 'short',
                                 day: 'numeric',
@@ -442,40 +563,51 @@ export default function Home() {
                           </Stack>
                         )}
 
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          flexWrap="wrap"
-                          gap={1}
-                        >
-                          {t.flights?.length > 0 && (
-                            <Chip
-                              size="small"
-                              icon={<Flight sx={{ fontSize: 16 }} />}
-                              label={`${t.flights.length}`}
-                              variant="outlined"
-                              color="primary"
-                            />
-                          )}
-                          {t.hotels?.length > 0 && (
-                            <Chip
-                              size="small"
-                              icon={<Hotel sx={{ fontSize: 16 }} />}
-                              label={`${t.hotels.length}`}
-                              variant="outlined"
-                              color="secondary"
-                            />
-                          )}
-                          {t.attractions?.length > 0 && (
-                            <Chip
-                              size="small"
-                              icon={<Attractions sx={{ fontSize: 16 }} />}
-                              label={`${t.attractions.length}`}
-                              variant="outlined"
-                              color="success"
-                            />
-                          )}
-                        </Stack>
+                        <Box sx={{ mt: 'auto' }}>
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            flexWrap="wrap"
+                            gap={1}
+                          >
+                            {t.flights?.length > 0 && (
+                              <Chip
+                                size="small"
+                                icon={<Flight sx={{ fontSize: 14 }} />}
+                                label={`${t.flights.length}`}
+                                sx={{
+                                  bgcolor: 'primary.50',
+                                  color: 'primary.dark',
+                                  borderColor: 'transparent',
+                                }}
+                              />
+                            )}
+                            {t.hotels?.length > 0 && (
+                              <Chip
+                                size="small"
+                                icon={<Hotel sx={{ fontSize: 14 }} />}
+                                label={`${t.hotels.length}`}
+                                sx={{
+                                  bgcolor: 'secondary.50',
+                                  color: 'secondary.dark',
+                                  borderColor: 'transparent',
+                                }}
+                              />
+                            )}
+                            {t.attractions?.length > 0 && (
+                              <Chip
+                                size="small"
+                                icon={<Attractions sx={{ fontSize: 14 }} />}
+                                label={`${t.attractions.length}`}
+                                sx={{
+                                  bgcolor: 'success.50',
+                                  color: 'success.dark',
+                                  borderColor: 'transparent',
+                                }}
+                              />
+                            )}
+                          </Stack>
+                        </Box>
                       </CardContent>
                     </CardActionArea>
                   </Card>

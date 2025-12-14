@@ -199,11 +199,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {/* Cloud background sits behind the whole layout. You can tweak count/opacity here. */}
       <CloudsBackground count={200} />
       <AppBar
-        position="static"
+        position="sticky"
         elevation={0}
-        sx={{ bgcolor: 'common.white', color: 'text.primary' }}
+        sx={{
+          top: 0,
+          zIndex: 1100,
+          borderBottom: '1px solid',
+          borderColor: 'rgba(0,0,0,0.05)',
+        }}
       >
-        <Toolbar sx={{ gap: { xs: 1, sm: 2 } }}>
+        <Toolbar sx={{ gap: { xs: 1, sm: 2 }, minHeight: { xs: 64, md: 72 } }}>
           <Typography
             variant="h6"
             component={Link}
@@ -213,15 +218,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
               mr: 4,
               textDecoration: 'none',
               color: 'primary.main',
-              fontWeight: 700,
+              fontWeight: 800,
+              fontSize: '1.5rem',
               display: 'flex',
               alignItems: 'center',
+              letterSpacing: '-0.02em',
             }}
           >
             <img
               src={logo}
               alt="Loka Logo"
-              style={{ height: 40, marginRight: 16 }}
+              style={{ height: 40, marginRight: 12 }}
             />
             Meet Loka
           </Typography>
@@ -241,6 +248,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 onClose={handleNavMenuClose}
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
                 transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                PaperProps={{
+                  elevation: 0,
+                  sx: {
+                    overflow: 'visible',
+                    filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.1))',
+                    mt: 1.5,
+                    borderRadius: 3,
+                  },
+                }}
               >
                 <MenuItem onClick={() => goTo('/')}>
                   <Dashboard fontSize="small" sx={{ mr: 1 }} />
@@ -264,70 +280,45 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </>
           ) : (
             <Box sx={{ display: 'flex', gap: 1 }}>
-              <Button
-                component={NavLink}
-                to="/"
-                startIcon={<Dashboard />}
-                sx={{
-                  color: 'text.secondary',
-                  '&.active': {
-                    color: 'primary.main',
-                    bgcolor: 'primary.50',
-                    fontWeight: 600,
-                  },
-                }}
-              >
-                Dashboard
-              </Button>
-              <Button
-                component={NavLink}
-                to="/trip/new"
-                startIcon={<Flight />}
-                sx={{
-                  color: 'text.secondary',
-                  '&.active': {
-                    color: 'primary.main',
-                    bgcolor: 'primary.50',
-                    fontWeight: 700,
-                  },
-                }}
-              >
-                New Trip
-              </Button>
-              <Button
-                component={NavLink}
-                to="/quicket"
-                startIcon={<LocalOffer />}
-                sx={{
-                  color: 'text.secondary',
-                  '&.active': {
-                    color: 'primary.main',
-                    bgcolor: 'primary.50',
-                    fontWeight: 700,
-                  },
-                }}
-              >
-                Quicket
-              </Button>
-              <Button
-                component={NavLink}
-                to="/friends"
-                startIcon={
-                  <Badge badgeContent={friendRequestCount} color="error">
-                    <PeopleIcon />
-                  </Badge>
-                }
-                sx={{
-                  color: 'text.secondary',
-                  '&.active': {
-                    color: 'primary.main',
-                    bgcolor: 'primary.50',
-                    fontWeight: 700,
-                  },
-                }}
-              >
-                Friends
-              </Button>
+              {[
+                { to: '/', icon: <Dashboard />, label: 'Dashboard' },
+                { to: '/trip/new', icon: <Flight />, label: 'New Trip' },
+                { to: '/quicket', icon: <LocalOffer />, label: 'Quicket' },
+                {
+                  to: '/friends',
+                  icon: (
+                    <Badge badgeContent={friendRequestCount} color="error">
+                      <PeopleIcon />
+                    </Badge>
+                  ),
+                  label: 'Friends',
+                },
+              ].map((item) => (
+                <Button
+                  key={item.to}
+                  component={NavLink}
+                  to={item.to}
+                  startIcon={item.icon}
+                  sx={{
+                    color: 'text.secondary',
+                    px: 2,
+                    py: 1,
+                    borderRadius: 3,
+                    '&:hover': {
+                      bgcolor: 'rgba(0, 157, 133, 0.04)',
+                      color: 'primary.main',
+                    },
+                    '&.active': {
+                      color: 'primary.main',
+                      bgcolor: 'rgba(0, 157, 133, 0.08)',
+                      fontWeight: 700,
+                    },
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {item.label}
+                </Button>
+              ))}
             </Box>
           )}
           <Box

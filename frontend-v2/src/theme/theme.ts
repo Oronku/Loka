@@ -1,45 +1,39 @@
-import { createTheme } from '@mui/material/styles';
+import { createTheme, alpha } from '@mui/material/styles';
 
 // Loka design tokens
-const LOKA_BLACK = '#001A16';
-const LOKA_WHITE = '#F1FFFD';
 const LOKA_PRIMARY = '#009D85';
+const LOKA_SECONDARY = '#FF7D54'; // Coral accent for contrast
+const LOKA_BLACK = '#001A16';
+const LOKA_WHITE = '#FFFFFF';
+const LOKA_BG = '#F8FDfc'; // Slightly more neutral mint-white
 
 export const theme = createTheme({
   palette: {
     primary: {
       main: LOKA_PRIMARY,
-      contrastText: LOKA_WHITE,
+      light: '#33B09D',
+      dark: '#006E5D',
+      contrastText: '#FFFFFF',
     },
     secondary: {
-      main: '#9c27b0',
-      light: '#ba68c8',
-      dark: '#7b1fa2',
-    },
-    success: {
-      main: '#2e7d32',
-      light: '#4caf50',
-      dark: '#1b5e20',
-    },
-    error: {
-      main: '#d32f2f',
-      light: '#ef5350',
-      dark: '#c62828',
+      main: LOKA_SECONDARY,
+      light: '#FF9776',
+      dark: '#E65A2E',
+      contrastText: '#FFFFFF',
     },
     background: {
-      // use Loka white as the app background
-      default: LOKA_WHITE,
+      default: LOKA_BG,
       paper: LOKA_WHITE,
     },
     text: {
-      // default text color on non-primary backgrounds
       primary: LOKA_BLACK,
-      secondary: 'rgba(0, 0, 0, 0.6)',
-      // note: on primary backgrounds, use `palette.primary.contrastText` (LOKA_WHITE)
+      secondary: alpha(LOKA_BLACK, 0.6),
     },
-    common: {
-      black: LOKA_BLACK,
-      white: LOKA_WHITE,
+    success: {
+      main: '#00C853',
+    },
+    error: {
+      main: '#FF3D00',
     },
   },
   typography: {
@@ -48,88 +42,130 @@ export const theme = createTheme({
       'Varela Round',
       '-apple-system',
       'BlinkMacSystemFont',
-      '"Segoe UI"',
-      'Roboto',
-      '"Helvetica Neue"',
-      'Arial',
       'sans-serif',
     ].join(','),
-    h4: {
-      fontWeight: 800,
-      fontSize: '2rem',
-      letterSpacing: '-0.01em',
-    },
-    h5: {
-      fontWeight: 800,
-      fontSize: '1.5rem',
-      letterSpacing: '-0.01em',
-    },
-    h6: {
-      fontWeight: 800,
-      fontSize: '1.25rem',
-      letterSpacing: '-0.01em',
-    },
-    subtitle1: {
-      fontSize: '1rem',
-      fontWeight: 700,
-      letterSpacing: '-0.01em',
-    },
-    body1: {
-      fontSize: '1rem',
-      fontWeight: 500,
-      letterSpacing: '-0.01em',
-    },
-    body2: {
-      fontSize: '0.875rem',
-      fontWeight: 500,
-      letterSpacing: '-0.01em',
-    },
-    button: {
-      textTransform: 'none',
-      fontWeight: 700,
-      letterSpacing: '-0.01em',
-    },
+    h1: { fontWeight: 800, fontSize: '3.5rem' },
+    h2: { fontWeight: 800, fontSize: '2.5rem' },
+    h3: { fontWeight: 800, fontSize: '2rem' },
+    h4: { fontWeight: 700, fontSize: '1.75rem' },
+    h5: { fontWeight: 700, fontSize: '1.5rem' },
+    h6: { fontWeight: 700, fontSize: '1.25rem' },
+    subtitle1: { fontWeight: 600 },
+    button: { fontWeight: 700, textTransform: 'none' },
   },
   shape: {
-    borderRadius: 8,
+    borderRadius: 16,
   },
-  spacing: 8,
   components: {
+    MuiCssBaseline: {
+      styleOverrides: {
+        body: {
+          scrollbarColor: `${LOKA_PRIMARY} transparent`,
+          '&::-webkit-scrollbar, & *::-webkit-scrollbar': {
+            backgroundColor: 'transparent',
+            width: '8px',
+            height: '8px',
+          },
+          '&::-webkit-scrollbar-thumb, & *::-webkit-scrollbar-thumb': {
+            borderRadius: 8,
+            backgroundColor: alpha(LOKA_PRIMARY, 0.3),
+            minHeight: 24,
+          },
+          '&::-webkit-scrollbar-thumb:focus, & *::-webkit-scrollbar-thumb:focus':
+            {
+              backgroundColor: alpha(LOKA_PRIMARY, 0.5),
+            },
+          '&::-webkit-scrollbar-thumb:active, & *::-webkit-scrollbar-thumb:active':
+            {
+              backgroundColor: alpha(LOKA_PRIMARY, 0.5),
+            },
+          '&::-webkit-scrollbar-thumb:hover, & *::-webkit-scrollbar-thumb:hover':
+            {
+              backgroundColor: alpha(LOKA_PRIMARY, 0.5),
+            },
+        },
+      },
+    },
     MuiButton: {
       styleOverrides: {
         root: {
-          borderRadius: 8,
-          padding: '8px 24px',
-          fontSize: '0.9375rem',
-        },
-        contained: {
+          borderRadius: 50, // Pill shape
+          padding: '10px 24px',
           boxShadow: 'none',
           '&:hover': {
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            boxShadow: '0 4px 12px rgba(0, 157, 133, 0.2)',
+            transform: 'translateY(-1px)',
           },
+          transition: 'all 0.2s ease-in-out',
+        },
+        containedPrimary: {
+          background: `linear-gradient(45deg, ${LOKA_PRIMARY}, #00BFA5)`,
+        },
+        sizeLarge: {
+          padding: '12px 32px',
+          fontSize: '1.1rem',
         },
       },
     },
     MuiCard: {
       styleOverrides: {
         root: {
-          boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
-          '&:hover': {
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          },
+          borderRadius: 24,
+          boxShadow: '0 8px 24px rgba(0, 26, 22, 0.06)',
+          backgroundImage: 'none',
+          overflow: 'visible', // For hover effects that might pop out
         },
-      },
-    },
-    MuiTextField: {
-      defaultProps: {
-        variant: 'outlined',
-        size: 'small',
       },
     },
     MuiPaper: {
       styleOverrides: {
-        rounded: {
-          borderRadius: 8,
+        root: {
+          backgroundImage: 'none',
+        },
+        elevation1: {
+          boxShadow: '0 4px 20px rgba(0, 26, 22, 0.05)',
+        },
+      },
+    },
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          background: alpha(LOKA_WHITE, 0.8),
+          backdropFilter: 'blur(12px)',
+          boxShadow: '0 1px 0 rgba(0,0,0,0.05)',
+          color: LOKA_BLACK,
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: {
+          borderRadius: 12,
+          fontWeight: 600,
+        },
+        filled: {
+          backgroundColor: alpha(LOKA_PRIMARY, 0.1),
+          color: LOKA_PRIMARY,
+        },
+      },
+    },
+    MuiTextField: {
+      styleOverrides: {
+        root: {
+          '& .MuiOutlinedInput-root': {
+            borderRadius: 16,
+            backgroundColor: alpha(LOKA_PRIMARY, 0.02),
+            '& fieldset': {
+              borderColor: alpha(LOKA_BLACK, 0.1),
+            },
+            '&:hover fieldset': {
+              borderColor: LOKA_PRIMARY,
+            },
+            '&.Mui-focused fieldset': {
+              borderColor: LOKA_PRIMARY,
+              borderWidth: 2,
+            },
+          },
         },
       },
     },
