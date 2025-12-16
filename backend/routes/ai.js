@@ -252,4 +252,164 @@ router.post("/action", async (req, res) => {
   }
 });
 
+// Generate AI-powered itinerary suggestions
+router.post("/suggest-itinerary", async (req, res) => {
+  try {
+    const { trip, preferences } = req.body;
+    const userId = req.user.id;
+
+    // Validate OpenAI is available
+    if (!openai) {
+      return res.status(503).json({
+        error: "AI service is not available. Please configure OpenAI API key.",
+      });
+    }
+
+    // Validate trip data
+    if (!trip || !trip.destinations || !trip.startDate || !trip.endDate) {
+      return res.status(400).json({
+        error:
+          "Trip data is incomplete. Please provide destinations and dates.",
+      });
+    }
+
+    // Calculate trip duration and generate dates array
+    const startDate = new Date(trip.startDate);
+    const endDate = new Date(trip.endDate);
+    const tripDays =
+      Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+    const dates = [];
+    for (let i = 0; i < tripDays; i++) {
+      const date = new Date(startDate);
+      date.setDate(date.getDate() + i);
+      dates.push(date.toISOString().split("T")[0]);
+    }
+
+    // Build context about existing trip items
+    const existingItems = {
+      hotels: trip.hotels || [],
+      attractions: trip.attractions || [],
+      flights: trip.flights || [],
+      transportations: trip.transportations || [],
+    };
+
+    // Build the prompt
+    const systemPrompt = `
+You are Loka, an expert travel planner AI. Your task is to generate personalized day-by-day itinerary suggestions for a trip.
+
+TRIP DETAILS:
+- Destinations: ${trip.destinations.map((d) => d.name || d).join(", ")}
+- Dates: ${trip.startDate} to ${trip.endDate} (${tripDays} days)
+- Existing Hotels: ${existingItems.hotels.map((h) => h.name).join(", ") || "None"}
+- Existing Attractions: ${existingItems.attractions.map((a) => a.name).join(", ") || "None"}
+
+USER PREFERENCES:
+- Interests: ${preferences.interests || "General tourism"}
+- Daily Budget: ${preferences.dailyBudget || "Not specified"}
+- Pace: ${preferences.pace || "moderate"} (relaxed = 2-3 activities/day, moderate = 3-4, packed = 5-6)
+
+INSTRUCTIONS:
+1. Generate suggestions for each day of the trip
+2. Consider the user's interests and budget
+3. Respect the chosen pace (don't over-schedule)
+4. Include variety: mix of attractions, restaurants, and activities
+5. Consider logistics: group nearby locations together
+6. For each suggestion, provide:
+   - type: "attraction", "restaurant", "hotel", or "activity"
+   - name: Clear, specific name
+   - description: Brief 1-2 sentence description
+   - location: Specific address or area name
+   - estimatedCost: Number in local currency (optional)
+   - suggestedTime: Time of day like "9:00 AM" or "Evening" (optional)
+   - duration: Like "2 hours" or "3-4 hours" (optional)
+   - reason: Brief explanation why this fits their interests (optional)
+
+Return ONLY a valid JSON array in this exact format:
+[
+  {
+    "date": "YYYY-MM-DD",
+    "suggestions": [
+      {
+        "type": "attraction",
+        "name": "Example Museum",
+        "description": "Famous art museum with Renaissance collection",
+        "location": "123 Main St, City Center",
+        "estimatedCost": 25,
+        "suggestedTime": "10:00 AM",
+        "duration": "2-3 hours",
+        "reason": "Perfect for culture enthusiasts"
+      }
+    ]
+  }
+]
+
+Do not include any text before or after the JSON array.
+`;
+
+    const userPrompt = `Generate a personalized ${tripDays}-day itinerary for this trip. Return only the JSON array.`;
+
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4-turbo-preview",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 4000,
+      });
+
+      let responseContent = completion.choices[0].message.content.trim();
+
+      // Clean up the response - remove markdown code blocks if present
+      responseContent = responseContent
+        .replace(/```json\n?/g, "")
+        .replace(/```\n?/g, "");
+
+      // Parse the JSON response
+      const suggestions = JSON.parse(responseContent);
+
+      // Validate the response structure
+      if (!Array.isArray(suggestions)) {
+        throw new Error("Invalid response format: expected array");
+      }
+
+      // Validate each day has the required structure
+      for (const day of suggestions) {
+        if (!day.date || !Array.isArray(day.suggestions)) {
+          throw new Error("Invalid day structure");
+        }
+      }
+
+      return res.json({
+        success: true,
+        suggestions: suggestions,
+        tripDays: tripDays,
+      });
+    } catch (aiError) {
+      console.error("OpenAI API Error:", aiError);
+
+      // Check if it's a parsing error
+      if (aiError instanceof SyntaxError) {
+        return res.status(500).json({
+          error: "Failed to parse AI response. Please try again.",
+          details: aiError.message,
+        });
+      }
+
+      return res.status(500).json({
+        error: "Failed to generate suggestions. Please try again.",
+        details: aiError.message,
+      });
+    }
+  } catch (error) {
+    console.error("Suggest Itinerary Error:", error);
+    res.status(500).json({
+      error: "Failed to generate itinerary suggestions",
+      details: error.message,
+    });
+  }
+});
+
 export default router;

@@ -35,6 +35,7 @@ import { groupTripByDay } from '../types/domain';
 import TripChecklist from '../components/TripChecklist';
 import TripExpenses from '../components/TripExpenses';
 import BudgetTracker from '../components/BudgetTracker';
+import AIItinerarySuggester from '../components/AIItinerarySuggester';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
@@ -1440,9 +1441,23 @@ export default function TripDetails() {
           mb={3}
           gap={2}
         >
-          <Box sx={{ width: { xs: '100%', md: 'auto' } }}>
-            <AddItemModalLauncher trip={trip} onUpdated={setTrip} />
-          </Box>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={1}
+            sx={{ width: { xs: '100%', md: 'auto' } }}
+          >
+            <Box sx={{ '& > button': { height: '36px' } }}>
+              <AddItemModalLauncher trip={trip} onUpdated={setTrip} />
+            </Box>
+            {trip?.isOwner !== false && (
+              <Box sx={{ '& > button': { height: '36px' } }}>
+                <AIItinerarySuggester
+                  trip={trip}
+                  onSuggestionsApplied={setTrip}
+                />
+              </Box>
+            )}
+          </Stack>
 
           <Stack
             direction={{ xs: 'column', md: 'row' }}
@@ -1612,40 +1627,6 @@ export default function TripDetails() {
                 </Button>
               </Stack>
             </Paper>
-
-            {totalCost > 0 && (
-              <Paper
-                elevation={0}
-                sx={{
-                  px: { xs: 2, md: 3 },
-                  py: { xs: 1, md: 1.5 },
-                  bgcolor: 'success.lighter',
-                  border: '2px solid',
-                  borderColor: 'success.main',
-                  borderRadius: 2,
-                  width: { xs: '100%', md: 'auto' },
-                }}
-              >
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <Box>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      fontWeight={600}
-                    >
-                      Total Budget
-                    </Typography>
-                    <Typography
-                      variant="h5"
-                      fontWeight={700}
-                      color="success.main"
-                    >
-                      ${totalCost.toFixed(2)}
-                    </Typography>
-                  </Box>
-                </Stack>
-              </Paper>
-            )}
           </Stack>
         </Stack>
 
@@ -6112,8 +6093,12 @@ function AddItemModalLauncher({
         variant="contained"
         startIcon={<Add />}
         onClick={() => setOpen(true)}
-        size="large"
-        sx={{ width: { xs: '100%', sm: 'auto' } }}
+        size="small"
+        sx={{
+          width: { xs: '100%', sm: 'auto' },
+          fontSize: '0.875rem',
+          px: 2,
+        }}
       >
         Add Item
       </Button>
