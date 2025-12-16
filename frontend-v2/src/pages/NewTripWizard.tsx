@@ -39,6 +39,7 @@ import {
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useLanguage } from '../context/LanguageContext';
+import { useNotification } from '../context/NotificationContext';
 
 interface BasicInfo {
   name: string;
@@ -49,6 +50,7 @@ interface BasicInfo {
 
 export default function NewTripWizard() {
   const { t } = useLanguage();
+  const { showSuccess, showError } = useNotification();
   const [step, setStep] = useState<number>(0);
   const [basic, setBasic] = useState<BasicInfo>({
     name: '',
@@ -100,9 +102,10 @@ export default function NewTripWizard() {
         attractions: [],
       } as any);
       setTrip(newTrip);
+      showSuccess(t('tripCreationSuccess'));
       next();
     } catch (e: any) {
-      alert(e?.response?.data?.message || e.message);
+      showError(e?.response?.data?.message || e.message || t('errorOccurred'));
     } finally {
       setCreating(false);
     }

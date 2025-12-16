@@ -1,6 +1,8 @@
 import { Routes, Route } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider } from './context/AuthContext';
+import { NotificationProvider } from './context/NotificationContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import Home from './pages/Home';
@@ -12,6 +14,7 @@ import QuicketItemDetail from './pages/QuicketItemDetail';
 import ProfileSettings from './pages/ProfileSettings';
 import Friends from './pages/Friends';
 import CheckIn from './pages/CheckIn';
+import { useLanguage } from './context/LanguageContext';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -28,10 +31,12 @@ if (!GOOGLE_CLIENT_ID) {
   );
 }
 
-export default function App() {
+function AppRoutes() {
+  const { language } = useLanguage();
+
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <AuthProvider>
+    <ErrorBoundary language={language}>
+      <NotificationProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
@@ -120,6 +125,16 @@ export default function App() {
             }
           />
         </Routes>
+      </NotificationProvider>
+    </ErrorBoundary>
+  );
+}
+
+export default function App() {
+  return (
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <AuthProvider>
+        <AppRoutes />
       </AuthProvider>
     </GoogleOAuthProvider>
   );

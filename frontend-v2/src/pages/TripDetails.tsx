@@ -34,7 +34,9 @@ import type {
 import { groupTripByDay } from '../types/domain';
 import TripChecklist from '../components/TripChecklist';
 import TripExpenses from '../components/TripExpenses';
+import BudgetTracker from '../components/BudgetTracker';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import {
   AddFlightForm,
   AddHotelForm,
@@ -110,6 +112,7 @@ import {
   BarChart as GanttIcon,
   ChecklistRtl as ChecklistIcon,
   AttachMoney as ExpensesIcon,
+  AttachMoney,
   Chat as ChatIcon,
 } from '@mui/icons-material';
 import ChatWindow from '../components/ChatWindow';
@@ -147,7 +150,8 @@ type ViewMode =
   | 'map'
   | 'gantt'
   | 'checklist'
-  | 'expenses';
+  | 'expenses'
+  | 'budget';
 
 // Small embedded map component for ride routes
 function RideMapEmbed({ ride }: { ride: any }) {
@@ -376,6 +380,7 @@ export default function TripDetails() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterCategory>('all');
@@ -1588,6 +1593,23 @@ export default function TripDetails() {
                     </Button>
                   );
                 })()}
+                <Button
+                  size="small"
+                  startIcon={<AttachMoney />}
+                  onClick={() => setViewMode('budget')}
+                  sx={{
+                    borderRadius: 0,
+                    bgcolor:
+                      viewMode === 'budget' ? 'primary.main' : 'transparent',
+                    color: viewMode === 'budget' ? 'white' : 'text.primary',
+                    '&:hover': {
+                      bgcolor:
+                        viewMode === 'budget' ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                >
+                  {t('budget')}
+                </Button>
               </Stack>
             </Paper>
 
@@ -4846,6 +4868,41 @@ export default function TripDetails() {
               </Box>
             );
           })()}
+
+        {/* Budget View */}
+        {viewMode === 'budget' && trip && (
+          <Box sx={{ mt: 2 }}>
+            <BudgetTracker
+              tripId={trip.id}
+              startDate={trip.startDate}
+              endDate={trip.endDate}
+              tripItems={[
+                ...(trip.flights || []).map((f) => ({
+                  id: `flight-${f.flightNumber}-${f.departureDateTime}`,
+                  type: 'flight' as const,
+                  price: f.cost || 0,
+                })),
+                ...(trip.hotels || []).map((h) => ({
+                  id: `hotel-${h.placeId}-${h.checkIn}`,
+                  type: 'hotel' as const,
+                  pricePerNight: h.cost ? h.cost / (h.nights || 1) : 0,
+                  checkIn: h.checkIn,
+                  checkOut: h.checkOut,
+                })),
+                ...(trip.rides || []).map((r, idx) => ({
+                  id: `ride-${idx}-${r.date || r.dateTime}`,
+                  type: 'transportation' as const,
+                  cost: r.cost || 0,
+                })),
+                ...(trip.attractions || []).map((a) => ({
+                  id: `attraction-${a.placeId}-${a.scheduledDate}`,
+                  type: 'attraction' as const,
+                  cost: a.cost || 0,
+                })),
+              ]}
+            />
+          </Box>
+        )}
 
         {/* Floating Action Button for Create Ride from Selection */}
         {selectedItems.length === 2 && (

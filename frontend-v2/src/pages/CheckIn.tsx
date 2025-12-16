@@ -25,6 +25,7 @@ import QuicketPlaceSearch, {
 } from '../components/QuicketPlaceSearch';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useNotification } from '../context/NotificationContext';
 
 const POPULAR_CITIES = [
   {
@@ -80,6 +81,7 @@ const mapContainerStyle = {
 export default function CheckIn() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { showSuccess, showError } = useNotification();
   const [selectedPlace, setSelectedPlace] = useState<PlaceData | null>(null);
   const [mapCenter, setMapCenter] = useState({ lat: 20, lng: 0 });
   const [zoom, setZoom] = useState(2);
@@ -151,13 +153,13 @@ export default function CheckIn() {
         setSelectedPlace(null);
         setZoom(2);
         setMapCenter({ lat: 20, lng: 0 });
-        // alert(`Checked in to ${selectedPlace.name}!`); // Removed alert
+        showSuccess(`✓ ${t('checkIn')} ${selectedPlace.name}!`);
       } else {
-        alert(t('checkInFailed'));
+        showError(t('checkInFailed'));
       }
     } catch (error) {
       console.error('Error checking in:', error);
-      alert(t('checkInError'));
+      showError(t('checkInError'));
     } finally {
       setLoading(false);
     }
