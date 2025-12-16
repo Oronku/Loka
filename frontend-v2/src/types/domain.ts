@@ -5,6 +5,11 @@ export interface FlightSegment {
   arrivalAirportCode: string;
   departureDateTime: string;
   arrivalDateTime: string;
+  // Support old format from AI
+  date?: string;
+  time?: string;
+  departure?: string; // airport code or name
+  arrival?: string; // airport code or name
   durationMinutes?: number;
   aircraftType?: string;
   terminal?: { departure: string | null; arrival: string | null };
@@ -232,18 +237,32 @@ export function groupTripByDay(trip: Trip): DayBucket[] {
     (dayMap[date][kind] as any[]).push(item);
   };
 
-  trip.flights.forEach((f) =>
-    add(f.departureDateTime.slice(0, 10), 'flights', f)
-  );
-  trip.hotels.forEach((h) => add(h.checkIn.slice(0, 10), 'hotels', h));
-  trip.rides.forEach((r) => {
+  (trip.flights || []).forEach((f) => {
+    // Support both date formats: departureDateTime (new) and date (old)
+    const flightDate = f.departureDateTime
+      ? f.departureDateTime.slice(0, 10)
+      : f.date;
+    if (flightDate) {
+      add(flightDate, 'flights', f);
+    }
+  });
+  (trip.hotels || []).forEach((h) => {
+    if (h.checkIn) {
+      add(h.checkIn.slice(0, 10), 'hotels', h);
+    }
+  });
+  (trip.rides || []).forEach((r) => {
     const rideDate = r.date || r.dateTime?.slice(0, 10) || r.pickupDate;
     if (rideDate) add(rideDate, 'rides', r);
   });
-  trip.attractions.forEach((a) => add(a.scheduledDate, 'attractions', a));
+  (trip.attractions || []).forEach((a) => {
+    if (a.scheduledDate) {
+      add(a.scheduledDate, 'attractions', a);
+    }
+  });
 
   // Generate meal activities based on hotel meal plans
-  trip.hotels.forEach((hotel) => {
+  (trip.hotels || []).forEach((hotel) => {
     if (hotel.includesMeals && hotel.mealPlan) {
       const stayDates = dateRange(
         hotel.checkIn.slice(0, 10),
@@ -307,7 +326,9 @@ export function groupTripByDay(trip: Trip): DayBucket[] {
     }
   });
 
-  return Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
+  return Object.values(dayMap)
+    .filter((day) => day.date) // Filter out any entries without a date
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function dateRange(start: string, end: string): string[] {

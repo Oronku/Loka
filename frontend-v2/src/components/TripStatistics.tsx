@@ -79,8 +79,13 @@ export default function TripStatistics({ trips }: TripStatisticsProps) {
       // Destinations
       if (trip.destinations) {
         trip.destinations.forEach((dest) => {
-          const city = dest.split(',')[0].trim();
-          destinationCounts[city] = (destinationCounts[city] || 0) + 1;
+          // Handle both string and object types (in case data is inconsistent)
+          const destStr =
+            typeof dest === 'string' ? dest : (dest as any)?.name || '';
+          if (destStr) {
+            const city = destStr.split(',')[0].trim();
+            destinationCounts[city] = (destinationCounts[city] || 0) + 1;
+          }
         });
       }
 

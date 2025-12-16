@@ -172,10 +172,18 @@ router.post("/items", async (req, res) => {
       });
     }
 
-    const validTypes = ["flight", "hotel", "attraction", "event"];
+    const validTypes = [
+      "flight",
+      "hotel",
+      "attraction",
+      "event",
+      "restaurant",
+      "ship",
+    ];
     if (!validTypes.includes(type)) {
       return res.status(400).json({
-        error: "Invalid type. Must be flight, hotel, attraction, or event",
+        error:
+          "Invalid type. Must be flight, hotel, attraction, event, restaurant, or ship",
       });
     }
 

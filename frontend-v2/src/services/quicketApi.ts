@@ -5,7 +5,7 @@ export interface QuicketItem {
   sellerId: string;
   sellerEmail?: string;
   tripId?: string;
-  type: 'flight' | 'hotel' | 'attraction' | 'event';
+  type: 'flight' | 'hotel' | 'attraction' | 'event' | 'restaurant' | 'ship';
   title: string;
   description: string;
   priceOriginal?: number;

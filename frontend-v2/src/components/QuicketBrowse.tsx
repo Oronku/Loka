@@ -32,6 +32,8 @@ import {
   Hotel,
   Attractions,
   Event,
+  Restaurant,
+  DirectionsBoat,
   Search,
   Clear,
   Bookmark,
@@ -54,6 +56,8 @@ const typeIcons = {
   hotel: <Hotel />,
   attraction: <Attractions />,
   event: <Event />,
+  restaurant: <Restaurant />,
+  ship: <DirectionsBoat />,
 };
 
 export default function QuicketBrowse() {
@@ -237,6 +241,8 @@ export default function QuicketBrowse() {
                   <MenuItem value="hotel">Hotels</MenuItem>
                   <MenuItem value="attraction">Attractions</MenuItem>
                   <MenuItem value="event">Events</MenuItem>
+                  <MenuItem value="restaurant">Restaurants</MenuItem>
+                  <MenuItem value="ship">Ships/Cruises</MenuItem>
                 </Select>
               </FormControl>
             </Grid>

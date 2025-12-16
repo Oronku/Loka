@@ -33,9 +33,9 @@ export default function CreateQuicketItem({
   onClose,
   onSuccess,
 }: CreateQuicketItemProps) {
-  const [type, setType] = useState<'flight' | 'hotel' | 'attraction' | 'event'>(
-    'flight'
-  );
+  const [type, setType] = useState<
+    'flight' | 'hotel' | 'attraction' | 'event' | 'restaurant' | 'ship'
+  >('flight');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priceOriginal, setPriceOriginal] = useState('');
@@ -274,6 +274,8 @@ export default function CreateQuicketItem({
               <MenuItem value="hotel">Hotel</MenuItem>
               <MenuItem value="attraction">Attraction</MenuItem>
               <MenuItem value="event">Event</MenuItem>
+              <MenuItem value="restaurant">Restaurant</MenuItem>
+              <MenuItem value="ship">Ship/Cruise</MenuItem>
             </TextField>
           </Grid>
 
@@ -301,8 +303,10 @@ export default function CreateQuicketItem({
             />
           </Grid>
 
-          {/* Place Search for Hotels, Attractions */}
-          {(type === 'hotel' || type === 'attraction') && (
+          {/* Place Search for Hotels, Attractions, Restaurants */}
+          {(type === 'hotel' ||
+            type === 'attraction' ||
+            type === 'restaurant') && (
             <Grid item xs={12}>
               <QuicketPlaceSearch
                 onPlaceSelect={handlePlaceSelect}
@@ -311,24 +315,30 @@ export default function CreateQuicketItem({
                 label={
                   type === 'hotel'
                     ? 'Search for Hotel'
-                    : 'Search for Attraction/Restaurant'
+                    : type === 'restaurant'
+                      ? 'Search for Restaurant'
+                      : 'Search for Attraction'
                 }
                 placeholder={
                   type === 'hotel'
                     ? 'e.g., Hilton Dubai, Marriott...'
-                    : 'e.g., Eiffel Tower, Central Park...'
+                    : type === 'restaurant'
+                      ? 'e.g., Nusr-Et, Gordon Ramsay...'
+                      : 'e.g., Eiffel Tower, Central Park...'
                 }
                 types={
                   type === 'hotel'
                     ? 'lodging'
-                    : 'tourist_attraction|restaurant|point_of_interest'
+                    : type === 'restaurant'
+                      ? 'restaurant|cafe|bar'
+                      : 'tourist_attraction|point_of_interest'
                 }
               />
             </Grid>
           )}
 
-          {/* Manual Location Input for Flights and Events */}
-          {(type === 'flight' || type === 'event') && (
+          {/* Manual Location Input for Flights, Events, Ships */}
+          {(type === 'flight' || type === 'event' || type === 'ship') && (
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth

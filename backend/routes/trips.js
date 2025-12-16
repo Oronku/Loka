@@ -1,4 +1,5 @@
 import express from "express";
+import { ObjectId } from "mongodb";
 import { getDatabase } from "../config/database.js";
 import { memoryStore } from "../config/memoryStore.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
@@ -21,7 +22,14 @@ async function getTripOr404(req, res) {
   let trip;
   if (collection) {
     // Use MongoDB - filter by userId
-    trip = await collection.findOne({ id: req.params.id, userId: req.user.id });
+    const query = {
+      userId: req.user.id,
+      $or: [{ id: req.params.id }],
+    };
+    if (ObjectId.isValid(req.params.id)) {
+      query.$or.push({ _id: new ObjectId(req.params.id) });
+    }
+    trip = await collection.findOne(query);
   } else {
     // Fallback to memory store
     trip = memoryStore.trips.findById(req.params.id);
@@ -34,6 +42,9 @@ async function getTripOr404(req, res) {
     res.status(404).json({ error: "Trip not found" });
     return null;
   }
+  // Ensure id exists
+  if (!trip.id) trip.id = trip._id.toString();
+
   // Ensure arrays exist
   trip.flights = Array.isArray(trip.flights) ? trip.flights : [];
   trip.hotels = Array.isArray(trip.hotels) ? trip.hotels : [];
@@ -65,12 +76,14 @@ router.get("/", async (req, res) => {
       sharedTrips.forEach((trip) => {
         trip.isShared = true;
         trip.isOwner = false;
+        if (!trip.id) trip.id = trip._id.toString();
       });
 
       // Mark owned trips
       ownedTrips.forEach((trip) => {
         trip.isShared = false;
         trip.isOwner = true;
+        if (!trip.id) trip.id = trip._id.toString();
       });
 
       trips = [...ownedTrips, ...sharedTrips];
@@ -104,7 +117,13 @@ router.get("/:id", async (req, res) => {
     let trip;
     if (collection) {
       // Use MongoDB
-      trip = await collection.findOne({ id: req.params.id });
+      const query = {
+        $or: [{ id: req.params.id }],
+      };
+      if (ObjectId.isValid(req.params.id)) {
+        query.$or.push({ _id: new ObjectId(req.params.id) });
+      }
+      trip = await collection.findOne(query);
     } else {
       // Fallback to memory store
       trip = memoryStore.trips.findById(req.params.id);
@@ -113,6 +132,9 @@ router.get("/:id", async (req, res) => {
     if (!trip) {
       return res.status(404).json({ error: "Trip not found" });
     }
+
+    // Ensure id exists (fallback for AI-created trips)
+    if (!trip.id) trip.id = trip._id.toString();
 
     // Check if user has access (owner or shared with)
     const isOwner = trip.userId === req.user.id;

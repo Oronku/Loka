@@ -1,6 +1,6 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import { connectToDatabase, closeDatabase } from "./config/database.js";
 import authRoutes from "./routes/auth.js";
 import hotelRoutes from "./routes/hotels.js";
@@ -12,8 +12,7 @@ import quicketRoutes from "./routes/quicket.js";
 import chatRoutes from "./routes/chats.js";
 import friendRoutes from "./routes/friends.js";
 import checkInRoutes from "./routes/checkins.js";
-
-dotenv.config();
+import aiRoutes from "./routes/ai.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,6 +41,7 @@ app.use("/api/quicket", quicketRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/friends", friendRoutes);
 app.use("/api/checkins", checkInRoutes);
+app.use("/api/ai", aiRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

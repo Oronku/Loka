@@ -87,7 +87,7 @@ interface ChatWindowProps {
   chatId: string;
   onClose: () => void;
   initialPosition?: { x: number; y: number };
-  contextType?: 'quicket_item' | 'trip' | 'friend_group';
+  contextType?: 'quicket_item' | 'trip' | 'friend_group' | 'ai_assistant';
 }
 
 export default function ChatWindow({
@@ -105,19 +105,124 @@ export default function ChatWindow({
   const [error, setError] = useState('');
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [showParticipants, setShowParticipants] = useState(false);
+  const [isTyping, setIsTyping] = useState(false); // For AI typing indicator
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const nodeRef = useRef(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const prevMessagesLengthRef = useRef(0);
+  const userScrolledRef = useRef(false);
+
+  // Special handling for Loka AI
+  const isLoka = contextType === 'ai_assistant';
 
   // Fetch chat and messages
   useEffect(() => {
-    fetchChat();
-    const interval = setInterval(fetchMessages, 3000); // Poll every 3 seconds
-    return () => clearInterval(interval);
-  }, [chatId]);
+    if (isLoka) {
+      setLoading(false);
+      // Initialize Loka chat
+      setChat({
+        _id: 'loka-ai-chat',
+        contextType: 'ai_assistant',
+        contextId: 'loka',
+        participants: [
+          {
+            userId: 'loka-ai',
+            name: 'Loka',
+            email: 'ai@meetloca.com',
+            role: 'owner',
+            joinedAt: new Date(),
+          },
+        ],
+        permissions: {
+          canInvite: [],
+          canRemove: [],
+          canMessage: ['owner', 'member'],
+        },
+        status: 'active',
+        metadata: {
+          groupName: 'Loka AI Assistant',
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
 
-  // Auto-scroll to bottom
+      // Load local messages or welcome message
+      const savedMessages = localStorage.getItem('loka_messages');
+      if (savedMessages) {
+        setMessages(JSON.parse(savedMessages));
+      } else {
+        setMessages([
+          {
+            _id: 'welcome',
+            chatId: 'loka-ai-chat',
+            senderId: 'loka-ai',
+            senderName: 'Loka',
+            senderEmail: 'ai@meetloca.com',
+            text: "Hi! I'm Loka, your AI travel assistant. I can help you plan trips, find flights, and manage your itinerary. How can I help you today?",
+            timestamp: new Date(),
+          },
+        ]);
+      }
+    } else {
+      fetchChat();
+      // Poll less frequently (10 seconds instead of 3)
+      // Only poll for group chats where others might be messaging
+      let interval: NodeJS.Timeout;
+
+      // Only start polling if window is not minimized
+      if (!isMinimized) {
+        interval = setInterval(fetchMessages, 10000);
+      }
+
+      return () => {
+        if (interval) clearInterval(interval);
+      };
+    }
+  }, [chatId, isLoka, isMinimized]);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isLoka) {
+      localStorage.setItem('loka_messages', JSON.stringify(messages));
+    }
+  }, [messages, isLoka]);
+
+  // Check if user is near bottom of chat
+  const handleScroll = () => {
+    if (!messagesContainerRef.current) return;
+
+    const { scrollTop, scrollHeight, clientHeight } =
+      messagesContainerRef.current;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
+
+    // Mark that user has manually scrolled
+    if (!isNearBottom) {
+      userScrolledRef.current = true;
+      setShouldAutoScroll(false);
+    } else {
+      userScrolledRef.current = false;
+      setShouldAutoScroll(true);
+    }
+  };
+
+  // Auto-scroll to bottom only when new messages arrive and user hasn't scrolled up
+  useEffect(() => {
+    const hasNewMessages = messages.length > prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+
+    // Only auto-scroll if there are new messages AND user hasn't manually scrolled up
+    if (
+      hasNewMessages &&
+      !userScrolledRef.current &&
+      messagesContainerRef.current
+    ) {
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTop =
+            messagesContainerRef.current.scrollHeight;
+        }
+      });
+    }
   }, [messages]);
 
   const fetchChat = async () => {
@@ -164,7 +269,6 @@ export default function ChatWindow({
       // Use unified chat endpoint for all chats
       const endpoint = `/api/chats/${chatId}/messages`;
 
-      console.log('Fetching messages from:', endpoint);
       const response = await fetch(`http://localhost:3001${endpoint}`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -178,7 +282,6 @@ export default function ChatWindow({
       }
 
       const data = await response.json();
-      console.log('Messages received:', data.messages);
       setMessages(data.messages || []);
     } catch (err) {
       console.error('Error fetching messages:', err);
@@ -187,6 +290,71 @@ export default function ChatWindow({
 
   const sendMessage = async () => {
     if (!newMessage.trim() || chat?.locked) return;
+
+    const messageText = newMessage;
+    setNewMessage('');
+
+    // Enable auto-scroll when user sends a message
+    userScrolledRef.current = false;
+    setShouldAutoScroll(true);
+
+    if (isLoka) {
+      // Optimistic update
+      const tempId = Date.now().toString();
+      const userMsg: Message = {
+        _id: tempId,
+        chatId: 'loka-ai-chat',
+        senderId: user?.id || '',
+        senderName: user?.name || 'Me',
+        senderEmail: user?.email || '',
+        text: messageText,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, userMsg]);
+      setIsTyping(true);
+
+      try {
+        const token = localStorage.getItem('authToken');
+        const response = await fetch('http://localhost:3001/api/ai/message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            message: messageText,
+            context: { userId: user?.id },
+          }),
+        });
+
+        const data = await response.json();
+
+        // Simulate typing delay
+        setTimeout(() => {
+          const aiMsg: Message = {
+            _id: Date.now().toString(),
+            chatId: 'loka-ai-chat',
+            senderId: 'loka-ai',
+            senderName: 'Loka',
+            senderEmail: 'ai@meetloca.com',
+            text: data.text,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, aiMsg]);
+          setIsTyping(false);
+
+          // Execute action if any
+          if (data.action) {
+            handleAiAction(data.action);
+          }
+        }, 1000);
+      } catch (err) {
+        console.error('AI Error:', err);
+        setIsTyping(false);
+      }
+      return;
+    }
 
     try {
       const token = localStorage.getItem('authToken');
@@ -216,6 +384,26 @@ export default function ChatWindow({
     } catch (err) {
       console.error('Error sending message:', err);
       setError('Failed to send message');
+    }
+  };
+
+  const handleAiAction = async (action: any) => {
+    try {
+      const token = localStorage.getItem('authToken');
+      await fetch('http://localhost:3001/api/ai/action', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          actionType: action.type,
+          actionData: action.data,
+        }),
+      });
+      // Refresh data if needed (e.g. reload trips)
+    } catch (err) {
+      console.error('Action failed:', err);
     }
   };
 
@@ -296,7 +484,7 @@ export default function ChatWindow({
     return chat.contextType?.replace('_', ' ').toUpperCase() || '';
   };
 
-  if (loading && !chat) {
+  if (loading && !chat && !isLoka) {
     return (
       <Draggable nodeRef={nodeRef} defaultPosition={initialPosition}>
         <Paper
@@ -317,7 +505,7 @@ export default function ChatWindow({
     );
   }
 
-  if (error && !chat) {
+  if (error && !chat && !isLoka) {
     return (
       <Draggable nodeRef={nodeRef} defaultPosition={initialPosition}>
         <Paper
@@ -469,6 +657,8 @@ export default function ChatWindow({
 
             {/* Messages */}
             <Box
+              ref={messagesContainerRef}
+              onScroll={handleScroll}
               sx={{
                 flex: 1,
                 overflow: 'auto',
@@ -491,9 +681,16 @@ export default function ChatWindow({
                       alignItems: 'flex-start',
                     }}
                   >
-                    <Avatar sx={{ width: 32, height: 32 }}>
-                      {msg.senderName[0]?.toUpperCase()}
-                    </Avatar>
+                    {msg.senderId === 'loka-ai' ? (
+                      <Avatar
+                        src="http://localhost:5190/videos/idle-animation.apng"
+                        sx={{ width: 32, height: 32 }}
+                      />
+                    ) : (
+                      <Avatar sx={{ width: 32, height: 32 }}>
+                        {msg.senderName[0]?.toUpperCase()}
+                      </Avatar>
+                    )}
 
                     <Box sx={{ maxWidth: '70%' }}>
                       {!isOwnMessage && (
@@ -506,13 +703,65 @@ export default function ChatWindow({
                       )}
                       <Paper
                         sx={{
-                          p: 1,
-                          bgcolor: isOwnMessage ? 'primary.main' : 'white',
+                          p: msg.senderId === 'loka-bot' ? 2 : 1.5,
+                          bgcolor: isOwnMessage
+                            ? 'primary.main'
+                            : msg.senderId === 'loka-bot'
+                              ? '#f8f9fa'
+                              : 'white',
                           color: isOwnMessage ? 'white' : 'text.primary',
                           borderRadius: 2,
+                          boxShadow:
+                            msg.senderId === 'loka-bot'
+                              ? '0 1px 3px rgba(0,0,0,0.08)'
+                              : undefined,
                         }}
                       >
-                        <Typography variant="body2">{msg.text}</Typography>
+                        {msg.senderId === 'loka-bot' ? (
+                          <Box sx={{ '& p': { margin: 0 } }}>
+                            {msg.text.split('\n').map((line, idx) => {
+                              // Parse bold text **text**
+                              const boldRegex = /\*\*(.*?)\*\*/g;
+                              const parts = [];
+                              let lastIndex = 0;
+                              let match;
+
+                              while ((match = boldRegex.exec(line)) !== null) {
+                                if (match.index > lastIndex) {
+                                  parts.push(
+                                    line.substring(lastIndex, match.index)
+                                  );
+                                }
+                                parts.push(
+                                  <strong key={match.index}>{match[1]}</strong>
+                                );
+                                lastIndex = match.index + match[0].length;
+                              }
+                              if (lastIndex < line.length) {
+                                parts.push(line.substring(lastIndex));
+                              }
+
+                              return (
+                                <Typography
+                                  key={idx}
+                                  variant="body2"
+                                  sx={{
+                                    mb:
+                                      idx < msg.text.split('\n').length - 1
+                                        ? 0.5
+                                        : 0,
+                                    lineHeight: 1.6,
+                                    fontSize: '0.9rem',
+                                  }}
+                                >
+                                  {parts.length > 0 ? parts : line || <br />}
+                                </Typography>
+                              );
+                            })}
+                          </Box>
+                        ) : (
+                          <Typography variant="body2">{msg.text}</Typography>
+                        )}
                       </Paper>
                       <Typography
                         variant="caption"

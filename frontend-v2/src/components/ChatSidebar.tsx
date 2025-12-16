@@ -24,9 +24,11 @@ import {
   LocalOffer as QuicketIcon,
   Flight as TripIcon,
   People as FriendsIcon,
+  SmartToy as AiIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { format } from 'date-fns';
+import { useChat } from '../context/ChatContext';
 
 interface Chat {
   _id: string;
@@ -78,10 +80,13 @@ export default function ChatSidebar({
   const [loading, setLoading] = useState(true);
   const [filteredChats, setFilteredChats] = useState<Chat[]>([]);
 
+  const { openChat } = useChat();
+
   useEffect(() => {
     if (open) {
       fetchChats();
-      const interval = setInterval(fetchChats, 5000); // Refresh every 5 seconds
+      // Poll less frequently (30 seconds) - chats don't change that often
+      const interval = setInterval(fetchChats, 30000);
       return () => clearInterval(interval);
     }
   }, [open]);
@@ -89,6 +94,15 @@ export default function ChatSidebar({
   useEffect(() => {
     filterChats();
   }, [chats, searchQuery, activeTab]);
+
+  const handleLokaClick = () => {
+    // Open Loka chat
+    // We use a special ID for Loka chat
+    openChat('loka-ai-chat', 'ai_assistant');
+    if (window.innerWidth < 600) {
+      onClose();
+    }
+  };
 
   const fetchChats = async () => {
     try {
@@ -251,6 +265,37 @@ export default function ChatSidebar({
           <CloseIcon />
         </IconButton>
       </Box>
+
+      {/* Loka AI Entry */}
+      <List disablePadding sx={{ p: 1 }}>
+        <ListItem
+          button
+          onClick={handleLokaClick}
+          sx={{
+            borderRadius: 2,
+            bgcolor: 'primary.50',
+            '&:hover': { bgcolor: 'primary.100' },
+            mb: 1,
+          }}
+        >
+          <ListItemAvatar>
+            <Avatar
+              src="http://localhost:5190/videos/idle-animation.apng"
+              sx={{ bgcolor: 'primary.main' }}
+            >
+              <AiIcon />
+            </Avatar>
+          </ListItemAvatar>
+          <ListItemText
+            primary="Loka"
+            secondary="AI Travel Assistant"
+            primaryTypographyProps={{
+              fontWeight: 'bold',
+              color: 'primary.main',
+            }}
+          />
+        </ListItem>
+      </List>
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs

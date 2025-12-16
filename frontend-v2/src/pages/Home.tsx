@@ -310,7 +310,7 @@ export default function Home() {
           {/* Owned Trips Grid */}
           <Grid container spacing={3}>
             {ownedTrips.map((t, index) => (
-              <Grid item xs={12} sm={6} md={4} key={t.id}>
+              <Grid item xs={12} sm={6} md={4} key={t.id || index}>
                 <Fade in timeout={500 + index * 100}>
                   <Card
                     sx={{
@@ -489,7 +489,7 @@ export default function Home() {
 
               <Grid container spacing={3}>
                 {sharedTrips.map((t, index) => (
-                  <Grid item xs={12} sm={6} md={4} key={t.id}>
+                  <Grid item xs={12} sm={6} md={4} key={t.id || index}>
                     <Fade in timeout={500 + index * 100}>
                       <Card
                         sx={{

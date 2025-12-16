@@ -13,7 +13,7 @@ sleep 3
 
 # Start frontend
 echo "Starting frontend on port 5190..."
-cd ../frontend-v2 && npm run dev &
+cd frontend-v2 && npm run dev &
 FRONTEND_PID=$!
 
 echo ""

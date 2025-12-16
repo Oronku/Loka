@@ -199,249 +199,258 @@ export function Layout({ children }: { children: React.ReactNode }) {
     >
       {/* Cloud background sits behind the whole layout. You can tweak count/opacity here. */}
       <CloudsBackground count={200} />
-      <AppBar
-        position="sticky"
-        elevation={0}
-        sx={{
-          top: 0,
-          zIndex: 1100,
-          borderBottom: '1px solid',
-          borderColor: 'rgba(0,0,0,0.05)',
-        }}
-      >
-        <Toolbar sx={{ gap: { xs: 1, sm: 2 }, minHeight: { xs: 64, md: 72 } }}>
-          <Typography
-            variant="h6"
-            component={Link}
-            to="/"
-            sx={{
-              flexGrow: 0,
-              mr: 4,
-              textDecoration: 'none',
-              color: 'primary.main',
-              fontWeight: 800,
-              fontSize: '1.5rem',
-              display: 'flex',
-              alignItems: 'center',
-              letterSpacing: '-0.02em',
-            }}
+      <ChatProvider onOpenChat={handleChatSelect}>
+        <AppBar
+          position="sticky"
+          elevation={0}
+          sx={{
+            top: 0,
+            zIndex: 1100,
+            borderBottom: '1px solid',
+            borderColor: 'rgba(0,0,0,0.05)',
+          }}
+        >
+          <Toolbar
+            sx={{ gap: { xs: 1, sm: 2 }, minHeight: { xs: 64, md: 72 } }}
           >
-            <img
-              src={logo}
-              alt="Loka Logo"
-              style={{ height: 40, marginRight: 12 }}
-            />
-            Meet Loka
-          </Typography>
-          {isMobile ? (
-            <>
-              <IconButton
-                edge="start"
-                onClick={handleNavMenuOpen}
-                aria-label="Open navigation"
-                sx={{ ml: 'auto' }}
-              >
-                <MenuIcon />
-              </IconButton>
-              <Menu
-                anchorEl={navMenuEl}
-                open={Boolean(navMenuEl)}
-                onClose={handleNavMenuClose}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-                PaperProps={{
-                  elevation: 0,
-                  sx: {
-                    overflow: 'visible',
-                    filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.1))',
-                    mt: 1.5,
-                    borderRadius: 3,
-                  },
-                }}
-              >
-                <MenuItem onClick={() => goTo('/')}>
-                  <Dashboard fontSize="small" sx={{ mr: 1 }} />
-                  Dashboard
-                </MenuItem>
-                <MenuItem onClick={() => goTo('/trip/new')}>
-                  <Flight fontSize="small" sx={{ mr: 1 }} />
-                  New Trip
-                </MenuItem>
-                <MenuItem onClick={() => goTo('/quicket')}>
-                  <LocalOffer fontSize="small" sx={{ mr: 1 }} />
-                  Quicket
-                </MenuItem>
-                <MenuItem onClick={() => goTo('/friends')}>
-                  <Badge badgeContent={friendRequestCount} color="error">
-                    <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
-                  </Badge>
-                  Friends
-                </MenuItem>
-                <MenuItem onClick={() => goTo('/check-in')}>
-                  <LocationOn fontSize="small" sx={{ mr: 1 }} />
-                  Check In
-                </MenuItem>
-              </Menu>
-            </>
-          ) : (
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              {[
-                { to: '/', icon: <Dashboard />, label: 'Dashboard' },
-                { to: '/trip/new', icon: <Flight />, label: 'New Trip' },
-                { to: '/quicket', icon: <LocalOffer />, label: 'Quicket' },
-                {
-                  to: '/friends',
-                  icon: (
-                    <Badge badgeContent={friendRequestCount} color="error">
-                      <PeopleIcon />
-                    </Badge>
-                  ),
-                  label: 'Friends',
-                },
-                { to: '/check-in', icon: <LocationOn />, label: 'Check In' },
-              ].map((item) => (
-                <Button
-                  key={item.to}
-                  component={NavLink}
-                  to={item.to}
-                  startIcon={item.icon}
-                  sx={{
-                    color: 'text.secondary',
-                    px: 2,
-                    py: 1,
-                    borderRadius: 3,
-                    '&:hover': {
-                      bgcolor: 'rgba(0, 157, 133, 0.04)',
-                      color: 'primary.main',
-                    },
-                    '&.active': {
-                      color: 'primary.main',
-                      bgcolor: 'rgba(0, 157, 133, 0.08)',
-                      fontWeight: 700,
-                    },
-                    transition: 'all 0.2s ease',
-                  }}
-                >
-                  {item.label}
-                </Button>
-              ))}
-            </Box>
-          )}
-          <Box
-            sx={{
-              ml: isMobile ? 0 : 'auto',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 2,
-              flexShrink: 0,
-            }}
-          >
-            <Chip label="v2" size="small" variant="outlined" color="primary" />
-            {user && (
+            <Typography
+              variant="h6"
+              component={Link}
+              to="/"
+              sx={{
+                flexGrow: 0,
+                mr: 4,
+                textDecoration: 'none',
+                color: 'primary.main',
+                fontWeight: 800,
+                fontSize: '1.5rem',
+                display: 'flex',
+                alignItems: 'center',
+                letterSpacing: '-0.02em',
+              }}
+            >
+              <img
+                src={logo}
+                alt="Loka Logo"
+                style={{ height: 40, marginRight: 12 }}
+              />
+              Meet Loka
+            </Typography>
+            {isMobile ? (
               <>
-                {!isMobile && (
-                  <Typography variant="body2" color="text.secondary" noWrap>
-                    {user.name}
-                  </Typography>
-                )}
-                <IconButton onClick={handleMenuOpen} size="small">
-                  <Avatar
-                    src={user.picture}
-                    alt={user.name}
-                    sx={{ width: 32, height: 32 }}
-                  />
+                <IconButton
+                  edge="start"
+                  onClick={handleNavMenuOpen}
+                  aria-label="Open navigation"
+                  sx={{ ml: 'auto' }}
+                >
+                  <MenuIcon />
                 </IconButton>
                 <Menu
-                  anchorEl={anchorEl}
-                  open={Boolean(anchorEl)}
-                  onClose={handleMenuClose}
-                  anchorOrigin={{
-                    vertical: 'bottom',
-                    horizontal: 'right',
-                  }}
-                  transformOrigin={{
-                    vertical: 'top',
-                    horizontal: 'right',
+                  anchorEl={navMenuEl}
+                  open={Boolean(navMenuEl)}
+                  onClose={handleNavMenuClose}
+                  anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                  transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                  PaperProps={{
+                    elevation: 0,
+                    sx: {
+                      overflow: 'visible',
+                      filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.1))',
+                      mt: 1.5,
+                      borderRadius: 3,
+                    },
                   }}
                 >
-                  {isMobile && [
-                    <MenuItem key="user-info" disabled>
-                      <Typography variant="body2" color="text.secondary">
-                        {user.name}
-                      </Typography>
-                    </MenuItem>,
-                    <Divider key="divider" sx={{ my: 0.5 }} />,
-                  ]}
-                  <MenuItem
-                    onClick={() => {
-                      handleMenuClose();
-                      navigate('/profile');
-                    }}
-                  >
-                    <Settings sx={{ mr: 1 }} fontSize="small" />
-                    Profile Settings
+                  <MenuItem onClick={() => goTo('/')}>
+                    <Dashboard fontSize="small" sx={{ mr: 1 }} />
+                    Dashboard
                   </MenuItem>
-                  <MenuItem onClick={handleLogout}>
-                    <Logout sx={{ mr: 1 }} fontSize="small" />
-                    Logout
+                  <MenuItem onClick={() => goTo('/trip/new')}>
+                    <Flight fontSize="small" sx={{ mr: 1 }} />
+                    New Trip
+                  </MenuItem>
+                  <MenuItem onClick={() => goTo('/quicket')}>
+                    <LocalOffer fontSize="small" sx={{ mr: 1 }} />
+                    Quicket
+                  </MenuItem>
+                  <MenuItem onClick={() => goTo('/friends')}>
+                    <Badge badgeContent={friendRequestCount} color="error">
+                      <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
+                    </Badge>
+                    Friends
+                  </MenuItem>
+                  <MenuItem onClick={() => goTo('/check-in')}>
+                    <LocationOn fontSize="small" sx={{ mr: 1 }} />
+                    Check In
                   </MenuItem>
                 </Menu>
               </>
+            ) : (
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {[
+                  { to: '/', icon: <Dashboard />, label: 'Dashboard' },
+                  { to: '/trip/new', icon: <Flight />, label: 'New Trip' },
+                  { to: '/quicket', icon: <LocalOffer />, label: 'Quicket' },
+                  {
+                    to: '/friends',
+                    icon: (
+                      <Badge badgeContent={friendRequestCount} color="error">
+                        <PeopleIcon />
+                      </Badge>
+                    ),
+                    label: 'Friends',
+                  },
+                  { to: '/check-in', icon: <LocationOn />, label: 'Check In' },
+                ].map((item) => (
+                  <Button
+                    key={item.to}
+                    component={NavLink}
+                    to={item.to}
+                    startIcon={item.icon}
+                    sx={{
+                      color: 'text.secondary',
+                      px: 2,
+                      py: 1,
+                      borderRadius: 3,
+                      '&:hover': {
+                        bgcolor: 'rgba(0, 157, 133, 0.04)',
+                        color: 'primary.main',
+                      },
+                      '&.active': {
+                        color: 'primary.main',
+                        bgcolor: 'rgba(0, 157, 133, 0.08)',
+                        fontWeight: 700,
+                      },
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    {item.label}
+                  </Button>
+                ))}
+              </Box>
             )}
-          </Box>
-        </Toolbar>
-      </AppBar>
-      <Container
-        maxWidth="xl"
-        component="main"
-        sx={{
-          flexGrow: 1,
-          py: { xs: 0, md: 4 },
-          display: 'flex',
-          flexDirection: 'column',
-          px: { xs: 2, sm: 3, md: 4 },
-        }}
-      >
-        <ChatProvider onOpenChat={handleChatSelect}>{children}</ChatProvider>
-      </Container>
+            <Box
+              sx={{
+                ml: isMobile ? 0 : 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                flexShrink: 0,
+              }}
+            >
+              <Chip
+                label="v2"
+                size="small"
+                variant="outlined"
+                color="primary"
+              />
+              {user && (
+                <>
+                  {!isMobile && (
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      {user.name}
+                    </Typography>
+                  )}
+                  <IconButton onClick={handleMenuOpen} size="small">
+                    <Avatar
+                      src={user.picture}
+                      alt={user.name}
+                      sx={{ width: 32, height: 32 }}
+                    />
+                  </IconButton>
+                  <Menu
+                    anchorEl={anchorEl}
+                    open={Boolean(anchorEl)}
+                    onClose={handleMenuClose}
+                    anchorOrigin={{
+                      vertical: 'bottom',
+                      horizontal: 'right',
+                    }}
+                    transformOrigin={{
+                      vertical: 'top',
+                      horizontal: 'right',
+                    }}
+                  >
+                    {isMobile && [
+                      <MenuItem key="user-info" disabled>
+                        <Typography variant="body2" color="text.secondary">
+                          {user.name}
+                        </Typography>
+                      </MenuItem>,
+                      <Divider key="divider" sx={{ my: 0.5 }} />,
+                    ]}
+                    <MenuItem
+                      onClick={() => {
+                        handleMenuClose();
+                        navigate('/profile');
+                      }}
+                    >
+                      <Settings sx={{ mr: 1 }} fontSize="small" />
+                      Profile Settings
+                    </MenuItem>
+                    <MenuItem onClick={handleLogout}>
+                      <Logout sx={{ mr: 1 }} fontSize="small" />
+                      Logout
+                    </MenuItem>
+                  </Menu>
+                </>
+              )}
+            </Box>
+          </Toolbar>
+        </AppBar>
+        <Container
+          maxWidth="xl"
+          component="main"
+          sx={{
+            flexGrow: 1,
+            py: { xs: 0, md: 4 },
+            display: 'flex',
+            flexDirection: 'column',
+            px: { xs: 2, sm: 3, md: 4 },
+          }}
+        >
+          {children}
+        </Container>
 
-      {/* Global Chat FAB */}
-      {user && (
-        <ChatFab
-          onClick={() => setChatSidebarOpen(true)}
-          unreadCount={totalUnreadCount}
+        {/* Global Chat FAB */}
+        {user && (
+          <ChatFab
+            onClick={() => setChatSidebarOpen(true)}
+            unreadCount={totalUnreadCount}
+          />
+        )}
+
+        {/* Chat Sidebar */}
+        <ChatSidebar
+          open={chatSidebarOpen}
+          onClose={() => setChatSidebarOpen(false)}
+          onChatSelect={handleChatSelect}
+          onNewChat={handleNewChat}
         />
-      )}
 
-      {/* Chat Sidebar */}
-      <ChatSidebar
-        open={chatSidebarOpen}
-        onClose={() => setChatSidebarOpen(false)}
-        onChatSelect={handleChatSelect}
-        onNewChat={handleNewChat}
-      />
-
-      {/* Chat Context Selector Modal */}
-      <ChatContextSelector
-        open={chatSelectorOpen}
-        onClose={() => setChatSelectorOpen(false)}
-        contextType={
-          selectedContextType === 'direct'
-            ? 'friend_group'
-            : selectedContextType
-        }
-        onCreateChat={handleCreateChat}
-      />
-
-      {/* Open Chat Windows */}
-      {openChats.map((chat, index) => (
-        <ChatWindowModern
-          key={chat.chatId}
-          chatId={chat.chatId}
-          onClose={() => handleCloseChat(chat.chatId)}
-          initialPosition={{ x: 100 + index * 50, y: 100 + index * 50 }}
+        {/* Chat Context Selector Modal */}
+        <ChatContextSelector
+          open={chatSelectorOpen}
+          onClose={() => setChatSelectorOpen(false)}
+          contextType={
+            selectedContextType === 'direct'
+              ? 'friend_group'
+              : selectedContextType
+          }
+          onCreateChat={handleCreateChat}
         />
-      ))}
+
+        {/* Open Chat Windows */}
+        {openChats.map((chat, index) => (
+          <ChatWindowModern
+            key={chat.chatId}
+            chatId={chat.chatId}
+            onClose={() => handleCloseChat(chat.chatId)}
+            initialPosition={{ x: 100 + index * 50, y: 100 + index * 50 }}
+          />
+        ))}
+      </ChatProvider>
     </Box>
   );
 }

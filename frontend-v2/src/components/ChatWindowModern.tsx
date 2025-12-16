@@ -49,7 +49,13 @@ export default function ChatWindowModern({
 
   useEffect(() => {
     fetchChatAndMessages();
-    const interval = setInterval(fetchMessages, 3000);
+    // Poll for new messages
+    // Loka AI: 5 seconds (to get AI responses quickly)
+    // Group chats: 30 seconds
+    const isLokaChat = chatId === 'loka-ai-chat';
+    const pollInterval = isLokaChat ? 5000 : 30000;
+
+    const interval = setInterval(fetchMessages, pollInterval);
     return () => clearInterval(interval);
   }, [chatId]);
 
@@ -87,9 +93,16 @@ export default function ChatWindowModern({
   const fetchMessages = async () => {
     try {
       const messagesData = await chatApi.getMessages(chatId);
+      const prevLength = messages.length;
+      const newMessages = Array.isArray(messagesData) ? messagesData : [];
+
       // Ensure messagesData is an array
-      setMessages(Array.isArray(messagesData) ? messagesData : []);
-      chatApi.markAsRead(chatId);
+      setMessages(newMessages);
+
+      // Only mark as read if there are NEW messages
+      if (newMessages.length > prevLength) {
+        chatApi.markAsRead(chatId);
+      }
     } catch (err) {
       console.error('Error fetching messages:', err);
     }
@@ -462,6 +475,12 @@ export default function ChatWindowModern({
                     placeholder="Type a message..."
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage(e);
+                      }
+                    }}
                     disabled={sending}
                     multiline
                     maxRows={3}

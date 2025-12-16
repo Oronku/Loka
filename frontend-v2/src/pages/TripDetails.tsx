@@ -459,10 +459,11 @@ export default function TripDetails() {
   const isShared = trip?.isShared === true;
 
   useEffect(() => {
-    if (id)
+    if (id && id !== 'undefined') {
       getTrip(id)
         .then(setTrip)
         .catch((e) => setError(e.message));
+    }
   }, [id]);
 
   // Redirect shared users from list view to timeline
@@ -1035,10 +1036,10 @@ export default function TripDetails() {
 
   const buckets = groupTripByDay(trip);
   const totalCost = [
-    ...trip.flights.map((f) => f.cost || 0),
-    ...trip.hotels.map((h) => h.cost || 0),
-    ...trip.rides.map((r) => r.cost || 0),
-    ...trip.attractions.map((a) => a.cost || 0),
+    ...(trip.flights || []).map((f) => f.cost || 0),
+    ...(trip.hotels || []).map((h) => h.cost || 0),
+    ...(trip.rides || []).map((r) => r.cost || 0),
+    ...(trip.attractions || []).map((a) => a.cost || 0),
   ].reduce((a, b) => a + b, 0);
 
   // Filter helper function
@@ -1305,7 +1306,7 @@ export default function TripDetails() {
                   '& .MuiChip-icon': { color: 'primary.main' },
                 }}
               />
-              {trip.destinations?.length > 0 && (
+              {(trip.destinations || []).length > 0 && (
                 <Typography
                   variant="h6"
                   sx={{ opacity: 0.95, fontWeight: 500 }}
@@ -1380,7 +1381,7 @@ export default function TripDetails() {
             spacing={{ xs: 1.5, md: 4 }}
             flexWrap="wrap"
           >
-            {trip.flights?.length > 0 && (
+            {(trip.flights || []).length > 0 && (
               <Stack direction="row" spacing={1} alignItems="center">
                 <FlightIcon />
                 <Typography variant="h6" fontWeight={600}>
@@ -1389,7 +1390,7 @@ export default function TripDetails() {
                 </Typography>
               </Stack>
             )}
-            {trip.hotels?.length > 0 && (
+            {(trip.hotels || []).length > 0 && (
               <Stack direction="row" spacing={1} alignItems="center">
                 <HotelIcon />
                 <Typography variant="h6" fontWeight={600}>
@@ -1398,7 +1399,7 @@ export default function TripDetails() {
                 </Typography>
               </Stack>
             )}
-            {trip.rides?.length > 0 && (
+            {(trip.rides || []).length > 0 && (
               <Stack direction="row" spacing={1} alignItems="center">
                 <DirectionsCar />
                 <Typography variant="h6" fontWeight={600}>
@@ -1407,7 +1408,7 @@ export default function TripDetails() {
                 </Typography>
               </Stack>
             )}
-            {trip.attractions?.length > 0 && (
+            {(trip.attractions || []).length > 0 && (
               <Stack direction="row" spacing={1} alignItems="center">
                 <AttractionsOutlined />
                 <Typography variant="h6" fontWeight={600}>
@@ -1647,25 +1648,25 @@ export default function TripDetails() {
             />
             <Tab
               value="flights"
-              label={`Flights (${trip.flights.length})`}
+              label={`Flights (${(trip.flights || []).length})`}
               icon={<FlightIcon />}
               iconPosition="start"
             />
             <Tab
               value="hotels"
-              label={`Hotels (${trip.hotels.length})`}
+              label={`Hotels (${(trip.hotels || []).length})`}
               icon={<HotelIcon />}
               iconPosition="start"
             />
             <Tab
               value="rides"
-              label={`Rides (${trip.rides.length})`}
+              label={`Rides (${(trip.rides || []).length})`}
               icon={<DirectionsCar />}
               iconPosition="start"
             />
             <Tab
               value="attractions"
-              label={`Attractions (${trip.attractions.length})`}
+              label={`Attractions (${(trip.attractions || []).length})`}
               icon={<AttractionsOutlined />}
               iconPosition="start"
             />
@@ -1677,7 +1678,7 @@ export default function TripDetails() {
           <Stack spacing={2}>
             {/* Show message if filtering and no items of that type exist */}
             {filter !== 'all' &&
-              trip.flights.length === 0 &&
+              (trip.flights || []).length === 0 &&
               filter === 'flights' && (
                 <Card>
                   <CardContent>
@@ -1705,7 +1706,7 @@ export default function TripDetails() {
                 </Card>
               )}
             {filter !== 'all' &&
-              trip.hotels.length === 0 &&
+              (trip.hotels || []).length === 0 &&
               filter === 'hotels' && (
                 <Card>
                   <CardContent>
@@ -1733,7 +1734,7 @@ export default function TripDetails() {
                 </Card>
               )}
             {filter !== 'all' &&
-              trip.rides.length === 0 &&
+              (trip.rides || []).length === 0 &&
               filter === 'rides' && (
                 <Card>
                   <CardContent>
@@ -1761,7 +1762,7 @@ export default function TripDetails() {
                 </Card>
               )}
             {filter !== 'all' &&
-              trip.attractions.length === 0 &&
+              (trip.attractions || []).length === 0 &&
               filter === 'attractions' && (
                 <Card>
                   <CardContent>
@@ -2617,6 +2618,23 @@ export default function TripDetails() {
                                     : 'inherit',
                                 }}
                               >
+                                {/* Google Places Photo */}
+                                {a.photoReference && (
+                                  <Box
+                                    component="img"
+                                    src={`https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${a.photoReference}&key=${import.meta.env.VITE_GOOGLE_API_KEY || ''}`}
+                                    alt={a.name}
+                                    sx={{
+                                      width: '100%',
+                                      height: 150,
+                                      objectFit: 'cover',
+                                    }}
+                                    onError={(e) => {
+                                      // Hide image if fails to load
+                                      e.currentTarget.style.display = 'none';
+                                    }}
+                                  />
+                                )}
                                 <CardActionArea
                                   onClick={() =>
                                     setExpandedItem(
