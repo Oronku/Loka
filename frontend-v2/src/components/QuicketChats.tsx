@@ -165,7 +165,7 @@ export default function QuicketChats() {
                         label={chat.isSeller ? 'Selling' : 'Buying'}
                         size="small"
                         color={chat.isSeller ? 'success' : 'primary'}
-                        sx={{ ml: 'auto' }}
+                        sx={{ marginInlineStart: 'auto' }}
                       />
                     </Box>
                   }

@@ -38,6 +38,7 @@ import {
   Info,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
+import { useLanguage } from '../context/LanguageContext';
 
 interface BasicInfo {
   name: string;
@@ -46,16 +47,8 @@ interface BasicInfo {
   endDate: string;
 }
 
-const steps = [
-  'Basic Info',
-  'Flights',
-  'Hotels',
-  'Rides',
-  'Attractions',
-  'Review',
-] as const;
-
 export default function NewTripWizard() {
+  const { t } = useLanguage();
   const [step, setStep] = useState<number>(0);
   const [basic, setBasic] = useState<BasicInfo>({
     name: '',
@@ -68,6 +61,15 @@ export default function NewTripWizard() {
   const navigate = useNavigate();
   const theme = useTheme();
   const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
+
+  const steps = [
+    t('stepBasicInfo'),
+    t('flights'),
+    t('hotels'),
+    t('rides'),
+    t('attractions'),
+    t('stepReview'),
+  ];
 
   // Reset wizard when component mounts (new trip creation)
   useEffect(() => {
@@ -147,7 +149,7 @@ export default function NewTripWizard() {
               width: { xs: '100%', sm: 'auto' },
             }}
           >
-            Cancel
+            {t('cancel')}
           </Button>
         </Stack>
         <Typography
@@ -155,7 +157,7 @@ export default function NewTripWizard() {
           fontWeight={700}
           sx={{ fontSize: { xs: '2rem', md: '2.5rem' } }}
         >
-          Create New Trip
+          {t('createNewTripTitle')}
         </Typography>
         <Typography
           fontWeight={900}
@@ -166,7 +168,7 @@ export default function NewTripWizard() {
             fontSize: { xs: '0.95rem', sm: '1rem' },
           }}
         >
-          Plan your perfect journey in just a few steps
+          {t('organizeEverything')}
         </Typography>
       </Paper>
 
@@ -217,38 +219,38 @@ export default function NewTripWizard() {
           <Stack spacing={3}>
             <Box>
               <Typography variant="h5" fontWeight={600} gutterBottom>
-                Basic Information
+                {t('tripBasicInfo')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Let's start with the essential details about your trip
+                {t('tripNameHelper')}
               </Typography>
             </Box>
 
             <TextField
-              label="Trip Name"
-              placeholder="e.g., Summer Vacation 2025"
+              label={t('tripName')}
+              placeholder={t('tripNamePlaceholder')}
               value={basic.name}
               onChange={(e) => setBasic({ ...basic, name: e.target.value })}
               fullWidth
               required
-              helperText="Give your trip a memorable name"
+              helperText={t('tripNameHelper')}
             />
 
             <TextField
-              label="Destinations"
-              placeholder="e.g., Paris, Rome, Barcelona"
+              label={t('destinations')}
+              placeholder="Paris, Rome, Barcelona"
               value={basic.destinations}
               onChange={(e) =>
                 setBasic({ ...basic, destinations: e.target.value })
               }
               fullWidth
-              helperText="Separate multiple destinations with commas"
+              helperText={t('multiCity')}
             />
 
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Start Date"
+                  label={t('startDate')}
                   type="date"
                   value={basic.startDate}
                   onChange={(e) =>
@@ -261,7 +263,7 @@ export default function NewTripWizard() {
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="End Date"
+                  label={t('endDate')}
                   type="date"
                   value={basic.endDate}
                   onChange={(e) =>
@@ -281,7 +283,7 @@ export default function NewTripWizard() {
                     basic.startDate &&
                     basic.endDate &&
                     basic.endDate < basic.startDate
-                      ? 'End date must be after start date'
+                      ? t('invalidDateRange')
                       : undefined
                   }
                 />
@@ -312,10 +314,10 @@ export default function NewTripWizard() {
                 fullWidth={isSmall}
               >
                 {creating
-                  ? 'Creating Trip...'
+                  ? t('creatingTrip')
                   : trip
-                    ? 'Update & Continue'
-                    : 'Create Trip & Continue'}
+                    ? `${t('update')} & ${t('continue')}`
+                    : `${t('create')} & ${t('continue')}`}
               </Button>
             </Stack>
           </Stack>
@@ -325,9 +327,9 @@ export default function NewTripWizard() {
       {/* Flights step */}
       {step === 1 && (
         <StepCard
-          title="Add Flights"
+          title={t('addFlight')}
           subtitle={
-            trip ? `Trip: ${trip.name}` : 'Create the trip first to add items.'
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
           }
         >
           {trip ? (
@@ -339,7 +341,7 @@ export default function NewTripWizard() {
               />
               {trip.flights.length > 0 && (
                 <div>
-                  <div className="text-sm font-medium mb-1">Flights added</div>
+                  <div className="text-sm font-medium mb-1">{t('flights')}</div>
                   <ul className="list-disc pl-5 text-sm text-gray-700">
                     {trip.flights.map((f, i) => (
                       <li key={i}>
@@ -362,9 +364,9 @@ export default function NewTripWizard() {
       {/* Hotels step */}
       {step === 2 && (
         <StepCard
-          title="Add Hotels"
+          title={t('addHotel')}
           subtitle={
-            trip ? `Trip: ${trip.name}` : 'Create the trip first to add items.'
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
           }
         >
           {trip ? (
@@ -376,7 +378,7 @@ export default function NewTripWizard() {
               />
               {trip.hotels.length > 0 && (
                 <div>
-                  <div className="text-sm font-medium mb-1">Hotels added</div>
+                  <div className="text-sm font-medium mb-1">{t('hotels')}</div>
                   <ul className="list-disc pl-5 text-sm text-gray-700">
                     {trip.hotels.map((h, i) => (
                       <li key={i}>
@@ -397,9 +399,9 @@ export default function NewTripWizard() {
       {/* Rides step */}
       {step === 3 && (
         <StepCard
-          title="Add Rides"
+          title={t('addRide')}
           subtitle={
-            trip ? `Trip: ${trip.name}` : 'Create the trip first to add items.'
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
           }
         >
           {trip ? (
@@ -411,7 +413,7 @@ export default function NewTripWizard() {
               />
               {trip.rides.length > 0 && (
                 <div>
-                  <div className="text-sm font-medium mb-1">Rides added</div>
+                  <div className="text-sm font-medium mb-1">{t('rides')}</div>
                   <ul className="list-disc pl-5 text-sm text-gray-700">
                     {trip.rides.map((r, i) => (
                       <li key={i}>
@@ -433,9 +435,9 @@ export default function NewTripWizard() {
       {/* Attractions step */}
       {step === 4 && (
         <StepCard
-          title="Add Attractions"
+          title={t('addAttraction')}
           subtitle={
-            trip ? `Trip: ${trip.name}` : 'Create the trip first to add items.'
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
           }
         >
           {trip ? (
@@ -475,8 +477,8 @@ export default function NewTripWizard() {
       {/* Review step */}
       {step === 5 && (
         <StepCard
-          title="Review & Finish"
-          subtitle={trip ? `Your trip is ready!` : 'Create the trip first.'}
+          title={t('reviewAndCreate')}
+          subtitle={trip ? t('tripCreationSuccess') : t('tripBasicInfo')}
         >
           {trip ? (
             <Stack spacing={3}>
@@ -492,12 +494,11 @@ export default function NewTripWizard() {
                   <Stack direction="row" spacing={2} alignItems="center" mb={2}>
                     <Check sx={{ color: 'success.main', fontSize: 32 }} />
                     <Typography variant="h6" fontWeight={600}>
-                      Trip Created Successfully!
+                      {t('tripCreationSuccess')}
                     </Typography>
                   </Stack>
                   <Typography variant="body2" color="text.secondary">
-                    Your trip "{trip.name}" has been created. Review the summary
-                    below and click Finish to view your complete itinerary.
+                    {t('reviewDetails')} "{trip.name}"
                   </Typography>
                 </CardContent>
               </Card>
@@ -507,13 +508,13 @@ export default function NewTripWizard() {
                 sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}
               >
                 <Typography variant="h6" fontWeight={600} gutterBottom>
-                  Trip Summary
+                  {t('tripSummary')}
                 </Typography>
                 <Divider sx={{ my: 2 }} />
                 <Grid container spacing={2}>
                   <Grid item xs={12}>
                     <Typography variant="body2" color="text.secondary">
-                      Dates
+                      {t('travelDates')}
                     </Typography>
                     <Typography variant="body1" fontWeight={500}>
                       {new Date(trip.startDate).toLocaleDateString('en-US', {
@@ -531,7 +532,7 @@ export default function NewTripWizard() {
                   {trip.destinations?.length > 0 && (
                     <Grid item xs={12}>
                       <Typography variant="body2" color="text.secondary">
-                        Destinations
+                        {t('destinations')}
                       </Typography>
                       <Stack
                         direction="row"
@@ -557,7 +558,7 @@ export default function NewTripWizard() {
                           {trip.flights.length}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Flights
+                          {t('flights')}
                         </Typography>
                       </Box>
                     </Stack>
@@ -570,7 +571,7 @@ export default function NewTripWizard() {
                           {trip.hotels.length}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Hotels
+                          {t('hotels')}
                         </Typography>
                       </Box>
                     </Stack>
@@ -583,7 +584,7 @@ export default function NewTripWizard() {
                           {trip.rides.length}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Rides
+                          {t('rides')}
                         </Typography>
                       </Box>
                     </Stack>
@@ -596,7 +597,7 @@ export default function NewTripWizard() {
                           {trip.attractions.length}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Attractions
+                          {t('attractions')}
                         </Typography>
                       </Box>
                     </Stack>
@@ -610,7 +611,7 @@ export default function NewTripWizard() {
                   variant="outlined"
                   startIcon={<ArrowBack />}
                 >
-                  Back
+                  {t('back')}
                 </Button>
                 <Button
                   disabled={!canFinish}
@@ -619,14 +620,14 @@ export default function NewTripWizard() {
                   size="large"
                   endIcon={<Check />}
                 >
-                  Finish & View Trip
+                  {t('finish')} & {t('viewTrip')}
                 </Button>
               </Stack>
             </Stack>
           ) : (
             <Stack spacing={2}>
               <Alert severity="warning" icon={<Info />}>
-                Please create a trip first by completing the Basic Info step.
+                {t('tripBasicInfo')}
               </Alert>
               <Stack direction="row" spacing={2} justifyContent="flex-end">
                 <Button
@@ -634,10 +635,10 @@ export default function NewTripWizard() {
                   variant="outlined"
                   startIcon={<ArrowBack />}
                 >
-                  Back
+                  {t('back')}
                 </Button>
                 <Button disabled variant="contained">
-                  Finish
+                  {t('finish')}
                 </Button>
               </Stack>
             </Stack>
@@ -690,6 +691,7 @@ function WizardNav({
   onNext: () => void;
   nextDisabled?: boolean;
 }) {
+  const { t } = useLanguage();
   return (
     <Stack
       direction={{ xs: 'column-reverse', sm: 'row' }}
@@ -705,7 +707,7 @@ function WizardNav({
         fullWidth
         sx={{ width: { xs: '100%', sm: 'auto' } }}
       >
-        Back
+        {t('back')}
       </Button>
       <Button
         onClick={onNext}
@@ -714,7 +716,7 @@ function WizardNav({
         endIcon={<ArrowForward />}
         sx={{ width: { xs: '100%', sm: 'auto' } }}
       >
-        Next
+        {t('next')}
       </Button>
     </Stack>
   );

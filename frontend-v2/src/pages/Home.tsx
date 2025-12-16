@@ -33,8 +33,10 @@ import {
 import NewTripWizard from './NewTripWizard';
 import TripStatistics from '../components/TripStatistics';
 import { Tabs, Tab } from '@mui/material';
+import { useLanguage } from '../context/LanguageContext';
 
 export default function Home() {
+  const { t } = useLanguage();
   const [openNew, setOpenNew] = useState(false);
   const [trips, setTrips] = useState<any[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -135,10 +137,7 @@ export default function Home() {
                   lineHeight: 1.1,
                 }}
               >
-                Plan Your{' '}
-                <Box component="span" sx={{ color: '#F1FFFD' }}>
-                  Perfect Trip
-                </Box>
+                {t('planYourNextTrip')}
               </Typography>
 
               <Typography
@@ -150,8 +149,7 @@ export default function Home() {
                   lineHeight: 1.6,
                 }}
               >
-                Organize flights, hotels, attractions, and transportation all in
-                one place
+                {t('organizeEverything')}
               </Typography>
               <Button
                 variant="contained"
@@ -174,9 +172,14 @@ export default function Home() {
                   },
                   transition: 'all 0.3s ease',
                   width: { xs: '100%', sm: 'auto' },
+                  gap: 1,
+                  '& .MuiButton-startIcon': {
+                    marginRight: 0,
+                    marginLeft: 0,
+                  },
                 }}
               >
-                Create New Trip
+                {t('createNewTrip')}
               </Button>
             </Stack>
           </Container>
@@ -194,8 +197,16 @@ export default function Home() {
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 4 }}>
         <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
-          <Tab icon={<DashboardIcon />} label="My Trips" iconPosition="start" />
-          <Tab icon={<BarChart />} label="Statistics" iconPosition="start" />
+          <Tab
+            icon={<DashboardIcon />}
+            label={t('myTrips')}
+            iconPosition="start"
+          />
+          <Tab
+            icon={<BarChart />}
+            label={t('statistics')}
+            iconPosition="start"
+          />
         </Tabs>
       </Box>
 
@@ -212,7 +223,7 @@ export default function Home() {
             mb={3}
           >
             <Typography variant="h5" component="h2" fontWeight={700}>
-              My Trips {trips && `(${ownedTrips.length})`}
+              {t('myTrips')} {trips && `(${ownedTrips.length})`}
             </Typography>
             <Button
               variant="contained"
@@ -222,12 +233,17 @@ export default function Home() {
               sx={{
                 background: 'linear-gradient(45deg, #009D85, #00BFA5)',
                 boxShadow: '0 4px 12px rgba(0, 157, 133, 0.3)',
+                gap: 1,
+                '& .MuiButton-startIcon': {
+                  marginRight: 0,
+                  marginLeft: 0,
+                },
                 '&:hover': {
                   boxShadow: '0 6px 16px rgba(0, 157, 133, 0.4)',
                 },
               }}
             >
-              New Trip
+              {t('newTrip')}
             </Button>
           </Stack>
 
@@ -283,15 +299,14 @@ export default function Home() {
                     }}
                   />
                   <Typography variant="h5" fontWeight={600} gutterBottom>
-                    No trips yet
+                    {t('noTripsYet')}
                   </Typography>
                   <Typography
                     variant="body1"
                     color="text.secondary"
                     sx={{ mb: 4 }}
                   >
-                    Start planning your next adventure by creating your first
-                    trip
+                    {t('startPlanningFirstTrip')}
                   </Typography>
                   <Button
                     component={Link}
@@ -299,8 +314,15 @@ export default function Home() {
                     variant="contained"
                     size="large"
                     startIcon={<Add />}
+                    sx={{
+                      gap: 1,
+                      '& .MuiButton-startIcon': {
+                        marginRight: 0,
+                        marginLeft: 0,
+                      },
+                    }}
                   >
-                    Create Your First Trip
+                    {t('createNewTrip')}
                   </Button>
                 </CardContent>
               </Card>
@@ -309,8 +331,8 @@ export default function Home() {
 
           {/* Owned Trips Grid */}
           <Grid container spacing={3}>
-            {ownedTrips.map((t, index) => (
-              <Grid item xs={12} sm={6} md={4} key={t.id || index}>
+            {ownedTrips.map((trip, index) => (
+              <Grid item xs={12} sm={6} md={4} key={trip.id || index}>
                 <Fade in timeout={500 + index * 100}>
                   <Card
                     sx={{
@@ -344,7 +366,7 @@ export default function Home() {
                     />
                     <CardActionArea
                       component={Link}
-                      to={`/trips/${t.id}`}
+                      to={`/trips/${trip.id}`}
                       sx={{ height: '100%', pt: 1 }}
                     >
                       <CardContent
@@ -361,10 +383,10 @@ export default function Home() {
                           gutterBottom
                           sx={{ mb: 1 }}
                         >
-                          {t.name || 'Untitled Trip'}
+                          {trip.name || 'Untitled Trip'}
                         </Typography>
 
-                        {t.startDate && t.endDate && (
+                        {trip.startDate && trip.endDate && (
                           <Stack
                             direction="row"
                             spacing={1.5}
@@ -383,7 +405,7 @@ export default function Home() {
                               <CalendarMonth fontSize="small" />
                             </Box>
                             <Typography variant="body2" fontWeight={600}>
-                              {new Date(t.startDate).toLocaleDateString(
+                              {new Date(trip.startDate).toLocaleDateString(
                                 'en-US',
                                 {
                                   month: 'short',
@@ -391,11 +413,14 @@ export default function Home() {
                                 }
                               )}
                               {' - '}
-                              {new Date(t.endDate).toLocaleDateString('en-US', {
-                                month: 'short',
-                                day: 'numeric',
-                                year: 'numeric',
-                              })}
+                              {new Date(trip.endDate).toLocaleDateString(
+                                'en-US',
+                                {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                }
+                              )}
                             </Typography>
                           </Stack>
                         )}
@@ -407,11 +432,11 @@ export default function Home() {
                             flexWrap="wrap"
                             gap={1}
                           >
-                            {t.flights?.length > 0 && (
+                            {trip.flights?.length > 0 && (
                               <Chip
                                 size="small"
                                 icon={<Flight sx={{ fontSize: 14 }} />}
-                                label={`${t.flights.length} Flights`}
+                                label={`${trip.flights.length} ${t('flightsCount')}`}
                                 sx={{
                                   bgcolor: 'primary.50',
                                   color: 'primary.dark',
@@ -419,11 +444,11 @@ export default function Home() {
                                 }}
                               />
                             )}
-                            {t.hotels?.length > 0 && (
+                            {trip.hotels?.length > 0 && (
                               <Chip
                                 size="small"
                                 icon={<Hotel sx={{ fontSize: 14 }} />}
-                                label={`${t.hotels.length} Hotels`}
+                                label={`${trip.hotels.length} ${t('hotelsCount')}`}
                                 sx={{
                                   bgcolor: 'secondary.50',
                                   color: 'secondary.dark',
@@ -431,11 +456,11 @@ export default function Home() {
                                 }}
                               />
                             )}
-                            {t.attractions?.length > 0 && (
+                            {trip.attractions?.length > 0 && (
                               <Chip
                                 size="small"
                                 icon={<Attractions sx={{ fontSize: 14 }} />}
-                                label={`${t.attractions.length} Activities`}
+                                label={`${trip.attractions.length} ${t('activitiesCount')}`}
                                 sx={{
                                   bgcolor: 'success.50',
                                   color: 'success.dark',
@@ -471,11 +496,11 @@ export default function Home() {
                   width="100%"
                 >
                   <Typography variant="h5" component="h2" fontWeight={600}>
-                    Shared with You
+                    {t('sharedWithYou')}
                   </Typography>
                   <Chip
                     icon={<VisibilityIcon />}
-                    label="View Only"
+                    label={t('viewOnly')}
                     size="small"
                     color="info"
                     variant="outlined"
@@ -483,13 +508,13 @@ export default function Home() {
                 </Box>
                 <Typography variant="body2" color="text.secondary">
                   {sharedTrips.length}{' '}
-                  {sharedTrips.length === 1 ? 'trip' : 'trips'}
+                  {sharedTrips.length === 1 ? t('trip') : t('tripsCount')}
                 </Typography>
               </Stack>
 
               <Grid container spacing={3}>
-                {sharedTrips.map((t, index) => (
-                  <Grid item xs={12} sm={6} md={4} key={t.id || index}>
+                {sharedTrips.map((trip, index) => (
+                  <Grid item xs={12} sm={6} md={4} key={trip.id || index}>
                     <Fade in timeout={500 + index * 100}>
                       <Card
                         sx={{
@@ -524,7 +549,7 @@ export default function Home() {
                         />
                         <CardActionArea
                           component={Link}
-                          to={`/trips/${t.id}`}
+                          to={`/trips/${trip.id}`}
                           sx={{ height: '100%', pt: 1 }}
                         >
                           <CardContent
@@ -539,25 +564,22 @@ export default function Home() {
                               direction="row"
                               justifyContent="space-between"
                               alignItems="start"
+                              spacing={1}
                               mb={2}
                             >
-                              <Typography
-                                variant="h6"
-                                fontWeight={800}
-                                sx={{ flex: 1 }}
-                              >
-                                {t.name || 'Untitled Trip'}
+                              <Typography variant="h6" fontWeight={800}>
+                                {trip.name || 'Untitled Trip'}
                               </Typography>
                               <Chip
                                 icon={<VisibilityIcon sx={{ fontSize: 14 }} />}
-                                label="View Only"
+                                label={t('viewOnly')}
                                 size="small"
                                 color="info"
-                                sx={{ ml: 1, height: 24, fontSize: '0.75rem' }}
+                                sx={{ height: 24, fontSize: '0.75rem' }}
                               />
                             </Stack>
 
-                            {t.startDate && t.endDate && (
+                            {trip.startDate && trip.endDate && (
                               <Stack
                                 direction="row"
                                 spacing={1.5}
@@ -576,12 +598,12 @@ export default function Home() {
                                   <CalendarMonth fontSize="small" />
                                 </Box>
                                 <Typography variant="body2" fontWeight={600}>
-                                  {new Date(t.startDate).toLocaleDateString(
+                                  {new Date(trip.startDate).toLocaleDateString(
                                     'en-US',
                                     { month: 'short', day: 'numeric' }
                                   )}
                                   {' - '}
-                                  {new Date(t.endDate).toLocaleDateString(
+                                  {new Date(trip.endDate).toLocaleDateString(
                                     'en-US',
                                     {
                                       month: 'short',
@@ -600,11 +622,11 @@ export default function Home() {
                                 flexWrap="wrap"
                                 gap={1}
                               >
-                                {t.flights?.length > 0 && (
+                                {trip.flights?.length > 0 && (
                                   <Chip
                                     size="small"
                                     icon={<Flight sx={{ fontSize: 14 }} />}
-                                    label={`${t.flights.length}`}
+                                    label={`${trip.flights.length}`}
                                     sx={{
                                       bgcolor: 'primary.50',
                                       color: 'primary.dark',
@@ -612,11 +634,11 @@ export default function Home() {
                                     }}
                                   />
                                 )}
-                                {t.hotels?.length > 0 && (
+                                {trip.hotels?.length > 0 && (
                                   <Chip
                                     size="small"
                                     icon={<Hotel sx={{ fontSize: 14 }} />}
-                                    label={`${t.hotels.length}`}
+                                    label={`${trip.hotels.length}`}
                                     sx={{
                                       bgcolor: 'secondary.50',
                                       color: 'secondary.dark',
@@ -624,11 +646,11 @@ export default function Home() {
                                     }}
                                   />
                                 )}
-                                {t.attractions?.length > 0 && (
+                                {trip.attractions?.length > 0 && (
                                   <Chip
                                     size="small"
                                     icon={<Attractions sx={{ fontSize: 14 }} />}
-                                    label={`${t.attractions.length}`}
+                                    label={`${trip.attractions.length}`}
                                     sx={{
                                       bgcolor: 'success.50',
                                       color: 'success.dark',

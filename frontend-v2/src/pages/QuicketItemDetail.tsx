@@ -372,21 +372,26 @@ export default function QuicketItemDetail() {
                       >
                         Additional Information
                       </Typography>
-                      {item.metadata.canChangeName && (
-                        <Chip
-                          label="✓ Name Change Allowed"
-                          color="success"
-                          size="small"
-                          sx={{ mr: 1, mb: 1 }}
-                        />
-                      )}
-                      {item.metadata.mealPlan && (
-                        <Chip
-                          label={`Meal Plan: ${item.metadata.mealPlan}`}
-                          size="small"
-                          sx={{ mr: 1, mb: 1 }}
-                        />
-                      )}
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        flexWrap="wrap"
+                        sx={{ gap: 1 }}
+                      >
+                        {item.metadata.canChangeName && (
+                          <Chip
+                            label="✓ Name Change Allowed"
+                            color="success"
+                            size="small"
+                          />
+                        )}
+                        {item.metadata.mealPlan && (
+                          <Chip
+                            label={`Meal Plan: ${item.metadata.mealPlan}`}
+                            size="small"
+                          />
+                        )}
+                      </Stack>
                       {item.metadata.flightNumber && (
                         <Typography variant="body2">
                           Flight: {item.metadata.flightNumber}

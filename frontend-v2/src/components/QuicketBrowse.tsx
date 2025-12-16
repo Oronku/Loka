@@ -50,6 +50,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import CreateQuicketItem from './CreateQuicketItem';
 import { useChat } from '../context/ChatContext';
+import { useLanguage } from '../context/LanguageContext';
 
 const typeIcons = {
   flight: <Flight />,
@@ -61,6 +62,7 @@ const typeIcons = {
 };
 
 export default function QuicketBrowse() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const { openChat } = useChat();
   const [items, setItems] = useState<QuicketItem[]>([]);
@@ -211,13 +213,13 @@ export default function QuicketBrowse() {
         alignItems="center"
         mb={2}
       >
-        <Typography variant="h5">Browse Marketplace</Typography>
+        <Typography variant="h5">{t('browseItems')}</Typography>
         <Button
           variant="contained"
           startIcon={<Flight />}
           onClick={() => setCreateDialogOpen(true)}
         >
-          Sell Item
+          {t('listItem')}
         </Button>
       </Box>
 
@@ -225,24 +227,24 @@ export default function QuicketBrowse() {
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
-            Filters
+            {t('filter')}
           </Typography>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6} md={3}>
               <FormControl fullWidth size="small">
-                <InputLabel>Type</InputLabel>
+                <InputLabel>{t('itemType')}</InputLabel>
                 <Select
                   value={filters.type}
-                  label="Type"
+                  label={t('itemType')}
                   onChange={(e) => handleFilterChange('type', e.target.value)}
                 >
-                  <MenuItem value="">All Types</MenuItem>
-                  <MenuItem value="flight">Flights</MenuItem>
-                  <MenuItem value="hotel">Hotels</MenuItem>
-                  <MenuItem value="attraction">Attractions</MenuItem>
-                  <MenuItem value="event">Events</MenuItem>
-                  <MenuItem value="restaurant">Restaurants</MenuItem>
-                  <MenuItem value="ship">Ships/Cruises</MenuItem>
+                  <MenuItem value="">{t('allTypes')}</MenuItem>
+                  <MenuItem value="flight">{t('flights')}</MenuItem>
+                  <MenuItem value="hotel">{t('hotels')}</MenuItem>
+                  <MenuItem value="attraction">{t('attractions')}</MenuItem>
+                  <MenuItem value="event">{t('attractions')}</MenuItem>
+                  <MenuItem value="restaurant">{t('attractions')}</MenuItem>
+                  <MenuItem value="ship">{t('attractions')}</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -251,12 +253,12 @@ export default function QuicketBrowse() {
               <TextField
                 fullWidth
                 size="small"
-                label="Destination"
+                label={t('location')}
                 value={filters.destination}
                 onChange={(e) =>
                   handleFilterChange('destination', e.target.value)
                 }
-                placeholder="City or location"
+                placeholder={t('location')}
               />
             </Grid>
 
@@ -265,7 +267,7 @@ export default function QuicketBrowse() {
                 fullWidth
                 size="small"
                 type="number"
-                label="Min Price"
+                label={t('price')}
                 value={filters.minPrice || ''}
                 onChange={(e) =>
                   handleFilterChange(
@@ -286,7 +288,7 @@ export default function QuicketBrowse() {
                 fullWidth
                 size="small"
                 type="number"
-                label="Max Price"
+                label={t('price')}
                 value={filters.maxPrice || ''}
                 onChange={(e) =>
                   handleFilterChange(
@@ -307,7 +309,7 @@ export default function QuicketBrowse() {
                 fullWidth
                 size="small"
                 type="date"
-                label="Start Date"
+                label={t('startDate')}
                 value={filters.startDate}
                 onChange={(e) =>
                   handleFilterChange('startDate', e.target.value)
@@ -321,7 +323,7 @@ export default function QuicketBrowse() {
                 fullWidth
                 size="small"
                 type="date"
-                label="End Date"
+                label={t('endDate')}
                 value={filters.endDate}
                 onChange={(e) => handleFilterChange('endDate', e.target.value)}
                 InputLabelProps={{ shrink: true }}
@@ -330,17 +332,17 @@ export default function QuicketBrowse() {
 
             <Grid item xs={12} sm={6} md={3}>
               <FormControl fullWidth size="small">
-                <InputLabel>Sort By</InputLabel>
+                <InputLabel>{t('sortBy')}</InputLabel>
                 <Select
                   value={filters.sort}
-                  label="Sort By"
+                  label={t('sortBy')}
                   onChange={(e) => handleFilterChange('sort', e.target.value)}
                 >
-                  <MenuItem value="newest">Newest First</MenuItem>
-                  <MenuItem value="oldest">Oldest First</MenuItem>
-                  <MenuItem value="priceLow">Price: Low to High</MenuItem>
-                  <MenuItem value="priceHigh">Price: High to Low</MenuItem>
-                  <MenuItem value="popular">Most Popular</MenuItem>
+                  <MenuItem value="newest">{t('sortBy')}</MenuItem>
+                  <MenuItem value="oldest">{t('sortBy')}</MenuItem>
+                  <MenuItem value="priceLow">{t('price')}</MenuItem>
+                  <MenuItem value="priceHigh">{t('price')}</MenuItem>
+                  <MenuItem value="popular">{t('popular')}</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -352,14 +354,14 @@ export default function QuicketBrowse() {
                   startIcon={<Search />}
                   onClick={handleSearch}
                 >
-                  Search
+                  {t('search')}
                 </Button>
                 <Button
                   variant="outlined"
                   startIcon={<Clear />}
                   onClick={handleClearFilters}
                 >
-                  Clear
+                  {t('clearFilters')}
                 </Button>
                 <Button
                   variant="outlined"
@@ -367,7 +369,7 @@ export default function QuicketBrowse() {
                   startIcon={<Bookmark />}
                   onClick={() => setSaveSearchDialogOpen(true)}
                 >
-                  Save Search
+                  {t('saveItem')}
                 </Button>
               </Stack>
             </Grid>
@@ -388,7 +390,7 @@ export default function QuicketBrowse() {
         </Box>
       ) : items.length === 0 ? (
         <Alert severity="info">
-          No items found. Try adjusting your filters or check back later.
+          {t('noItemsFound')}. {t('tryAdjustingFilters')}.
         </Alert>
       ) : (
         <>
@@ -477,7 +479,7 @@ export default function QuicketBrowse() {
                         minHeight: 40,
                       }}
                     >
-                      {item.description || 'No description'}
+                      {item.description || t('description')}
                     </Typography>
 
                     {item.location && (
@@ -545,7 +547,7 @@ export default function QuicketBrowse() {
 
                     {item.metadata?.canChangeName && (
                       <Chip
-                        label="Name Change Allowed"
+                        label={t('new_condition')}
                         size="small"
                         color="success"
                         sx={{ mt: 1 }}
@@ -563,7 +565,7 @@ export default function QuicketBrowse() {
                           navigate(`/quicket/item/${item._id}`);
                         }}
                       >
-                        View Details
+                        {t('viewDetails')}
                       </Button>
                       <Button
                         fullWidth
@@ -603,7 +605,7 @@ export default function QuicketBrowse() {
                           }
                         }}
                       >
-                        I'm Interested
+                        {t('contactSeller')}
                       </Button>
                     </Stack>
                   </CardActions>
@@ -626,7 +628,7 @@ export default function QuicketBrowse() {
                 Previous
               </Button>
               <Typography sx={{ mx: 2, alignSelf: 'center' }}>
-                Page {page} of {totalPages}
+                {t('step')} {page} {t('of')} {totalPages}
               </Typography>
               <Button
                 disabled={page === totalPages}
@@ -636,7 +638,7 @@ export default function QuicketBrowse() {
                   handleFilterChange('page', newPage);
                 }}
               >
-                Next
+                {t('next')}
               </Button>
             </Box>
           )}
@@ -658,18 +660,17 @@ export default function QuicketBrowse() {
         open={saveSearchDialogOpen}
         onClose={() => !savingSearch && setSaveSearchDialogOpen(false)}
       >
-        <DialogTitle>Save Search</DialogTitle>
+        <DialogTitle>{t('search')}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" gutterBottom>
-            Give this search a name to save it and get notified when new items
-            match your criteria.
+            {t('searchQuicket')}
           </Typography>
           <TextField
             fullWidth
             autoFocus
             margin="dense"
-            label="Search Name"
-            placeholder="e.g., Cheap Flights to NYC"
+            label={t('search')}
+            placeholder={t('searchPlaceholder')}
             value={searchName}
             onChange={(e) => setSearchName(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSaveSearch()}
@@ -680,7 +681,7 @@ export default function QuicketBrowse() {
             onClick={() => setSaveSearchDialogOpen(false)}
             disabled={savingSearch}
           >
-            Cancel
+            {t('cancel')}
           </Button>
           <Button
             onClick={handleSaveSearch}
@@ -690,7 +691,7 @@ export default function QuicketBrowse() {
               savingSearch ? <CircularProgress size={20} /> : <Bookmark />
             }
           >
-            {savingSearch ? 'Saving...' : 'Save'}
+            {savingSearch ? t('loading') : t('save')}
           </Button>
         </DialogActions>
       </Dialog>

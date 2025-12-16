@@ -22,6 +22,41 @@ body,
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* RTL Support */
+html[dir='rtl'] {
+  direction: rtl;
+}
+
+html[dir='ltr'] {
+  direction: ltr;
+}
+
+/* Fix spacing between icons and text in buttons (works for both RTL and LTR) */
+.MuiButton-root {
+  gap: 8px;
+}
+
+.MuiButton-startIcon,
+.MuiButton-endIcon {
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* Fix spacing in MenuItems with icons */
+.MuiMenuItem-root {
+  gap: 8px;
+}
+
+/* Fix spacing in Chips with icons */
+.MuiChip-root {
+  gap: 4px;
+}
+
+.MuiChip-icon {
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+}
+
 /* Cloud background styles */
 .clouds-bg {
   position: fixed;

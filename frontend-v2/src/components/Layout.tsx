@@ -14,6 +14,7 @@ import {
   useMediaQuery,
   Divider,
   Badge,
+  Tooltip,
 } from '@mui/material';
 import { ChatProvider } from '../context/ChatContext';
 import {
@@ -25,9 +26,11 @@ import {
   Settings,
   People as PeopleIcon,
   LocationOn,
+  Language as LanguageIcon,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useState, useEffect } from 'react';
 import CloudsBackground from './CloudsBackground';
 import ChatFab from './ChatFab';
@@ -39,9 +42,11 @@ import logo from '../svgs/logo.svg';
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
+  const { language, setLanguage, t } = useLanguage();
   const navigate = useNavigate();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [navMenuEl, setNavMenuEl] = useState<null | HTMLElement>(null);
+  const [langMenuEl, setLangMenuEl] = useState<null | HTMLElement>(null);
   const [chatSidebarOpen, setChatSidebarOpen] = useState(false);
   const [chatSelectorOpen, setChatSelectorOpen] = useState(false);
   const [selectedContextType, setSelectedContextType] = useState<
@@ -80,6 +85,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
     logout();
     navigate('/login');
     handleMenuClose();
+  };
+
+  const handleLangMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setLangMenuEl(event.currentTarget);
+  };
+
+  const handleLangMenuClose = () => {
+    setLangMenuEl(null);
+  };
+
+  const handleLanguageChange = (lang: 'he' | 'en') => {
+    setLanguage(lang);
+    handleLangMenuClose();
   };
 
   const handleChatSelect = (chatId: string, contextType: string = 'direct') => {
@@ -226,14 +244,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 fontSize: '1.5rem',
                 display: 'flex',
                 alignItems: 'center',
+                gap: 1.5,
                 letterSpacing: '-0.02em',
               }}
             >
-              <img
-                src={logo}
-                alt="Loka Logo"
-                style={{ height: 40, marginRight: 12 }}
-              />
+              <img src={logo} alt="Loka Logo" style={{ height: 40 }} />
               Meet Loka
             </Typography>
             {isMobile ? (
@@ -242,7 +257,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   edge="start"
                   onClick={handleNavMenuOpen}
                   aria-label="Open navigation"
-                  sx={{ ml: 'auto' }}
+                  sx={{ marginInlineStart: 'auto' }}
                 >
                   <MenuIcon />
                 </IconButton>
@@ -262,35 +277,35 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     },
                   }}
                 >
-                  <MenuItem onClick={() => goTo('/')}>
-                    <Dashboard fontSize="small" sx={{ mr: 1 }} />
-                    Dashboard
+                  <MenuItem onClick={() => goTo('/')} sx={{ gap: 1 }}>
+                    <Dashboard fontSize="small" />
+                    {t('home')}
                   </MenuItem>
-                  <MenuItem onClick={() => goTo('/trip/new')}>
-                    <Flight fontSize="small" sx={{ mr: 1 }} />
-                    New Trip
+                  <MenuItem onClick={() => goTo('/trip/new')} sx={{ gap: 1 }}>
+                    <Flight fontSize="small" />
+                    {t('newTrip')}
                   </MenuItem>
-                  <MenuItem onClick={() => goTo('/quicket')}>
-                    <LocalOffer fontSize="small" sx={{ mr: 1 }} />
+                  <MenuItem onClick={() => goTo('/quicket')} sx={{ gap: 1 }}>
+                    <LocalOffer fontSize="small" />
                     Quicket
                   </MenuItem>
-                  <MenuItem onClick={() => goTo('/friends')}>
+                  <MenuItem onClick={() => goTo('/friends')} sx={{ gap: 1 }}>
                     <Badge badgeContent={friendRequestCount} color="error">
-                      <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
+                      <PeopleIcon fontSize="small" />
                     </Badge>
-                    Friends
+                    {t('friends')}
                   </MenuItem>
-                  <MenuItem onClick={() => goTo('/check-in')}>
-                    <LocationOn fontSize="small" sx={{ mr: 1 }} />
-                    Check In
+                  <MenuItem onClick={() => goTo('/check-in')} sx={{ gap: 1 }}>
+                    <LocationOn fontSize="small" />
+                    {t('checkIn')}
                   </MenuItem>
                 </Menu>
               </>
             ) : (
               <Box sx={{ display: 'flex', gap: 1 }}>
                 {[
-                  { to: '/', icon: <Dashboard />, label: 'Dashboard' },
-                  { to: '/trip/new', icon: <Flight />, label: 'New Trip' },
+                  { to: '/', icon: <Dashboard />, label: t('home') },
+                  { to: '/trip/new', icon: <Flight />, label: t('newTrip') },
                   { to: '/quicket', icon: <LocalOffer />, label: 'Quicket' },
                   {
                     to: '/friends',
@@ -299,9 +314,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         <PeopleIcon />
                       </Badge>
                     ),
-                    label: 'Friends',
+                    label: t('friends'),
                   },
-                  { to: '/check-in', icon: <LocationOn />, label: 'Check In' },
+                  {
+                    to: '/check-in',
+                    icon: <LocationOn />,
+                    label: t('checkIn'),
+                  },
                 ].map((item) => (
                   <Button
                     key={item.to}
@@ -313,6 +332,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                       px: 2,
                       py: 1,
                       borderRadius: 3,
+                      gap: 1,
+                      '& .MuiButton-startIcon': {
+                        marginRight: 0,
+                        marginLeft: 0,
+                      },
                       '&:hover': {
                         bgcolor: 'rgba(0, 157, 133, 0.04)',
                         color: 'primary.main',
@@ -339,6 +363,49 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 flexShrink: 0,
               }}
             >
+              <Button
+                onClick={handleLangMenuOpen}
+                size="small"
+                sx={{
+                  color: 'text.secondary',
+                  minWidth: 'auto',
+                  px: 1.5,
+                  '&:hover': {
+                    bgcolor: 'rgba(0, 157, 133, 0.04)',
+                    color: 'primary.main',
+                  },
+                }}
+              >
+                {language === 'he' ? '🇮🇱' : '🇺🇸'}
+              </Button>
+              <Menu
+                anchorEl={langMenuEl}
+                open={Boolean(langMenuEl)}
+                onClose={handleLangMenuClose}
+                anchorOrigin={{
+                  vertical: 'bottom',
+                  horizontal: 'right',
+                }}
+                transformOrigin={{
+                  vertical: 'top',
+                  horizontal: 'right',
+                }}
+              >
+                <MenuItem
+                  onClick={() => handleLanguageChange('he')}
+                  selected={language === 'he'}
+                  sx={{ gap: 1 }}
+                >
+                  🇮🇱 עברית
+                </MenuItem>
+                <MenuItem
+                  onClick={() => handleLanguageChange('en')}
+                  selected={language === 'en'}
+                  sx={{ gap: 1 }}
+                >
+                  🇺🇸 English
+                </MenuItem>
+              </Menu>
               <Chip
                 label="v2"
                 size="small"
@@ -385,13 +452,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         handleMenuClose();
                         navigate('/profile');
                       }}
+                      sx={{ gap: 1 }}
                     >
-                      <Settings sx={{ mr: 1 }} fontSize="small" />
-                      Profile Settings
+                      <Settings fontSize="small" />
+                      {t('profile')}
                     </MenuItem>
-                    <MenuItem onClick={handleLogout}>
-                      <Logout sx={{ mr: 1 }} fontSize="small" />
-                      Logout
+                    <MenuItem onClick={handleLogout} sx={{ gap: 1 }}>
+                      <Logout fontSize="small" />
+                      {t('logout')}
                     </MenuItem>
                   </Menu>
                 </>

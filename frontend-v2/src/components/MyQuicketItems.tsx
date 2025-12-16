@@ -241,7 +241,7 @@ export default function MyQuicketItems() {
                   <Divider sx={{ my: 1 }} />
 
                   {/* Price */}
-                  <Box mb={1}>
+                  <Box mb={1} display="flex" alignItems="center" gap={1}>
                     {item.priceOriginal &&
                       item.priceOriginal > item.priceSelling && (
                         <Typography
@@ -249,7 +249,6 @@ export default function MyQuicketItems() {
                           sx={{
                             textDecoration: 'line-through',
                             color: 'text.secondary',
-                            mr: 1,
                           }}
                         >
                           {formatPrice(item.priceOriginal, item.currency)}
@@ -267,7 +266,6 @@ export default function MyQuicketItems() {
                         label={`${savings}% off`}
                         size="small"
                         color="success"
-                        sx={{ ml: 1 }}
                       />
                     )}
                   </Box>

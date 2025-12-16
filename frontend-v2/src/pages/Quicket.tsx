@@ -11,6 +11,7 @@ import QuicketBrowse from '../components/QuicketBrowse';
 import MyQuicketItems from '../components/MyQuicketItems';
 import QuicketSaved from '../components/QuicketSaved';
 import QuicketChats from '../components/QuicketChats';
+import { useLanguage } from '../context/LanguageContext';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -35,6 +36,7 @@ function TabPanel(props: TabPanelProps) {
 }
 
 export default function Quicket() {
+  const { t } = useLanguage();
   const [currentTab, setCurrentTab] = useState(0);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
@@ -45,11 +47,10 @@ export default function Quicket() {
     <Container maxWidth="xl">
       <Box sx={{ py: 4 }}>
         <Typography variant="h4" fontWeight="bold" gutterBottom>
-          Quicket Marketplace
+          {t('quicketMarketplace')}
         </Typography>
         <Typography variant="body1" color="text.secondary" paragraph>
-          Buy and sell non-refundable travel items - flights, hotels,
-          attractions, and events
+          {t('quicketDescription')}
         </Typography>
 
         <Paper sx={{ mt: 3 }}>
@@ -67,35 +68,35 @@ export default function Quicket() {
             <Tab
               icon={<Storefront />}
               iconPosition="start"
-              label="Browse"
+              label={t('browse')}
               id="quicket-tab-0"
               aria-controls="quicket-tabpanel-0"
             />
             <Tab
               icon={<Inventory />}
               iconPosition="start"
-              label="My Items"
+              label={t('myItems')}
               id="quicket-tab-1"
               aria-controls="quicket-tabpanel-1"
             />
             <Tab
               icon={<Favorite />}
               iconPosition="start"
-              label="Saved"
+              label={t('saved')}
               id="quicket-tab-2"
               aria-controls="quicket-tabpanel-2"
             />
             <Tab
               icon={<Chat />}
               iconPosition="start"
-              label="Chats"
+              label={t('chats')}
               id="quicket-tab-3"
               aria-controls="quicket-tabpanel-3"
             />
             <Tab
               icon={<Notifications />}
               iconPosition="start"
-              label="Alerts"
+              label={t('alerts')}
               id="quicket-tab-4"
               aria-controls="quicket-tabpanel-4"
             />
@@ -118,9 +119,9 @@ export default function Quicket() {
           </TabPanel>
 
           <TabPanel value={currentTab} index={4}>
-            <Typography variant="h6">Alerts & Notifications</Typography>
+            <Typography variant="h6">{t('alerts')}</Typography>
             <Typography variant="body2" color="text.secondary">
-              Alerts tab content coming soon...
+              {t('alerts')} {t('loading')}
             </Typography>
           </TabPanel>
         </Paper>

@@ -23,6 +23,7 @@ import {
   TrendingUp,
 } from '@mui/icons-material';
 import { Trip } from '../types/domain';
+import { useLanguage } from '../context/LanguageContext';
 
 interface TripStatisticsProps {
   trips: Trip[];
@@ -30,6 +31,7 @@ interface TripStatisticsProps {
 
 export default function TripStatistics({ trips }: TripStatisticsProps) {
   const theme = useTheme();
+  const { t } = useLanguage();
 
   const stats = useMemo(() => {
     let totalFlights = 0;
@@ -192,7 +194,7 @@ export default function TripStatistics({ trips }: TripStatisticsProps) {
   return (
     <Box sx={{ py: 2 }}>
       <Typography variant="h5" fontWeight={800} gutterBottom sx={{ mb: 3 }}>
-        Travel Overview
+        {t('travelOverview')}
       </Typography>
 
       <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -200,36 +202,36 @@ export default function TripStatistics({ trips }: TripStatisticsProps) {
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             icon={<AttachMoney />}
-            title="Total Spent"
+            title={t('totalSpent')}
             value={formatCurrency(stats.totalCost)}
-            subtitle="Across all trips"
+            subtitle={t('acrossAllTrips')}
             color={theme.palette.success.main}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             icon={<Flight />}
-            title="Flights Taken"
+            title={t('flightsTaken')}
             value={stats.totalFlights}
-            subtitle={`${formatDuration(stats.totalFlightMinutes)} in air`}
+            subtitle={`${formatDuration(stats.totalFlightMinutes)} ${t('inAir')}`}
             color={theme.palette.primary.main}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             icon={<Hotel />}
-            title="Nights Stayed"
+            title={t('nightsStayed')}
             value={stats.totalDays}
-            subtitle={`${stats.totalHotels} hotels booked`}
+            subtitle={`${stats.totalHotels} ${t('hotelsBooked')}`}
             color={theme.palette.secondary.main}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             icon={<Public />}
-            title="Destinations"
+            title={t('destinationsVisited')}
             value={stats.popularDestinations.length}
-            subtitle="Cities visited"
+            subtitle={t('citiesVisited')}
             color={theme.palette.info.main}
           />
         </Grid>

@@ -261,7 +261,7 @@ export default function QuicketSaved() {
 
                       <Divider sx={{ my: 1 }} />
 
-                      <Box mb={1}>
+                      <Box mb={1} display="flex" alignItems="center" gap={1}>
                         {item.priceOriginal &&
                           item.priceOriginal > item.priceSelling && (
                             <Typography
@@ -269,7 +269,6 @@ export default function QuicketSaved() {
                               sx={{
                                 textDecoration: 'line-through',
                                 color: 'text.secondary',
-                                mr: 1,
                               }}
                             >
                               {formatPrice(item.priceOriginal, item.currency)}
@@ -287,7 +286,6 @@ export default function QuicketSaved() {
                             label={`${savings}% off`}
                             size="small"
                             color="success"
-                            sx={{ ml: 1 }}
                           />
                         )}
                       </Box>
