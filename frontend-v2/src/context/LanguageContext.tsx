@@ -339,6 +339,17 @@ const translations: Record<Language, Record<string, string>> = {
     noChats: 'אין צ׳אטים',
     sendMessage: 'שלח הודעה',
     typeMessage: 'הקלד הודעה...',
+
+    // Check In
+    whereAreYouNow: 'איפה אתה נמצא עכשיו?',
+    searchForLocation: 'חפש מיקום',
+    cityAirportLandmark: 'עיר, שדה תעופה או נקודת ציון...',
+    checkInHere: 'צ׳ק אין כאן',
+    checkingIn: 'מבצע צ׳ק אין...',
+    recentCheckIns: 'מקומות שביקרתי אחרונים',
+    checkInFailed: 'הצ׳ק אין נכשל. אנא נסה שוב.',
+    checkInError: 'אירעה שגיאה. אנא נסה שוב.',
+    at: 'בשעה',
   },
   en: {
     // Navigation
@@ -665,6 +676,17 @@ const translations: Record<Language, Record<string, string>> = {
     noChats: 'No chats',
     sendMessage: 'Send Message',
     typeMessage: 'Type a message...',
+
+    // Check In
+    whereAreYouNow: 'Where are you now?',
+    searchForLocation: 'Search for a location',
+    cityAirportLandmark: 'City, airport, or landmark...',
+    checkInHere: 'Check In Here',
+    checkingIn: 'Checking In...',
+    recentCheckIns: 'Recent Check-ins',
+    checkInFailed: 'Failed to check in. Please try again.',
+    checkInError: 'An error occurred. Please try again.',
+    at: 'at',
   },
 };
 

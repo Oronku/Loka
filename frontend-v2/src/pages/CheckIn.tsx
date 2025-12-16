@@ -24,6 +24,7 @@ import QuicketPlaceSearch, {
   PlaceData,
 } from '../components/QuicketPlaceSearch';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
 const POPULAR_CITIES = [
   {
@@ -78,6 +79,7 @@ const mapContainerStyle = {
 
 export default function CheckIn() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [selectedPlace, setSelectedPlace] = useState<PlaceData | null>(null);
   const [mapCenter, setMapCenter] = useState({ lat: 20, lng: 0 });
   const [zoom, setZoom] = useState(2);
@@ -151,11 +153,11 @@ export default function CheckIn() {
         setMapCenter({ lat: 20, lng: 0 });
         // alert(`Checked in to ${selectedPlace.name}!`); // Removed alert
       } else {
-        alert('Failed to check in. Please try again.');
+        alert(t('checkInFailed'));
       }
     } catch (error) {
       console.error('Error checking in:', error);
-      alert('An error occurred. Please try again.');
+      alert(t('checkInError'));
     } finally {
       setLoading(false);
     }
@@ -164,7 +166,7 @@ export default function CheckIn() {
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Typography variant="h4" fontWeight={800} gutterBottom sx={{ mb: 4 }}>
-        Check In
+        {t('checkIn')}
       </Typography>
 
       <Grid container spacing={4}>
@@ -180,15 +182,15 @@ export default function CheckIn() {
             }}
           >
             <Typography variant="h6" fontWeight={700} gutterBottom>
-              Where are you now?
+              {t('whereAreYouNow')}
             </Typography>
 
             <Box sx={{ mb: 4 }}>
               <QuicketPlaceSearch
                 onPlaceSelect={handlePlaceSelect}
                 selectedPlace={selectedPlace}
-                label="Search for a location"
-                placeholder="City, airport, or landmark..."
+                label={t('searchForLocation')}
+                placeholder={t('cityAirportLandmark')}
               />
             </Box>
 
@@ -220,7 +222,7 @@ export default function CheckIn() {
                       fontSize: '1.1rem',
                     }}
                   >
-                    {loading ? 'Checking In...' : 'Check In Here'}
+                    {loading ? t('checkingIn') : t('checkInHere')}
                   </Button>
                 </Box>
               </Fade>
@@ -235,7 +237,7 @@ export default function CheckIn() {
                   gutterBottom
                   sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
                 >
-                  <History /> Recent Check-ins
+                  <History /> {t('recentCheckIns')}
                 </Typography>
                 <List sx={{ maxHeight: 300, overflow: 'auto' }}>
                   {checkIns.map((checkIn) => (
@@ -270,7 +272,7 @@ export default function CheckIn() {
                               color="text.secondary"
                             >
                               {new Date(checkIn.createdAt).toLocaleDateString()}{' '}
-                              at{' '}
+                              {t('at')}{' '}
                               {new Date(checkIn.createdAt).toLocaleTimeString()}
                             </Typography>
                           </>
@@ -347,7 +349,7 @@ export default function CheckIn() {
 
         <Grid item xs={12}>
           <Typography variant="h5" fontWeight={700} sx={{ mb: 3, mt: 2 }}>
-            Popular Destinations
+            {t('popularDestinations')}
           </Typography>
           <Grid container spacing={3}>
             {POPULAR_CITIES.map((city) => (
