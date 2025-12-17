@@ -46,6 +46,7 @@ import {
 import { useLanguage } from '../context/LanguageContext';
 import { useNotification } from '../context/NotificationContext';
 import type { Expense, Budget, ExpenseCategory } from '../types/Budget';
+import * as budgetApi from '../services/budgetApi';
 
 interface TripItem {
   id: string;
@@ -93,91 +94,119 @@ export default function BudgetTracker({
   const { t } = useLanguage();
   const { showSuccess, showError } = useNotification();
 
-  // Load from localStorage on mount
-  const [budget, setBudget] = useState<Budget | null>(() => {
-    const stored = localStorage.getItem(`budget_${tripId}`);
-    return stored ? JSON.parse(stored) : null;
-  });
-
-  const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const stored = localStorage.getItem(`expenses_${tripId}`);
-    return stored ? JSON.parse(stored) : [];
-  });
-
+  // State
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [loading, setLoading] = useState(true);
   const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
   const [expenseDialogOpen, setExpenseDialogOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
-  // Sync trip items to expenses when tripItems change
+  // Load budget and expenses from API on mount
   useEffect(() => {
-    const calculateTripExpenses = (): Expense[] => {
-      const tripExpenses: Expense[] = [];
-
-      tripItems.forEach((item) => {
-        let amount = 0;
-        let category: ExpenseCategory = 'other';
-        let description = '';
-
-        switch (item.type) {
-          case 'flight':
-            amount = item.price || 0;
-            category = 'flights';
-            description = t('flight');
-            break;
-          case 'hotel':
-            if (item.pricePerNight && item.checkIn && item.checkOut) {
-              const nights = Math.ceil(
-                (new Date(item.checkOut).getTime() -
-                  new Date(item.checkIn).getTime()) /
-                  (1000 * 60 * 60 * 24)
-              );
-              amount = item.pricePerNight * nights;
-            }
-            category = 'hotels';
-            description = t('hotel');
-            break;
-          case 'transportation':
-            amount = item.cost || 0;
-            category = 'transportation';
-            description = t('transportation');
-            break;
-          case 'attraction':
-            amount = item.cost || 0;
-            category = 'activities';
-            description = t('activity');
-            break;
-        }
-
-        if (amount > 0) {
-          tripExpenses.push({
-            _id: `trip-${item.id}`,
-            tripId,
-            category,
-            amount,
-            currency: 'USD',
-            description,
-            date: startDate,
-            notes: t('autoAddedFromTrip'),
-          });
-        }
-      });
-
-      return tripExpenses;
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const [budgetData, expensesData] = await Promise.all([
+          budgetApi.getBudget(tripId),
+          budgetApi.getExpenses(tripId),
+        ]);
+        setBudget(budgetData);
+        setExpenses(expensesData);
+      } catch (error) {
+        console.error('Failed to load budget data:', error);
+        // Initialize empty state if not found
+        setBudget(null);
+        setExpenses([]);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    const tripExpenses = calculateTripExpenses();
-    const existingIds = new Set(expenses.map((e) => e._id));
-    const newTripExpenses = tripExpenses.filter((e) => !existingIds.has(e._id));
+    loadData();
+  }, [tripId]);
 
-    if (newTripExpenses.length > 0) {
-      const updatedExpenses = [...expenses, ...newTripExpenses];
-      setExpenses(updatedExpenses);
-      localStorage.setItem(
-        `expenses_${tripId}`,
-        JSON.stringify(updatedExpenses)
+  // Sync trip items to expenses when tripItems change
+  useEffect(() => {
+    const syncTripExpenses = async () => {
+      const calculateTripExpenses = (): Expense[] => {
+        const tripExpenses: Expense[] = [];
+
+        tripItems.forEach((item) => {
+          let amount = 0;
+          let category: ExpenseCategory = 'other';
+          let description = '';
+
+          switch (item.type) {
+            case 'flight':
+              amount = item.price || 0;
+              category = 'flights';
+              description = t('flight');
+              break;
+            case 'hotel':
+              if (item.pricePerNight && item.checkIn && item.checkOut) {
+                const nights = Math.ceil(
+                  (new Date(item.checkOut).getTime() -
+                    new Date(item.checkIn).getTime()) /
+                    (1000 * 60 * 60 * 24)
+                );
+                amount = item.pricePerNight * nights;
+              }
+              category = 'hotels';
+              description = t('hotel');
+              break;
+            case 'transportation':
+              amount = item.cost || 0;
+              category = 'transportation';
+              description = t('transportation');
+              break;
+            case 'attraction':
+              amount = item.cost || 0;
+              category = 'activities';
+              description = t('activity');
+              break;
+          }
+
+          if (amount > 0) {
+            tripExpenses.push({
+              _id: `trip-${item.id}`,
+              tripId,
+              category,
+              amount,
+              currency: 'USD',
+              description,
+              date: startDate,
+              notes: t('autoAddedFromTrip'),
+            });
+          }
+        });
+
+        return tripExpenses;
+      };
+
+      const tripExpenses = calculateTripExpenses();
+      const existingIds = new Set(expenses.map((e) => e._id));
+      const newTripExpenses = tripExpenses.filter(
+        (e) => !existingIds.has(e._id)
       );
-    }
-  }, [tripItems, tripId, startDate, t]);
+
+      if (newTripExpenses.length > 0) {
+        try {
+          // Add all new trip expenses to the API
+          const addedExpenses = await Promise.all(
+            newTripExpenses.map((expense) =>
+              budgetApi.addExpense(tripId, expense)
+            )
+          );
+          setExpenses([...expenses, ...addedExpenses]);
+        } catch (error) {
+          console.error('Failed to sync trip expenses:', error);
+        }
+      }
+    };
+
+    syncTripExpenses();
+  }, [tripItems, tripId, startDate, t, expenses]);
 
   // Form state
   const [budgetAmount, setBudgetAmount] = useState('');
@@ -264,66 +293,87 @@ export default function BudgetTracker({
     };
   }, [budget, expenses, startDate, endDate]);
 
-  const handleSetBudget = () => {
+  const handleSetBudget = async () => {
     const amount = parseFloat(budgetAmount);
     if (isNaN(amount) || amount <= 0) {
       showError(t('error'));
       return;
     }
 
-    const newBudget = {
-      tripId,
-      totalBudget: amount,
-      currency: 'USD',
-    };
-    setBudget(newBudget);
-    localStorage.setItem(`budget_${tripId}`, JSON.stringify(newBudget));
-    showSuccess(t('budgetSet'));
-    setBudgetDialogOpen(false);
-    setBudgetAmount('');
+    try {
+      const newBudget = {
+        tripId,
+        totalBudget: amount,
+        currency: 'USD',
+      };
+
+      const savedBudget = await budgetApi.saveBudget(tripId, newBudget);
+      setBudget(savedBudget);
+      showSuccess(t('budgetSet'));
+      setBudgetDialogOpen(false);
+      setBudgetAmount('');
+    } catch (error) {
+      console.error('Failed to save budget:', error);
+      showError(t('failedToSaveBudget'));
+    }
   };
 
-  const handleAddExpense = () => {
+  const handleAddExpense = async () => {
     const amount = parseFloat(expenseForm.amount);
     if (isNaN(amount) || amount <= 0 || !expenseForm.description) {
       showError(t('error'));
       return;
     }
 
-    const newExpense: Expense = {
-      _id: editingExpense?._id || `manual-${Date.now()}`,
-      tripId,
-      category: expenseForm.category,
-      amount,
-      currency: 'USD',
-      description: expenseForm.description,
-      date: expenseForm.date,
-      notes: expenseForm.notes,
-    };
+    try {
+      if (editingExpense) {
+        // Update existing expense
+        const updatedExpense = await budgetApi.updateExpense(
+          tripId,
+          editingExpense._id!,
+          {
+            category: expenseForm.category,
+            amount,
+            description: expenseForm.description,
+            date: expenseForm.date,
+            notes: expenseForm.notes,
+          }
+        );
+        setExpenses(
+          expenses.map((exp) =>
+            exp._id === editingExpense._id ? updatedExpense : exp
+          )
+        );
+        showSuccess(t('expenseUpdated'));
+      } else {
+        // Add new expense
+        const newExpense: Expense = {
+          tripId,
+          category: expenseForm.category,
+          amount,
+          currency: 'USD',
+          description: expenseForm.description,
+          date: expenseForm.date,
+          notes: expenseForm.notes,
+        };
+        const savedExpense = await budgetApi.addExpense(tripId, newExpense);
+        setExpenses([...expenses, savedExpense]);
+        showSuccess(t('expenseAdded'));
+      }
 
-    let updatedExpenses;
-    if (editingExpense) {
-      updatedExpenses = expenses.map((exp) =>
-        exp._id === editingExpense._id ? newExpense : exp
-      );
-      showSuccess(t('expenseUpdated'));
-    } else {
-      updatedExpenses = [...expenses, newExpense];
-      showSuccess(t('expenseAdded'));
+      setExpenseDialogOpen(false);
+      setEditingExpense(null);
+      setExpenseForm({
+        category: 'food',
+        amount: '',
+        description: '',
+        date: new Date().toISOString().split('T')[0],
+        notes: '',
+      });
+    } catch (error) {
+      console.error('Failed to save expense:', error);
+      showError(t('failedToSaveExpense'));
     }
-
-    setExpenses(updatedExpenses);
-    localStorage.setItem(`expenses_${tripId}`, JSON.stringify(updatedExpenses));
-
-    setExpenseDialogOpen(false);
-    setEditingExpense(null);
-    setExpenseForm({
-      category: 'food',
-      amount: '',
-      description: '',
-      date: new Date().toISOString().split('T')[0],
-      notes: '',
-    });
   };
 
   const handleEditExpense = (expense: Expense) => {
@@ -338,11 +388,15 @@ export default function BudgetTracker({
     setExpenseDialogOpen(true);
   };
 
-  const handleDeleteExpense = (expense: Expense) => {
-    const updatedExpenses = expenses.filter((exp) => exp._id !== expense._id);
-    setExpenses(updatedExpenses);
-    localStorage.setItem(`expenses_${tripId}`, JSON.stringify(updatedExpenses));
-    showSuccess(t('expenseDeleted'));
+  const handleDeleteExpense = async (expense: Expense) => {
+    try {
+      await budgetApi.deleteExpense(tripId, expense._id!);
+      setExpenses(expenses.filter((exp) => exp._id !== expense._id));
+      showSuccess(t('expenseDeleted'));
+    } catch (error) {
+      console.error('Failed to delete expense:', error);
+      showError(t('failedToDeleteExpense'));
+    }
   };
 
   return (

@@ -13,6 +13,7 @@ import chatRoutes from "./routes/chats.js";
 import friendRoutes from "./routes/friends.js";
 import checkInRoutes from "./routes/checkins.js";
 import aiRoutes from "./routes/ai.js";
+import budgetRoutes from "./routes/budgets.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,6 +43,7 @@ app.use("/api/chats", chatRoutes);
 app.use("/api/friends", friendRoutes);
 app.use("/api/checkins", checkInRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/budgets", budgetRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {
