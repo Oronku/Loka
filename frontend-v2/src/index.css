@@ -2,13 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Avoid global SVG rules */
-
+/* Modern Professional Theme Variables */
 :root {
-  --color-black: #001a16;
+  --color-black: #1a1a1a;
   --color-white: #ffffff;
-  --color-primary: #009d85;
-  --color-bg: #f8fdfc;
+  --color-primary: #1976d2;
+  --color-secondary: #42a5f5;
+  --color-bg: #f8fafc;
+  --color-gray: #64748b;
 }
 
 /* App background and default text color */
@@ -17,9 +18,21 @@ body,
 #root {
   background-color: var(--color-bg);
   color: var(--color-black);
-  font-family: 'Nunito', sans-serif;
+  font-family:
+    'Inter',
+    'Roboto',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
 }
 
 /* RTL Support */

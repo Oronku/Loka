@@ -117,6 +117,7 @@ import {
   Chat as ChatIcon,
 } from '@mui/icons-material';
 import ChatWindow from '../components/ChatWindow';
+import GetPricesButton from '../components/GetPricesButton';
 
 // Helper function to get attraction type label
 function getAttractionTypeLabel(type?: string, customType?: string): string {
@@ -385,7 +386,7 @@ export default function TripDetails() {
   const [trip, setTrip] = useState<Trip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterCategory>('all');
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [viewMode, setViewMode] = useState<ViewMode>('timeline');
   const [expenseBalances, setExpenseBalances] = useState<ParticipantBalance[]>(
     []
   );
@@ -471,13 +472,6 @@ export default function TripDetails() {
         .catch((e) => setError(e.message));
     }
   }, [id]);
-
-  // Redirect shared users from list view to timeline
-  useEffect(() => {
-    if (!isOwner && viewMode === 'list') {
-      setViewMode('timeline');
-    }
-  }, [isOwner, viewMode]);
 
   // Calculate smart checkout times when trip loads or changes
   useEffect(() => {
@@ -1262,6 +1256,15 @@ export default function TripDetails() {
                 </Button>
               </>
             )}
+            {/* Get Real Prices & Booking Links */}
+            {trip.destinations && trip.destinations.length > 0 && (
+              <GetPricesButton
+                destination={trip.destinations[0]}
+                checkIn={trip.startDate}
+                checkOut={trip.endDate}
+                origin="TLV"
+              />
+            )}
           </Stack>
         </Stack>
         <Stack
@@ -1441,29 +1444,50 @@ export default function TripDetails() {
           mb={3}
           gap={2}
         >
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={1}
-            sx={{ width: { xs: '100%', md: 'auto' } }}
-          >
-            <Box sx={{ '& > button': { height: '36px' } }}>
-              <AddItemModalLauncher trip={trip} onUpdated={setTrip} />
-            </Box>
-            {trip?.isOwner !== false && (
+          {/* Add Items - Only in Edit Mode */}
+          {viewMode === 'list' && (
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1}
+              sx={{ width: { xs: '100%', md: 'auto' } }}
+            >
               <Box sx={{ '& > button': { height: '36px' } }}>
-                <AIItinerarySuggester
-                  trip={trip}
-                  onSuggestionsApplied={setTrip}
-                />
+                <AddItemModalLauncher trip={trip} onUpdated={setTrip} />
               </Box>
-            )}
-          </Stack>
+              {trip?.isOwner !== false && (
+                <Box sx={{ '& > button': { height: '36px' } }}>
+                  <AIItinerarySuggester
+                    trip={trip}
+                    onSuggestionsApplied={setTrip}
+                  />
+                </Box>
+              )}
+            </Stack>
+          )}
 
           <Stack
             direction={{ xs: 'column', md: 'row' }}
             spacing={2}
             alignItems={{ xs: 'stretch', md: 'center' }}
           >
+            {/* Edit Button - Only for owners */}
+            {isOwner && viewMode === 'timeline' && (
+              <Button
+                variant="contained"
+                startIcon={<EditIcon />}
+                onClick={() => setViewMode('list')}
+                sx={{
+                  height: '36px',
+                  boxShadow: 'none',
+                  '&:hover': {
+                    boxShadow: '0 4px 12px rgba(25, 118, 210, 0.2)',
+                  },
+                }}
+              >
+                Edit Trip
+              </Button>
+            )}
+
             {/* View Mode Toggle */}
             <Paper
               elevation={0}
@@ -1475,48 +1499,50 @@ export default function TripDetails() {
               }}
             >
               <Stack direction="row" sx={{ minWidth: { xs: 480, sm: 'auto' } }}>
-                {isOwner && (
+                {viewMode === 'list' && isOwner && (
                   <Button
                     size="small"
-                    startIcon={<ViewList />}
-                    onClick={() => setViewMode('list')}
+                    startIcon={<TimelineIcon />}
+                    onClick={() => setViewMode('timeline')}
+                    sx={{
+                      borderRadius: 0,
+                      borderRight: '1px solid',
+                      borderColor: 'divider',
+                      bgcolor: 'transparent',
+                      color: 'text.primary',
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                      },
+                    }}
+                  >
+                    View Timeline
+                  </Button>
+                )}
+                {viewMode !== 'list' && (
+                  <Button
+                    size="small"
+                    startIcon={<TimelineIcon />}
+                    onClick={() => setViewMode('timeline')}
                     sx={{
                       borderRadius: 0,
                       borderRight: '1px solid',
                       borderColor: 'divider',
                       bgcolor:
-                        viewMode === 'list' ? 'primary.main' : 'transparent',
-                      color: viewMode === 'list' ? 'white' : 'text.primary',
+                        viewMode === 'timeline'
+                          ? 'primary.main'
+                          : 'transparent',
+                      color: viewMode === 'timeline' ? 'white' : 'text.primary',
                       '&:hover': {
                         bgcolor:
-                          viewMode === 'list' ? 'primary.dark' : 'action.hover',
+                          viewMode === 'timeline'
+                            ? 'primary.dark'
+                            : 'action.hover',
                       },
                     }}
                   >
-                    List
+                    Timeline
                   </Button>
                 )}
-                <Button
-                  size="small"
-                  startIcon={<TimelineIcon />}
-                  onClick={() => setViewMode('timeline')}
-                  sx={{
-                    borderRadius: 0,
-                    borderRight: '1px solid',
-                    borderColor: 'divider',
-                    bgcolor:
-                      viewMode === 'timeline' ? 'primary.main' : 'transparent',
-                    color: viewMode === 'timeline' ? 'white' : 'text.primary',
-                    '&:hover': {
-                      bgcolor:
-                        viewMode === 'timeline'
-                          ? 'primary.dark'
-                          : 'action.hover',
-                    },
-                  }}
-                >
-                  Timeline
-                </Button>
                 <Button
                   size="small"
                   startIcon={<MapIcon />}
@@ -4857,6 +4883,11 @@ export default function TripDetails() {
               tripId={trip.id}
               startDate={trip.startDate}
               endDate={trip.endDate}
+              tripExpenses={trip.expenses || []}
+              tripFlights={trip.flights || []}
+              tripHotels={trip.hotels || []}
+              tripRides={trip.rides || []}
+              userId={user?.id}
               tripItems={[
                 ...(trip.flights || []).map((f) => ({
                   id: `flight-${f.flightNumber}-${f.departureDateTime}`,

@@ -14,12 +14,22 @@ import friendRoutes from "./routes/friends.js";
 import checkInRoutes from "./routes/checkins.js";
 import aiRoutes from "./routes/ai.js";
 import budgetRoutes from "./routes/budgets.js";
+import weatherRoutes from "./routes/weather.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5190",
+      "http://localhost:5191",
+      "http://localhost:5192",
+    ],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Request logger
@@ -44,6 +54,7 @@ app.use("/api/friends", friendRoutes);
 app.use("/api/checkins", checkInRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/budgets", budgetRoutes);
+app.use("/api/weather", weatherRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

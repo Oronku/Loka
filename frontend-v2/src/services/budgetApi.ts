@@ -249,6 +249,22 @@ export async function updateExpense(
   return await response.json();
 }
 
+// DELETE /api/budgets/:tripId/expenses?cleanup=auto - Clean up duplicate auto-added expenses
+export async function cleanupAutoAddedExpenses(tripId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/budgets/${tripId}/expenses?cleanup=auto`,
+    {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to cleanup auto-added expenses');
+  }
+}
+
 // DELETE /api/budgets/:tripId/expenses/:expenseId - Delete expense
 export async function deleteExpense(
   tripId: string,

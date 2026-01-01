@@ -3,16 +3,119 @@ import { getDb } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import { ObjectId } from "mongodb";
 import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import googleApi from "../services/googleApi.js";
+import travelpayouts from "../services/travelpayouts.js";
+import rapidApiHotels from "../services/rapidApiHotels.js";
+import googleFlights from "../services/googleFlights.js";
+import duffel from "../services/duffel.js";
 
 const router = express.Router();
 
-// Apply auth middleware
+// PUBLIC endpoint - Get real prices (no auth required for price checking)
+router.post("/get-real-prices", async (req, res) => {
+  try {
+    const { destination, hotelName, checkIn, checkOut, origin } = req.body;
+
+    console.log(
+      `💰 Getting real prices for ${destination}${hotelName ? ` - ${hotelName}` : ""}`
+    );
+
+    const results = {
+      destination: destination,
+      hotels: [],
+      flights: [],
+      averageHotelPrice: null,
+      averageFlightPrice: null,
+      affiliate: true,
+    };
+
+    // Fetch hotels using RapidAPI (real prices from Booking.com)
+    if (destination && checkIn && checkOut && rapidApiHotels.isConfigured()) {
+      try {
+        const hotels = await rapidApiHotels.searchHotels(
+          destination,
+          checkIn,
+          checkOut,
+          2,
+          hotelName // Pass specific hotel name if provided
+        );
+        results.hotels = hotels || [];
+
+        if (hotels && hotels.length > 0) {
+          const avgPrice =
+            hotels.reduce((sum, h) => sum + (h.price || 0), 0) / hotels.length;
+          results.averageHotelPrice = Math.round(avgPrice);
+        }
+      } catch (err) {
+        console.error("Hotel search error:", err.message);
+      }
+    }
+
+    // Fetch flights using Duffel API
+    if (origin && destination && checkIn && duffel.isConfigured()) {
+      try {
+        console.log(
+          `✈️ Searching flights with Duffel: ${origin} → ${destination}`
+        );
+
+        const flights = await duffel.searchFlights(
+          origin,
+          destination,
+          checkIn,
+          checkOut || null, // Return date (null for one-way)
+          2, // Adults
+          "economy"
+        );
+        results.flights = flights || [];
+
+        if (flights && flights.length > 0) {
+          const avgPrice =
+            flights.reduce((sum, f) => sum + (f.price || 0), 0) /
+            flights.length;
+          results.averageFlightPrice = Math.round(avgPrice);
+          console.log(
+            `✅ Found ${flights.length} flights from Duffel, avg: $${results.averageFlightPrice}`
+          );
+        } else {
+          console.log("⚠️ No flights found from Duffel");
+        }
+      } catch (err) {
+        console.error("Duffel flight search error:", err.message);
+        // Don't fail the whole request if flights fail
+        results.flightsError = err.message;
+      }
+    }
+
+    console.log(
+      `✅ Found ${results.hotels.length} hotels, ${results.flights.length} flights`
+    );
+
+    res.json(results);
+  } catch (error) {
+    console.error("Get Real Prices Error:", error);
+    res.status(500).json({
+      error: "Failed to get prices",
+      details: error.message,
+    });
+  }
+});
+
+// Apply auth middleware to all routes below this point
 router.use(verifyGoogleToken);
 
 // Initialize OpenAI if key is present
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
+
+// Initialize Gemini if key is present
+const genAI =
+  process.env.GEMINI_API_KEY &&
+  process.env.GEMINI_API_KEY !==
+    "GET_FROM_https://aistudio.google.com/app/apikey"
+    ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+    : null;
 
 // Process AI message
 router.post("/message", async (req, res) => {
@@ -386,6 +489,7 @@ Do not include any text before or after the JSON array.
         success: true,
         suggestions: suggestions,
         tripDays: tripDays,
+        aiProvider: "openai",
       });
     } catch (aiError) {
       console.error("OpenAI API Error:", aiError);
@@ -407,6 +511,192 @@ Do not include any text before or after the JSON array.
     console.error("Suggest Itinerary Error:", error);
     res.status(500).json({
       error: "Failed to generate itinerary suggestions",
+      details: error.message,
+    });
+  }
+});
+
+// NEW: Smart AI Trip Creation - Uses Gemini + Google Places for real data
+router.post("/create-smart-trip", async (req, res) => {
+  try {
+    const { trip, preferences } = req.body;
+    const userId = req.user.id;
+
+    // Validate we have at least one AI service
+    if (!genAI && !openai) {
+      return res.status(503).json({
+        error:
+          "AI service is not available. Please configure GEMINI_API_KEY or OPENAI_API_KEY.",
+      });
+    }
+
+    // Validate trip data
+    if (!trip || !trip.destinations || !trip.startDate || !trip.endDate) {
+      return res.status(400).json({
+        error:
+          "Trip data is incomplete. Please provide destinations and dates.",
+      });
+    }
+
+    const startDate = new Date(trip.startDate);
+    const endDate = new Date(trip.endDate);
+    const tripDays =
+      Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+    const destinations = Array.isArray(trip.destinations)
+      ? trip.destinations
+      : [trip.destinations];
+    const mainDestination = destinations[0];
+
+    console.log(
+      `🤖 Smart Trip Creation: ${mainDestination} for ${tripDays} days`
+    );
+
+    // Strategy: Use Gemini for real places, OpenAI for creative descriptions
+    const useGemini = genAI !== null;
+    const aiProvider = useGemini ? "gemini" : "openai";
+
+    let itinerary = [];
+
+    if (useGemini) {
+      // GEMINI PATH: Get real places with Google integration
+      console.log("🔵 Using Gemini + Google Places for real data");
+
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+      const prompt = `You are a travel planning AI with access to Google Places data.
+      
+Create a ${tripDays}-day itinerary for ${mainDestination}.
+
+Trip Details:
+- Destination: ${mainDestination}
+- Dates: ${trip.startDate} to ${trip.endDate}
+- Interests: ${preferences?.interests || "general tourism, culture, food"}
+- Pace: ${preferences?.pace || "moderate"}
+- Budget: ${preferences?.dailyBudget || "moderate"}
+
+For EACH day, suggest 3-5 activities including:
+- Famous attractions (museums, landmarks, viewpoints)
+- Local restaurants (breakfast, lunch, dinner spots)
+- Activities (walking tours, experiences)
+
+Return ONLY a JSON array with this EXACT structure:
+[
+  {
+    "day": 1,
+    "date": "${trip.startDate}",
+    "theme": "Arrival & City Center",
+    "activities": [
+      {
+        "time": "10:00 AM",
+        "type": "attraction",
+        "name": "EXACT attraction name",
+        "description": "Brief description",
+        "duration": "2 hours",
+        "estimatedCost": 25,
+        "searchQuery": "attraction name + ${mainDestination}"
+      }
+    ]
+  }
+]
+
+CRITICAL: Use REAL place names that exist in ${mainDestination}. Make searchQuery very specific.
+Return only valid JSON, no markdown, no explanation.`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      let text = response.text();
+
+      // Clean response
+      text = text
+        .replace(/```json\n?/g, "")
+        .replace(/```\n?/g, "")
+        .trim();
+
+      const geminiItinerary = JSON.parse(text);
+
+      // Now enhance with REAL Google Places data
+      console.log("📍 Enriching with Google Places API...");
+
+      for (const day of geminiItinerary) {
+        const enrichedActivities = [];
+
+        for (const activity of day.activities) {
+          try {
+            // Search for the real place using Google Places
+            const searchQuery =
+              activity.searchQuery || `${activity.name} ${mainDestination}`;
+            const placeData = await googleApi.searchPlaceByText(searchQuery);
+
+            if (placeData) {
+              enrichedActivities.push({
+                ...activity,
+                placeId: placeData.place_id,
+                location: placeData.formatted_address || activity.location,
+                coordinates: placeData.geometry?.location,
+                rating: placeData.rating,
+                userRatingsTotal: placeData.user_ratings_total,
+                photos: placeData.photos?.slice(0, 3),
+                realPlace: true,
+              });
+              console.log(
+                `  ✅ Found: ${activity.name} (${placeData.place_id})`
+              );
+            } else {
+              // Keep original if not found
+              enrichedActivities.push({ ...activity, realPlace: false });
+              console.log(`  ⚠️  Not found: ${activity.name}`);
+            }
+          } catch (err) {
+            console.error(
+              `  ❌ Error searching ${activity.name}:`,
+              err.message
+            );
+            enrichedActivities.push({ ...activity, realPlace: false });
+          }
+        }
+
+        day.activities = enrichedActivities;
+      }
+
+      itinerary = geminiItinerary;
+    } else if (openai) {
+      // OPENAI PATH: Creative descriptions (fallback)
+      console.log("🟢 Using OpenAI for creative itinerary");
+
+      const systemPrompt = `Create a ${tripDays}-day itinerary for ${mainDestination}.
+Return only valid JSON array with day-by-day activities.`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4-turbo-preview",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Create detailed ${tripDays}-day plan` },
+        ],
+        temperature: 0.7,
+        max_tokens: 3000,
+      });
+
+      let text = completion.choices[0].message.content.trim();
+      text = text.replace(/```json\n?/g, "").replace(/```\n?/g, "");
+      itinerary = JSON.parse(text);
+    }
+
+    res.json({
+      success: true,
+      itinerary: itinerary,
+      tripDays: tripDays,
+      aiProvider: aiProvider,
+      enrichedWithGooglePlaces: useGemini,
+      totalActivities: itinerary.reduce(
+        (sum, day) => sum + (day.activities?.length || 0),
+        0
+      ),
+    });
+  } catch (error) {
+    console.error("Smart Trip Creation Error:", error);
+    res.status(500).json({
+      error: "Failed to create smart trip",
       details: error.message,
     });
   }

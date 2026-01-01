@@ -298,8 +298,155 @@ export default function NewTripWizard() {
             <Stack
               direction={{ xs: 'column', sm: 'row' }}
               spacing={2}
-              justifyContent="flex-end"
+              justifyContent="space-between"
             >
+              <Button
+                variant="outlined"
+                size="large"
+                onClick={async () => {
+                  if (!basic.name || !basic.startDate || !basic.endDate) {
+                    showError('Please fill in trip name and dates first');
+                    return;
+                  }
+
+                  // Start creating trip with AI
+                  setCreating(true);
+                  try {
+                    showSuccess(
+                      '✨ AI is planning your perfect trip with real places...'
+                    );
+
+                    // First create the basic trip
+                    const tripData = {
+                      name: basic.name,
+                      destinations: basic.destinations
+                        .split(',')
+                        .map((d) => d.trim()),
+                      startDate: basic.startDate,
+                      endDate: basic.endDate,
+                      userId: 'placeholder',
+                    };
+
+                    const newTrip = await createTrip(tripData);
+
+                    // Now get SMART AI suggestions (Gemini + Google Places)
+                    const response = await fetch('/api/ai/create-smart-trip', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({
+                        trip: {
+                          destinations: tripData.destinations,
+                          startDate: tripData.startDate,
+                          endDate: tripData.endDate,
+                        },
+                        preferences: {
+                          interests: 'culture, food, sightseeing',
+                          pace: 'moderate',
+                          dailyBudget: 'moderate',
+                        },
+                      }),
+                    });
+
+                    if (response.status === 503) {
+                      showError(
+                        '⚠️ AI service requires API key. Configure GEMINI_API_KEY or OPENAI_API_KEY'
+                      );
+                      setTimeout(() => navigate(`/trips/${newTrip.id}`), 2000);
+                      return;
+                    }
+
+                    if (!response.ok) {
+                      const errorData = await response.json();
+                      throw new Error(
+                        errorData.error || 'Failed to get AI suggestions'
+                      );
+                    }
+
+                    const aiData = await response.json();
+
+                    if (aiData.success && aiData.itinerary) {
+                      const provider =
+                        aiData.aiProvider === 'gemini'
+                          ? '🔵 Gemini'
+                          : '🟢 OpenAI';
+                      const placesInfo = aiData.enrichedWithGooglePlaces
+                        ? ' + 📍 Google Places'
+                        : '';
+
+                      // Try to get real prices with affiliate links
+                      try {
+                        const pricesResponse = await fetch(
+                          '/api/ai/get-real-prices',
+                          {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({
+                              destination: tripData.destinations[0],
+                              checkIn: tripData.startDate,
+                              checkOut: tripData.endDate,
+                              origin: 'TLV', // TODO: Get user's location
+                            }),
+                          }
+                        );
+
+                        if (pricesResponse.ok) {
+                          const pricesData = await pricesResponse.json();
+                          const avgHotel = pricesData.averageHotelPrice;
+                          const avgFlight = pricesData.averageFlightPrice;
+                          const priceInfo =
+                            avgHotel || avgFlight
+                              ? ` | Avg: Hotel $${avgHotel || '?'}, Flight $${avgFlight || '?'}`
+                              : '';
+
+                          showSuccess(
+                            `🎉 ${provider}${placesInfo} created ${aiData.tripDays}-day itinerary with ${aiData.totalActivities} activities${priceInfo}! 💰 Booking links available!`
+                          );
+                        } else {
+                          showSuccess(
+                            `🎉 ${provider}${placesInfo} created ${aiData.tripDays}-day itinerary with ${aiData.totalActivities} real activities!`
+                          );
+                        }
+                      } catch (priceError) {
+                        console.log('Could not fetch real prices:', priceError);
+                        showSuccess(
+                          `🎉 ${provider}${placesInfo} created ${aiData.tripDays}-day itinerary with ${aiData.totalActivities} real activities!`
+                        );
+                      }
+
+                      // Navigate to the new trip after short delay
+                      setTimeout(() => {
+                        navigate(`/trips/${newTrip.id}`);
+                      }, 2500);
+                    } else {
+                      throw new Error('Invalid AI response');
+                    }
+                  } catch (error) {
+                    console.error('AI Trip Creation Error:', error);
+                    const errorMessage =
+                      error instanceof Error
+                        ? error.message
+                        : 'Failed to create AI trip. Try manual creation.';
+                    showError(errorMessage);
+                  } finally {
+                    setCreating(false);
+                  }
+                }}
+                disabled={
+                  !basic.name ||
+                  !basic.startDate ||
+                  !basic.endDate ||
+                  creating ||
+                  basic.endDate < basic.startDate
+                }
+                startIcon={
+                  creating ? <CircularProgress size={20} /> : <FlightIcon />
+                }
+                fullWidth={isSmall}
+              >
+                ✨ Let AI Help Me Plan
+              </Button>
               <Button
                 variant="contained"
                 size="large"

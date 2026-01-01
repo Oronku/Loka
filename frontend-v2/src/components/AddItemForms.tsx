@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import SearchAutocomplete from './SearchAutocomplete';
 import PDFUploadButton from './PDFUploadButton';
+import BookingButton from './BookingButton';
 import type { Trip } from '../types/domain';
 import {
   TextField,
@@ -128,6 +129,10 @@ export function AddFlightForm({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Real prices from affiliate API
+  const [realPrices, setRealPrices] = useState<any>(null);
+  const [loadingPrices, setLoadingPrices] = useState(false);
+
   async function searchFlight() {
     if (!flightNumber.trim() || !date) return;
     setErr(null);
@@ -162,6 +167,45 @@ export function AddFlightForm({
       setRouteFlights([]);
     } finally {
       setSearching(false);
+    }
+  }
+
+  // Fetch real prices from Travelpayouts API
+  async function fetchRealPrices() {
+    const flight = flightData || selectedFlight;
+    if (!flight) return;
+
+    const originCode = flight.departureAirportCode || flight.departure?.iata;
+    const destCode = flight.arrivalAirportCode || flight.arrival?.iata;
+
+    if (!originCode || !destCode || !date) return;
+
+    setLoadingPrices(true);
+    setRealPrices(null);
+    try {
+      const response = await fetch(
+        'http://localhost:3001/api/ai/get-real-prices',
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            origin: originCode,
+            destination: destCode,
+            checkIn: date,
+            checkOut: date, // Same day for flights
+          }),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setRealPrices(data);
+      }
+    } catch (e: any) {
+      console.error('Failed to fetch real prices:', e);
+    } finally {
+      setLoadingPrices(false);
     }
   }
 
@@ -581,86 +625,98 @@ export function AddFlightForm({
 
       {/* Manual Mode */}
       {mode === 'manual' && (
-        <Card variant="outlined" sx={{ mb: 3 }}>
-          <CardContent>
-            <Typography variant="subtitle1" gutterBottom fontWeight="bold">
-              Enter Flight Details Manually
+        <>
+          <Alert severity="success" icon="✈️" sx={{ mb: 3 }}>
+            <Typography variant="body2" fontWeight="bold">
+              Add Flight You've Already Booked
             </Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Flight Number"
-                  placeholder="e.g. IZ603"
-                  value={flightNumber}
-                  onChange={(e) => setFlightNumber(e.target.value)}
-                  required
-                />
+            <Typography variant="caption">
+              Use this form to add flights you've already purchased. Enter the
+              details from your ticket.
+            </Typography>
+          </Alert>
+
+          <Card variant="outlined" sx={{ mb: 3 }}>
+            <CardContent>
+              <Typography variant="subtitle1" gutterBottom fontWeight="bold">
+                Enter Flight Details Manually
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Flight Number"
+                    placeholder="e.g. IZ603"
+                    value={flightNumber}
+                    onChange={(e) => setFlightNumber(e.target.value)}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Airline"
+                    placeholder="e.g. Arkia Israeli Airlines"
+                    value={airline}
+                    onChange={(e) => setAirline(e.target.value)}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Departure Airport"
+                    placeholder="e.g. TLV"
+                    value={departureAirport}
+                    onChange={(e) => setDepartureAirport(e.target.value)}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Arrival Airport"
+                    placeholder="e.g. DXB"
+                    value={arrivalAirport}
+                    onChange={(e) => setArrivalAirport(e.target.value)}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    type="date"
+                    label="Flight Date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    type="time"
+                    label="Departure Time"
+                    value={departureTime}
+                    onChange={(e) => setDepartureTime(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    type="time"
+                    label="Arrival Time"
+                    value={arrivalTime}
+                    onChange={(e) => setArrivalTime(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
               </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Airline"
-                  placeholder="e.g. Arkia Israeli Airlines"
-                  value={airline}
-                  onChange={(e) => setAirline(e.target.value)}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Departure Airport"
-                  placeholder="e.g. TLV"
-                  value={departureAirport}
-                  onChange={(e) => setDepartureAirport(e.target.value)}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Arrival Airport"
-                  placeholder="e.g. DXB"
-                  value={arrivalAirport}
-                  onChange={(e) => setArrivalAirport(e.target.value)}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  type="date"
-                  label="Flight Date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  type="time"
-                  label="Departure Time"
-                  value={departureTime}
-                  onChange={(e) => setDepartureTime(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  type="time"
-                  label="Arrival Time"
-                  value={arrivalTime}
-                  onChange={(e) => setArrivalTime(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
-            </Grid>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </>
       )}
 
       {/* Flight Details (shown after search) */}
@@ -802,6 +858,18 @@ export function AddFlightForm({
               </Grid>
             </CardContent>
           </Card>
+
+          {/* Info: Use Manual Entry for flights */}
+          <Alert severity="info" icon="ℹ️" sx={{ mb: 3 }}>
+            <Typography variant="body2" fontWeight="bold" gutterBottom>
+              Add Your Flight Booking
+            </Typography>
+            <Typography variant="caption">
+              After finding your flight details above, enter your booking
+              information and the price you paid below. Or use the "Manual
+              Entry" tab to add a flight you've already purchased.
+            </Typography>
+          </Alert>
 
           {/* User Inputs Section - shown after search */}
           <Card variant="outlined" sx={{ mb: 3 }}>
@@ -1053,6 +1121,10 @@ export function AddHotelForm({
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Real prices from affiliate API
+  const [realHotelPrices, setRealHotelPrices] = useState<any>(null);
+  const [loadingHotelPrices, setLoadingHotelPrices] = useState(false);
+
   // Update reservation names array when number of rooms changes
   useEffect(() => {
     const numRooms = parseInt(numberOfRooms) || 1;
@@ -1120,6 +1192,161 @@ export function AddHotelForm({
       setHotelDetail(null);
     } finally {
       setLoadingDetails(false);
+    }
+  }
+
+  // Fetch real hotel prices from Travelpayouts API
+  async function fetchRealHotelPrices() {
+    if (!selected || !checkIn || !checkOut) return;
+
+    // Extract city name from hotel address
+    // Common city names to look for
+    const knownCities = [
+      'Dubai',
+      'Abu Dhabi',
+      'Paris',
+      'London',
+      'New York',
+      'Tokyo',
+      'Bangkok',
+      'Singapore',
+      'Hong Kong',
+      'Seoul',
+      'Rome',
+      'Barcelona',
+      'Amsterdam',
+      'Berlin',
+      'Madrid',
+      'Vienna',
+      'Prague',
+      'Budapest',
+      'Istanbul',
+      'Athens',
+      'Tel Aviv',
+      'Jerusalem',
+      'Eilat',
+      'Haifa',
+      'Los Angeles',
+      'San Francisco',
+      'Chicago',
+      'Miami',
+      'Las Vegas',
+      'Boston',
+      'Toronto',
+      'Vancouver',
+      'Sydney',
+      'Melbourne',
+      'Lisbon',
+      'Copenhagen',
+      'Stockholm',
+      'Oslo',
+      'Helsinki',
+      'Brussels',
+      'Zurich',
+      'Geneva',
+      'Milan',
+      'Florence',
+      'Venice',
+      'Munich',
+      'Frankfurt',
+      'Hamburg',
+      'Cairo',
+      'Marrakech',
+      'Casablanca',
+      'Doha',
+      'Riyadh',
+      'Jeddah',
+      'Muscat',
+      'Amman',
+      'Beirut',
+      'Bucharest',
+    ];
+
+    const fullAddress =
+      selected.formattedAddress || hotelDetail?.formattedAddress || '';
+
+    // Try to find a known city in the address
+    let cityName = null;
+    for (const city of knownCities) {
+      if (fullAddress.includes(city)) {
+        cityName = city;
+        break;
+      }
+    }
+
+    // Fallback: extract from address parts
+    if (!cityName) {
+      const addressParts = fullAddress
+        .split(/[-,]/)
+        .map((p: string) => p.trim())
+        .filter((p: string) => p.length > 0);
+
+      if (addressParts.length >= 3) {
+        // Format: [Hotel/Street, Street/Area, City, Country]
+        // Take the second-to-last part (before country)
+        cityName = addressParts[addressParts.length - 2];
+      } else if (addressParts.length === 2) {
+        // Format: [Hotel, City] or [Street, City]
+        cityName = addressParts[1];
+      } else if (addressParts.length === 1) {
+        // Only one part, use it
+        cityName = addressParts[0];
+      } else {
+        cityName = searchQuery; // last resort
+      }
+
+      // Clean up city name
+      cityName = cityName
+        .replace(/\d+/g, '') // Remove numbers
+        .replace(/street|road|avenue|blvd|ave|calea|strada|sheikh|zayed/gi, '') // Remove street terms
+        .trim();
+    }
+
+    console.log(
+      '🏙️ Searching prices for city:',
+      cityName,
+      'from address:',
+      fullAddress
+    );
+    console.log('📅 Dates:', checkIn, 'to', checkOut);
+
+    // Validate cityName is a string
+    if (!cityName || typeof cityName !== 'string') {
+      console.error('❌ Invalid city name:', cityName);
+      setLoadingHotelPrices(false);
+      return;
+    }
+
+    // Get selected hotel name
+    const hotelName = selected?.name || hotelDetail?.name || null;
+
+    setLoadingHotelPrices(true);
+    setRealHotelPrices(null);
+    try {
+      const response = await fetch(
+        'http://localhost:3001/api/ai/get-real-prices',
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            destination: cityName,
+            hotelName: hotelName, // Send specific hotel name if selected
+            checkIn,
+            checkOut,
+            origin: 'TLV',
+          }),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setRealHotelPrices(data);
+      }
+    } catch (e: any) {
+      console.error('Failed to fetch real hotel prices:', e);
+    } finally {
+      setLoadingHotelPrices(false);
     }
   }
 
@@ -1502,6 +1729,128 @@ export function AddHotelForm({
                   </Grid>
                 </CardContent>
               </Card>
+
+              {/* Get Real Hotel Prices & Booking */}
+              {checkIn && checkOut && (
+                <Card variant="outlined" sx={{ bgcolor: 'success.50' }}>
+                  <CardContent>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      justifyContent="space-between"
+                      mb={2}
+                    >
+                      <Typography variant="subtitle1" fontWeight="bold">
+                        💰 Real Prices & Booking
+                      </Typography>
+                      <Button
+                        variant="contained"
+                        color="success"
+                        onClick={fetchRealHotelPrices}
+                        disabled={loadingHotelPrices}
+                        startIcon={
+                          loadingHotelPrices && <CircularProgress size={20} />
+                        }
+                      >
+                        {loadingHotelPrices ? 'Loading...' : 'Get Real Prices'}
+                      </Button>
+                    </Stack>
+
+                    {realHotelPrices?.hotels &&
+                      realHotelPrices.hotels.length > 0 && (
+                        <Stack spacing={2}>
+                          <Alert severity="success">
+                            Found {realHotelPrices.hotels.length} hotels! Avg: $
+                            {realHotelPrices.averageHotelPrice?.toFixed(0)}
+                            /night
+                          </Alert>
+                          {realHotelPrices.hotels
+                            .slice(0, 3)
+                            .map((hotel: any, idx: number) => (
+                              <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
+                                <Grid container spacing={2} alignItems="center">
+                                  <Grid item xs={12} sm={7}>
+                                    <Typography
+                                      variant="body2"
+                                      fontWeight="bold"
+                                    >
+                                      {hotel.name}
+                                    </Typography>
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                    >
+                                      {hotel.stars &&
+                                        `${'⭐'.repeat(hotel.stars)} • `}
+                                      {hotel.location}
+                                    </Typography>
+                                    {hotel.rating && (
+                                      <Typography
+                                        variant="caption"
+                                        color="primary"
+                                        display="block"
+                                      >
+                                        Rating: {hotel.rating}/10
+                                      </Typography>
+                                    )}
+                                  </Grid>
+                                  <Grid item xs={12} sm={5}>
+                                    <Stack spacing={1}>
+                                      <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                      >
+                                        ${hotel.pricePerNight}/night
+                                      </Typography>
+                                      <Stack
+                                        direction="row"
+                                        spacing={1}
+                                        alignItems="center"
+                                      >
+                                        <Typography
+                                          variant="h6"
+                                          color="primary"
+                                          fontWeight="bold"
+                                        >
+                                          ${hotel.price}
+                                        </Typography>
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                        >
+                                          total
+                                        </Typography>
+                                      </Stack>
+                                      <BookingButton
+                                        bookingLink={hotel.bookingLink}
+                                        price={hotel.price}
+                                        currency={hotel.currency || 'USD'}
+                                        type="hotel"
+                                        affiliate={hotel.affiliate}
+                                        variant="chip"
+                                        size="small"
+                                      />
+                                    </Stack>
+                                  </Grid>
+                                </Grid>
+                              </Paper>
+                            ))}
+                        </Stack>
+                      )}
+
+                    {!realHotelPrices && !loadingHotelPrices && (
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        textAlign="center"
+                      >
+                        Click "Get Real Prices" to see current hotel prices and
+                        booking options
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               <Button
                 variant="contained"

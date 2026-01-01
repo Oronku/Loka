@@ -16,17 +16,26 @@ async function getTripAndVerifyOwnership(tripId, userId) {
   }
 
   const tripsCollection = db.collection("trips");
+
+  // Build trip ID query (match by _id OR id field)
+  const tripIdQuery = [];
+  if (ObjectId.isValid(tripId)) {
+    tripIdQuery.push({ _id: new ObjectId(tripId) });
+  }
+  tripIdQuery.push({ id: tripId });
+
+  // Query: (match tripId) AND (owned by user OR shared with edit permission)
   const query = {
-    $or: [
-      { userId: userId },
-      { "sharedWith.userId": userId, "sharedWith.permission": "edit" },
+    $and: [
+      { $or: tripIdQuery },
+      {
+        $or: [
+          { userId: userId },
+          { "sharedWith.userId": userId, "sharedWith.permission": "edit" },
+        ],
+      },
     ],
   };
-
-  if (ObjectId.isValid(tripId)) {
-    query.$or.push({ _id: new ObjectId(tripId) });
-  }
-  query.$or.push({ id: tripId });
 
   const trip = await tripsCollection.findOne(query);
   if (!trip) {
@@ -51,9 +60,14 @@ router.get("/:tripId", async (req, res) => {
       categories: [],
     };
 
+    // Filter expenses to only include those for THIS trip
+    if (budget.expenses && Array.isArray(budget.expenses)) {
+      budget.expenses = budget.expenses.filter((e) => e.tripId === tripId);
+    }
+
     res.json(budget);
   } catch (error) {
-    console.error("Get budget error:", error);
+    console.error("❌ Get budget error:", error);
     if (error.message === "Trip not found or access denied") {
       res.status(404).json({ error: error.message });
     } else {
@@ -375,7 +389,10 @@ router.get("/:tripId/expenses", async (req, res) => {
     const userId = req.user.id;
 
     const trip = await getTripAndVerifyOwnership(tripId, userId);
-    const expenses = trip.budget?.expenses || [];
+    const allExpenses = trip.budget?.expenses || [];
+
+    // Filter to only return expenses for THIS trip
+    const expenses = allExpenses.filter((e) => e.tripId === tripId);
 
     res.json(expenses);
   } catch (error) {
@@ -523,6 +540,72 @@ router.put("/:tripId/expenses/:expenseId", async (req, res) => {
       res.status(404).json({ error: error.message });
     } else {
       res.status(500).json({ error: "Failed to update expense" });
+    }
+  }
+});
+
+// DELETE /api/budgets/:tripId/expenses - Delete all expenses or cleanup auto-added (use ?cleanup=auto query param)
+router.delete("/:tripId/expenses", async (req, res) => {
+  try {
+    const { tripId } = req.params;
+    const { cleanup } = req.query;
+    const userId = req.user.id;
+
+    const trip = await getTripAndVerifyOwnership(tripId, userId);
+
+    const db = getDatabase();
+    const tripsCollection = db.collection("trips");
+
+    // If cleanup=auto, remove only auto-added expenses for THIS trip
+    if (cleanup === "auto") {
+      const result = await tripsCollection.updateOne(
+        { _id: trip._id },
+        {
+          $pull: {
+            "budget.expenses": {
+              $and: [{ _id: { $regex: /^trip-/ } }, { tripId: tripId }],
+            },
+          },
+          $set: { updatedAt: new Date().toISOString() },
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+
+      return res.json({
+        success: true,
+        message: "Auto-added expenses cleaned up successfully",
+        modifiedCount: result.modifiedCount,
+      });
+    }
+
+    // Otherwise, delete all expenses
+    const result = await tripsCollection.updateOne(
+      { _id: trip._id },
+      {
+        $set: {
+          "budget.expenses": [],
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "All expenses deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete expenses error:", error);
+    if (error.message === "Trip not found or access denied") {
+      res.status(404).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: "Failed to delete expenses" });
     }
   }
 });
