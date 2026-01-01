@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { listTrips } from '../services/api';
 import { Link } from 'react-router-dom';
 import {
@@ -18,6 +18,8 @@ import {
   Fade,
   Skeleton,
   Dialog,
+  Autocomplete,
+  TextField,
 } from '@mui/material';
 import {
   Add,
@@ -32,6 +34,9 @@ import {
   ViewModule,
   ViewList,
   ViewComfy,
+  FilterList,
+  LocationCity,
+  Search,
 } from '@mui/icons-material';
 import NewTripWizard from './NewTripWizard';
 import TripStatistics from '../components/TripStatistics';
@@ -48,6 +53,7 @@ export default function Home() {
     'all' | 'upcoming' | 'ongoing' | 'past'
   >('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'compact'>('grid');
+  const [selectedCity, setSelectedCity] = useState<string | null>(null);
 
   useEffect(() => {
     listTrips()
@@ -80,8 +86,27 @@ export default function Home() {
   };
 
   const filterTrips = (trips: any[]) => {
-    if (tripFilter === 'all') return trips;
-    return trips.filter((trip) => getTripStatus(trip) === tripFilter);
+    let filtered = trips;
+
+    // Filter by status
+    if (tripFilter !== 'all') {
+      filtered = filtered.filter((trip) => getTripStatus(trip) === tripFilter);
+    }
+
+    // Filter by city
+    if (selectedCity) {
+      filtered = filtered.filter((trip) => {
+        if (!trip.destinations) return false;
+        return trip.destinations.some((dest: any) => {
+          if (typeof dest === 'string') {
+            return dest.toLowerCase().includes(selectedCity.toLowerCase());
+          }
+          return dest.name?.toLowerCase().includes(selectedCity.toLowerCase());
+        });
+      });
+    }
+
+    return filtered;
   };
 
   // Sort trips by date
@@ -123,6 +148,18 @@ export default function Home() {
 
   const filteredOwnedTrips = sortTrips(filterTrips(ownedTrips));
   const filteredSharedTrips = sortTrips(filterTrips(sharedTrips));
+
+  // Get unique cities from all trips
+  const allCities = useMemo(() => {
+    const cities = new Set<string>();
+    trips?.forEach((trip) => {
+      trip.destinations?.forEach((dest: any) => {
+        const cityName = typeof dest === 'string' ? dest : dest.name;
+        if (cityName) cities.add(cityName);
+      });
+    });
+    return Array.from(cities).sort();
+  }, [trips]);
 
   // Count trips by status
   const upcomingCount = ownedTrips.filter(
@@ -408,6 +445,38 @@ export default function Home() {
                 }}
               />
             </Stack>
+
+            {/* City Filter with Search */}
+            {allCities.length > 0 && (
+              <Autocomplete
+                size="small"
+                options={allCities}
+                value={selectedCity}
+                onChange={(_, newValue) => setSelectedCity(newValue)}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    placeholder="Search by city..."
+                    variant="outlined"
+                    InputProps={{
+                      ...params.InputProps,
+                      startAdornment: (
+                        <>
+                          <Search sx={{ color: 'text.secondary', mr: 1 }} />
+                          {params.InputProps.startAdornment}
+                        </>
+                      ),
+                    }}
+                  />
+                )}
+                sx={{
+                  width: { xs: '100%', sm: 300 },
+                  '& .MuiOutlinedInput-root': {
+                    bgcolor: 'background.paper',
+                  },
+                }}
+              />
+            )}
 
             {/* View Mode Toggle */}
             <Paper

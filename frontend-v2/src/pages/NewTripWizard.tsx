@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { createTrip } from '../services/api';
-import type { Trip } from '../types/domain';
+import { createTrip, citiesAutocomplete, placeDetails } from '../services/api';
+import type { Trip, Destination } from '../types/domain';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   AddFlightForm,
@@ -26,6 +26,7 @@ import {
   Chip,
   Alert,
   useMediaQuery,
+  Autocomplete,
 } from '@mui/material';
 import {
   ArrowBack,
@@ -36,6 +37,7 @@ import {
   DirectionsCar,
   AttractionsOutlined,
   Info,
+  LocationOn,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useLanguage } from '../context/LanguageContext';
@@ -43,7 +45,7 @@ import { useNotification } from '../context/NotificationContext';
 
 interface BasicInfo {
   name: string;
-  destinations: string;
+  destinations: Destination[];
   startDate: string;
   endDate: string;
 }
@@ -54,7 +56,7 @@ export default function NewTripWizard() {
   const [step, setStep] = useState<number>(0);
   const [basic, setBasic] = useState<BasicInfo>({
     name: '',
-    destinations: '',
+    destinations: [],
     startDate: '',
     endDate: '',
   });
@@ -63,6 +65,11 @@ export default function NewTripWizard() {
   const navigate = useNavigate();
   const theme = useTheme();
   const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // City autocomplete state
+  const [cityOptions, setCityOptions] = useState<any[]>([]);
+  const [cityInputValue, setCityInputValue] = useState('');
+  const [loadingCities, setLoadingCities] = useState(false);
 
   const steps = [
     t('stepBasicInfo'),
@@ -76,10 +83,34 @@ export default function NewTripWizard() {
   // Reset wizard when component mounts (new trip creation)
   useEffect(() => {
     setStep(0);
-    setBasic({ name: '', destinations: '', startDate: '', endDate: '' });
+    setBasic({ name: '', destinations: [], startDate: '', endDate: '' });
     setTrip(null);
     setCreating(false);
   }, []);
+
+  // City autocomplete search
+  useEffect(() => {
+    if (cityInputValue.length < 2) {
+      setCityOptions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setLoadingCities(true);
+      try {
+        const results = await citiesAutocomplete(cityInputValue);
+        console.log('City autocomplete results:', results);
+        setCityOptions(results.suggestions || results.predictions || []);
+      } catch (error) {
+        console.error('City search error:', error);
+        setCityOptions([]);
+      } finally {
+        setLoadingCities(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [cityInputValue]);
 
   const next = () => setStep((s) => Math.min(s + 1, steps.length - 1));
   const prev = () => setStep((s) => Math.max(s - 1, 0));
@@ -90,10 +121,7 @@ export default function NewTripWizard() {
     try {
       const newTrip = await createTrip({
         name: basic.name,
-        destinations: basic.destinations
-          .split(',')
-          .map((d) => d.trim())
-          .filter(Boolean),
+        destinations: basic.destinations,
         startDate: basic.startDate,
         endDate: basic.endDate,
         flights: [],
@@ -239,15 +267,87 @@ export default function NewTripWizard() {
               helperText={t('tripNameHelper')}
             />
 
-            <TextField
-              label={t('destinations')}
-              placeholder="Paris, Rome, Barcelona"
+            <Autocomplete
+              multiple
+              freeSolo
+              options={cityOptions}
               value={basic.destinations}
-              onChange={(e) =>
-                setBasic({ ...basic, destinations: e.target.value })
-              }
-              fullWidth
-              helperText={t('multiCity')}
+              onChange={(_, newValue: any[]) => {
+                // Convert string or object values to Destination format
+                const destinations: Destination[] = newValue.map((v) => {
+                  if (typeof v === 'string') {
+                    return { name: v };
+                  } else if (v.placeId) {
+                    // From our backend (suggestions format)
+                    return {
+                      name: v.name,
+                      placeId: v.placeId,
+                      formatted: v.formattedAddress,
+                    };
+                  } else if (v.description) {
+                    // From Google API (predictions format)
+                    return {
+                      name: v.structured_formatting?.main_text || v.description,
+                      placeId: v.place_id,
+                      formatted: v.description,
+                      country: v.structured_formatting?.secondary_text,
+                    };
+                  } else {
+                    return v;
+                  }
+                });
+                setBasic({ ...basic, destinations });
+              }}
+              inputValue={cityInputValue}
+              onInputChange={(_, newInputValue) => {
+                setCityInputValue(newInputValue);
+              }}
+              getOptionLabel={(option: any) => {
+                if (typeof option === 'string') return option;
+                if (option.name) return option.name;
+                if (option.structured_formatting?.main_text)
+                  return option.structured_formatting.main_text;
+                return option.description || option.formattedAddress || '';
+              }}
+              renderOption={(props, option: any) => (
+                <Box component="li" {...props}>
+                  <LocationOn sx={{ mr: 1, color: 'primary.main' }} />
+                  <Stack>
+                    <Typography variant="body2">
+                      {option.name ||
+                        option.structured_formatting?.main_text ||
+                        option.description}
+                    </Typography>
+                    {(option.formattedAddress ||
+                      option.structured_formatting?.secondary_text) && (
+                      <Typography variant="caption" color="text.secondary">
+                        {option.formattedAddress ||
+                          option.structured_formatting?.secondary_text}
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              )}
+              loading={loadingCities}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={t('destinations')}
+                  placeholder="Add cities..."
+                  helperText="Type to search cities worldwide"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingCities ? (
+                          <CircularProgress color="inherit" size={20} />
+                        ) : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
             />
 
             <Grid container spacing={2}>
@@ -319,9 +419,7 @@ export default function NewTripWizard() {
                     // First create the basic trip
                     const tripData = {
                       name: basic.name,
-                      destinations: basic.destinations
-                        .split(',')
-                        .map((d) => d.trim()),
+                      destinations: basic.destinations,
                       startDate: basic.startDate,
                       endDate: basic.endDate,
                       userId: 'placeholder',
@@ -692,7 +790,16 @@ export default function NewTripWizard() {
                         mt={0.5}
                       >
                         {trip.destinations.map((dest, i) => (
-                          <Chip key={i} label={dest} size="small" />
+                          <Chip
+                            key={i}
+                            label={typeof dest === 'string' ? dest : dest.name}
+                            size="small"
+                            icon={<LocationOn />}
+                            sx={{
+                              bgcolor: 'primary.50',
+                              color: 'primary.dark',
+                            }}
+                          />
                         ))}
                       </Stack>
                     </Grid>

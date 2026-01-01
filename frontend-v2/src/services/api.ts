@@ -305,6 +305,15 @@ export async function placesAutocomplete(
   });
   return res.data;
 }
+
+// Cities autocomplete - specifically for cities
+export async function citiesAutocomplete(input: string) {
+  const res = await api.get('/places/autocomplete', {
+    params: { input, types: '(cities)' },
+  });
+  return res.data;
+}
+
 export async function placeDetails(place_id: string) {
   const res = await api.get('/places/details', { params: { place_id } });
   return res.data;

@@ -867,7 +867,9 @@ export default function TripDetails() {
     setEditTrip({
       open: true,
       name: trip.name,
-      destinations: trip.destinations.join(', '),
+      destinations: trip.destinations
+        .map((dest: any) => (typeof dest === 'string' ? dest : dest.name))
+        .join(', '),
       startDate: trip.startDate,
       endDate: trip.endDate,
     });
@@ -1259,7 +1261,11 @@ export default function TripDetails() {
             {/* Get Real Prices & Booking Links */}
             {trip.destinations && trip.destinations.length > 0 && (
               <GetPricesButton
-                destination={trip.destinations[0]}
+                destination={
+                  typeof trip.destinations[0] === 'string'
+                    ? trip.destinations[0]
+                    : trip.destinations[0].name
+                }
                 checkIn={trip.startDate}
                 checkOut={trip.endDate}
                 origin="TLV"
@@ -1320,7 +1326,12 @@ export default function TripDetails() {
                   variant="h6"
                   sx={{ opacity: 0.95, fontWeight: 500 }}
                 >
-                  📍 {trip.destinations.join(', ')}
+                  📍{' '}
+                  {trip.destinations
+                    .map((dest: any) =>
+                      typeof dest === 'string' ? dest : dest.name
+                    )
+                    .join(', ')}
                 </Typography>
               )}
             </Stack>

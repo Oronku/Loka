@@ -177,10 +177,17 @@ export interface UserChecklist {
   checklist: ChecklistCategory[];
 }
 
+export interface Destination {
+  name: string; // City name
+  placeId?: string; // Google Place ID
+  country?: string;
+  formatted?: string; // Full formatted address
+}
+
 export interface Trip {
   id: string;
   name: string;
-  destinations: string[];
+  destinations: string[] | Destination[]; // Support both old and new format
   startDate: string;
   endDate: string;
   flights: FlightSegment[];
