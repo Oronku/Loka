@@ -184,6 +184,37 @@ export interface Destination {
   formatted?: string; // Full formatted address
 }
 
+export type NotificationType =
+  | 'flight-checkin'
+  | 'flight-departure'
+  | 'flight-no-baggage'
+  | 'flight-arrive-early'
+  | 'hotel-checkin'
+  | 'hotel-checkout'
+  | 'hotel-early-arrival'
+  | 'attraction-reminder'
+  | 'attraction-tickets'
+  | 'ride-pickup'
+  | 'general';
+
+export type NotificationPriority = 'low' | 'medium' | 'high' | 'critical';
+
+export interface TripNotification {
+  id: string;
+  tripId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  priority: NotificationPriority;
+  triggerTime: string; // ISO datetime when notification should show
+  relatedItemType?: 'flight' | 'hotel' | 'ride' | 'attraction';
+  relatedItemIndex?: number;
+  dismissed?: boolean;
+  dismissedAt?: string;
+  actionUrl?: string; // Optional link (e.g., check-in URL)
+  actionLabel?: string; // Optional action button text
+}
+
 export interface Trip {
   id: string;
   name: string;

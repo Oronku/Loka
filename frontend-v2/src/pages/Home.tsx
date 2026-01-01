@@ -40,6 +40,7 @@ import {
 } from '@mui/icons-material';
 import NewTripWizard from './NewTripWizard';
 import TripStatistics from '../components/TripStatistics';
+import AllTripsNotificationsSummary from '../components/AllTripsNotificationsSummary';
 import { Tabs, Tab } from '@mui/material';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -323,6 +324,11 @@ export default function Home() {
 
       {activeTab === 0 && (
         <Box>
+          {/* Active Notifications Summary */}
+          {trips && trips.length > 0 && (
+            <AllTripsNotificationsSummary trips={trips} />
+          )}
+
           {/* Owned Trips Section Header */}
           <Stack
             direction={{ xs: 'column', sm: 'row' }}

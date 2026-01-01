@@ -30,12 +30,15 @@ import type {
   UserChecklist,
   Expense,
   ParticipantBalance,
+  TripNotification,
 } from '../types/domain';
 import { groupTripByDay } from '../types/domain';
 import TripChecklist from '../components/TripChecklist';
 import TripExpenses from '../components/TripExpenses';
 import BudgetTracker from '../components/BudgetTracker';
 import AIItinerarySuggester from '../components/AIItinerarySuggester';
+import TripNotifications from '../components/TripNotifications';
+import { generateTripNotifications } from '../utils/notifications';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
@@ -439,6 +442,12 @@ export default function TripDetails() {
   const [showTripChat, setShowTripChat] = useState(false);
   const [tripChatId, setTripChatId] = useState<string | null>(null);
 
+  // Notifications state
+  const [notifications, setNotifications] = useState<TripNotification[]>([]);
+  const [dismissedNotifications, setDismissedNotifications] = useState<
+    Set<string>
+  >(new Set());
+
   // Edit dialog autocomplete state
   const [editSearchQuery, setEditSearchQuery] = useState('');
   const [editSearchResults, setEditSearchResults] = useState<any[]>([]);
@@ -529,6 +538,16 @@ export default function TripDetails() {
 
     calculateSmartCheckouts();
   }, [trip]);
+
+  // Generate notifications when trip loads
+  useEffect(() => {
+    if (!trip) return;
+
+    const generated = generateTripNotifications(trip);
+    // Filter out dismissed notifications
+    const active = generated.filter((n) => !dismissedNotifications.has(n.id));
+    setNotifications(active);
+  }, [trip, dismissedNotifications]);
 
   const refreshTrip = async () => {
     if (id) {
@@ -628,6 +647,31 @@ export default function TripDetails() {
       setError(e.message);
     }
   };
+
+  const handleDismissNotification = (notificationId: string) => {
+    setDismissedNotifications((prev) => new Set([...prev, notificationId]));
+    // Optionally save to localStorage
+    const dismissed = Array.from(dismissedNotifications);
+    dismissed.push(notificationId);
+    localStorage.setItem(
+      `dismissed-notifications-${id}`,
+      JSON.stringify(dismissed)
+    );
+  };
+
+  // Load dismissed notifications from localStorage
+  useEffect(() => {
+    if (!id) return;
+    const saved = localStorage.getItem(`dismissed-notifications-${id}`);
+    if (saved) {
+      try {
+        const dismissed = JSON.parse(saved);
+        setDismissedNotifications(new Set(dismissed));
+      } catch (e) {
+        console.error('Failed to load dismissed notifications', e);
+      }
+    }
+  }, [id]);
 
   // Expense handlers
   const loadExpenseBalances = async () => {
@@ -1111,6 +1155,14 @@ export default function TripDetails() {
             alignItems="center"
             flexWrap="wrap"
           >
+            {/* Notifications Bell */}
+            {trip && (
+              <TripNotifications
+                notifications={notifications}
+                onDismiss={handleDismissNotification}
+              />
+            )}
+
             {isShared && (
               <Chip
                 icon={<VisibilityIcon />}
