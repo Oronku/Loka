@@ -5,6 +5,7 @@ import { NotificationProvider } from './context/NotificationContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminRoute from './components/AdminRoute';
 import Home from './pages/Home';
 import NewTripWizard from './pages/NewTripWizard';
 import TripDetails from './pages/TripDetails';
@@ -128,11 +129,11 @@ function AppRoutes() {
           <Route
             path="/admin"
             element={
-              <ProtectedRoute>
+              <AdminRoute>
                 <Layout>
                   <AdminDashboard />
                 </Layout>
-              </ProtectedRoute>
+              </AdminRoute>
             }
           />
         </Routes>
