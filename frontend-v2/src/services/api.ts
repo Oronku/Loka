@@ -44,6 +44,7 @@ export interface User {
   picture?: string;
   preferredCurrency?: string;
   provider?: string;
+  isAdmin?: boolean;
 }
 
 export async function login(

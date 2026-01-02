@@ -15,6 +15,7 @@ import checkInRoutes from "./routes/checkins.js";
 import aiRoutes from "./routes/ai.js";
 import budgetRoutes from "./routes/budgets.js";
 import weatherRoutes from "./routes/weather.js";
+import adminRoutes from "./routes/admin.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -55,6 +56,7 @@ app.use("/api/checkins", checkInRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/budgets", budgetRoutes);
 app.use("/api/weather", weatherRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

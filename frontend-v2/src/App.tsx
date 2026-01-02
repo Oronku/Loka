@@ -14,6 +14,7 @@ import QuicketItemDetail from './pages/QuicketItemDetail';
 import ProfileSettings from './pages/ProfileSettings';
 import Friends from './pages/Friends';
 import CheckIn from './pages/CheckIn';
+import AdminDashboard from './pages/AdminDashboard';
 import { useLanguage } from './context/LanguageContext';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
@@ -120,6 +121,16 @@ function AppRoutes() {
               <ProtectedRoute>
                 <Layout>
                   <CheckIn />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <AdminDashboard />
                 </Layout>
               </ProtectedRoute>
             }

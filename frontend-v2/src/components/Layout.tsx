@@ -27,6 +27,7 @@ import {
   People as PeopleIcon,
   LocationOn,
   Language as LanguageIcon,
+  AdminPanelSettings,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../context/AuthContext';
@@ -299,6 +300,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <LocationOn fontSize="small" />
                     {t('checkIn')}
                   </MenuItem>
+                  {user?.isAdmin && (
+                    <MenuItem onClick={() => goTo('/admin')} sx={{ gap: 1 }}>
+                      <AdminPanelSettings fontSize="small" />
+                      Admin Dashboard
+                    </MenuItem>
+                  )}
                 </Menu>
               </>
             ) : (
@@ -321,6 +328,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     icon: <LocationOn />,
                     label: t('checkIn'),
                   },
+                  ...(user?.isAdmin
+                    ? [
+                        {
+                          to: '/admin',
+                          icon: <AdminPanelSettings />,
+                          label: 'Admin',
+                        },
+                      ]
+                    : []),
                 ].map((item) => (
                   <Button
                     key={item.to}
