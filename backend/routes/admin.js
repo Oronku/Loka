@@ -303,4 +303,87 @@ router.get("/trips/statistics", async (req, res) => {
   }
 });
 
+// ==================== USER MANAGEMENT ====================
+// Toggle admin status for a user
+router.post("/users/:userId/toggle-admin", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { userId } = req.params;
+    const { ObjectId } = await import("mongodb");
+
+    // Get the user to toggle
+    const user = await db
+      .collection("users")
+      .findOne({ _id: new ObjectId(userId) });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Prevent removing admin from yourself
+    if (userId === req.user.userId) {
+      return res
+        .status(400)
+        .json({ message: "Cannot modify your own admin status" });
+    }
+
+    // Toggle admin status
+    const newAdminStatus = !user.isAdmin;
+
+    await db
+      .collection("users")
+      .updateOne(
+        { _id: new ObjectId(userId) },
+        { $set: { isAdmin: newAdminStatus } }
+      );
+
+    res.json({
+      success: true,
+      message: `User ${user.name} is now ${newAdminStatus ? "an admin" : "not an admin"}`,
+      isAdmin: newAdminStatus,
+    });
+  } catch (error) {
+    console.error("Error toggling admin status:", error);
+    res.status(500).json({ message: "Error updating user admin status" });
+  }
+});
+
+// Get all users (for admin management)
+router.get("/users/all", async (req, res) => {
+  try {
+    const db = await getDb();
+    const users = await db
+      .collection("users")
+      .find({})
+      .project({
+        name: 1,
+        email: 1,
+        isAdmin: 1,
+        createdAt: 1,
+        lastLoginAt: 1,
+        picture: 1,
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    // Get trip counts for each user
+    const usersWithCounts = await Promise.all(
+      users.map(async (user) => {
+        const tripsCount = await db.collection("trips").countDocuments({
+          $or: [{ owner: user._id }, { sharedWith: user._id }],
+        });
+        return {
+          ...user,
+          tripsCount,
+        };
+      })
+    );
+
+    res.json(usersWithCounts);
+  } catch (error) {
+    console.error("Error fetching all users:", error);
+    res.status(500).json({ message: "Error fetching users" });
+  }
+});
+
 export default router;
