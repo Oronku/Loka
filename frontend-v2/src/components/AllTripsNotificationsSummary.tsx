@@ -21,7 +21,7 @@ import {
 import type { Trip, TripNotification } from '../types/domain';
 
 interface AllTripsNotificationsSummaryProps {
-  trips: Trip[];
+  trips?: Trip[];
 }
 
 /**
@@ -30,7 +30,17 @@ interface AllTripsNotificationsSummaryProps {
 export default function AllTripsNotificationsSummary({
   trips,
 }: AllTripsNotificationsSummaryProps) {
+  // Early return if trips is not available
+  if (!trips || !Array.isArray(trips)) {
+    return null;
+  }
+
   const allNotifications = useMemo(() => {
+    // Safety check: ensure trips is an array
+    if (!trips || !Array.isArray(trips)) {
+      return [];
+    }
+
     const all: TripNotification[] = [];
     trips.forEach((trip) => {
       const tripNotifs = generateTripNotifications(trip);
