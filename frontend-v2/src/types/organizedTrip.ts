@@ -113,7 +113,7 @@ export interface DayItinerary {
   };
 
   // Meals
-  meals: {
+  meals?: {
     breakfast: boolean;
     lunch: boolean;
     dinner: boolean;
@@ -141,6 +141,7 @@ export interface DayItinerary {
 }
 
 export interface Activity {
+  type?: 'accommodation' | 'meal' | 'attraction' | 'transport' | 'other';
   time?: string;
   title: string;
   description?: string;

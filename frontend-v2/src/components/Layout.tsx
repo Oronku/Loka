@@ -283,6 +283,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <Dashboard fontSize="small" />
                     {t('home')}
                   </MenuItem>
+                  <MenuItem onClick={() => goTo('/trips')} sx={{ gap: 1 }}>
+                    <Flight fontSize="small" />
+                    טיולים מאורגנים
+                  </MenuItem>
                   <MenuItem onClick={() => goTo('/trip/new')} sx={{ gap: 1 }}>
                     <Flight fontSize="small" />
                     {t('newTrip')}
@@ -319,6 +323,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Box sx={{ display: 'flex', gap: 1 }}>
                 {[
                   { to: '/', icon: <Dashboard />, label: t('home') },
+                  { to: '/trips', icon: <Flight />, label: 'טיולים מאורגנים' },
                   { to: '/trip/new', icon: <Flight />, label: t('newTrip') },
                   { to: '/quicket', icon: <LocalOffer />, label: 'Quicket' },
                   {

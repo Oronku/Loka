@@ -20,6 +20,8 @@ import AdminDashboard from './pages/AdminDashboard';
 import AgentDashboard from './pages/AgentDashboard';
 import CreateOrganizedTrip from './pages/CreateOrganizedTrip';
 import ManageOrganizedTrip from './pages/ManageOrganizedTrip';
+import PublicTripsPage from './pages/PublicTripsPage';
+import PublicTripView from './pages/PublicTripView';
 import { useLanguage } from './context/LanguageContext';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
@@ -168,6 +170,23 @@ function AppRoutes() {
                   <ManageOrganizedTrip />
                 </Layout>
               </AgentRoute>
+            }
+          />
+          {/* Public trips routes - no auth required */}
+          <Route
+            path="/trips"
+            element={
+              <Layout>
+                <PublicTripsPage />
+              </Layout>
+            }
+          />
+          <Route
+            path="/trips/:tripId"
+            element={
+              <Layout>
+                <PublicTripView />
+              </Layout>
             }
           />
         </Routes>
