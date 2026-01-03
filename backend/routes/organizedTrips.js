@@ -177,4 +177,40 @@ router.post("/:id/register", async (req, res) => {
   }
 });
 
+// Get participant's trips (requires authentication via email token or similar)
+// For now, simplified - get by email
+router.get("/participant/:email/trips", async (req, res) => {
+  try {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const organizedTrips = db.collection("organized_trips");
+    const { email } = req.params;
+
+    // Find all trips where this email is a participant
+    const trips = await organizedTrips
+      .find({
+        "participants.email": email,
+      })
+      .toArray();
+
+    // Don't expose other participants' data
+    const sanitizedTrips = trips.map((trip) => {
+      const participant = trip.participants.find((p) => p.email === email);
+      return {
+        ...trip,
+        myParticipantData: participant,
+        participants: undefined, // Remove other participants
+      };
+    });
+
+    res.json({ trips: sanitizedTrips });
+  } catch (error) {
+    console.error("Error fetching participant trips:", error);
+    res.status(500).json({ error: "Failed to fetch trips" });
+  }
+});
+
 export default router;

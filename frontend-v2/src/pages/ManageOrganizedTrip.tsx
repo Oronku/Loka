@@ -56,6 +56,7 @@ import {
   uploadTripDocument,
   publishTrip,
   cancelTrip,
+  updateTripVisibility,
 } from '../services/organizedTripsApi';
 import { OrganizedTrip, Participant } from '../types/organizedTrip';
 
@@ -185,6 +186,18 @@ export default function ManageOrganizedTrip() {
       loadTrip();
     } catch (err: any) {
       setError(err.response?.data?.message || 'שגיאה בביטול טיול');
+    }
+  };
+
+  const handleUpdateVisibility = async (
+    visibility: 'public' | 'private' | 'draft'
+  ) => {
+    if (!tripId) return;
+    try {
+      await updateTripVisibility(tripId, visibility);
+      loadTrip();
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'שגיאה בעדכון נראות');
     }
   };
 
@@ -414,10 +427,7 @@ export default function ManageOrganizedTrip() {
                 <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
                   <Chip
                     label="🌐 ציבורי - מופיע באתר"
-                    onClick={() => {
-                      // TODO: Add update visibility function
-                      console.log('Update to public');
-                    }}
+                    onClick={() => handleUpdateVisibility('public')}
                     color={trip.visibility === 'public' ? 'success' : 'default'}
                     variant={
                       trip.visibility === 'public' ? 'filled' : 'outlined'
@@ -425,9 +435,7 @@ export default function ManageOrganizedTrip() {
                   />
                   <Chip
                     label="🔗 פרטי - נגיש בלינק"
-                    onClick={() => {
-                      console.log('Update to private');
-                    }}
+                    onClick={() => handleUpdateVisibility('private')}
                     color={
                       trip.visibility === 'private' ? 'primary' : 'default'
                     }
@@ -437,9 +445,7 @@ export default function ManageOrganizedTrip() {
                   />
                   <Chip
                     label="📝 טיוטה - רק אני"
-                    onClick={() => {
-                      console.log('Update to draft');
-                    }}
+                    onClick={() => handleUpdateVisibility('draft')}
                     color={trip.visibility === 'draft' ? 'warning' : 'default'}
                     variant={
                       trip.visibility === 'draft' ? 'filled' : 'outlined'

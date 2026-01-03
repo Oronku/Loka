@@ -100,6 +100,17 @@ export async function cancelTrip(tripId: string) {
   return updateOrganizedTrip(tripId, { status: 'cancelled' });
 }
 
+// Update trip visibility
+export async function updateTripVisibility(
+  tripId: string,
+  visibility: 'public' | 'private' | 'draft'
+) {
+  const response = await api.patch(`/agent/trips/${tripId}/visibility`, {
+    visibility,
+  });
+  return response.data;
+}
+
 // Get trip updates
 export async function getTripUpdates(tripId: string): Promise<TripUpdate[]> {
   const response = await api.get(`/agent/trips/${tripId}/updates`);

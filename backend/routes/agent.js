@@ -141,6 +141,9 @@ router.put("/trips/:id", async (req, res) => {
     const { ObjectId } = await import("mongodb");
     const organizedTrips = db.collection("organized_trips");
 
+    // Don't allow updating certain protected fields
+    const { _id, agentId, agentName, createdAt, ...updateData } = req.body;
+
     const result = await organizedTrips.updateOne(
       {
         _id: new ObjectId(req.params.id),
@@ -148,7 +151,7 @@ router.put("/trips/:id", async (req, res) => {
       },
       {
         $set: {
-          ...req.body,
+          ...updateData,
           updatedAt: new Date().toISOString(),
         },
       }
@@ -162,6 +165,47 @@ router.put("/trips/:id", async (req, res) => {
   } catch (error) {
     console.error("Error updating trip:", error);
     res.status(500).json({ error: "Failed to update trip" });
+  }
+});
+
+// Update trip visibility
+router.patch("/trips/:id/visibility", async (req, res) => {
+  try {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const { ObjectId } = await import("mongodb");
+    const { visibility } = req.body;
+
+    if (!["public", "private", "draft"].includes(visibility)) {
+      return res.status(400).json({ error: "Invalid visibility value" });
+    }
+
+    const organizedTrips = db.collection("organized_trips");
+
+    const result = await organizedTrips.updateOne(
+      {
+        _id: new ObjectId(req.params.id),
+        agentId: req.user.id,
+      },
+      {
+        $set: {
+          visibility: visibility,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    res.json({ message: "Visibility updated successfully", visibility });
+  } catch (error) {
+    console.error("Error updating visibility:", error);
+    res.status(500).json({ error: "Failed to update visibility" });
   }
 });
 

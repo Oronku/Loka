@@ -22,6 +22,7 @@ import CreateOrganizedTrip from './pages/CreateOrganizedTrip';
 import ManageOrganizedTrip from './pages/ManageOrganizedTrip';
 import PublicTripsPage from './pages/PublicTripsPage';
 import PublicTripView from './pages/PublicTripView';
+import ParticipantDashboard from './pages/ParticipantDashboard';
 import { useLanguage } from './context/LanguageContext';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
@@ -186,6 +187,14 @@ function AppRoutes() {
             element={
               <Layout>
                 <PublicTripView />
+              </Layout>
+            }
+          />
+          <Route
+            path="/my-trips"
+            element={
+              <Layout>
+                <ParticipantDashboard />
               </Layout>
             }
           />
