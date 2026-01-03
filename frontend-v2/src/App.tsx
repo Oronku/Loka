@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
+import AgentRoute from './components/AgentRoute';
 import Home from './pages/Home';
 import NewTripWizard from './pages/NewTripWizard';
 import TripDetails from './pages/TripDetails';
@@ -16,6 +17,7 @@ import ProfileSettings from './pages/ProfileSettings';
 import Friends from './pages/Friends';
 import CheckIn from './pages/CheckIn';
 import AdminDashboard from './pages/AdminDashboard';
+import AgentDashboard from './pages/AgentDashboard';
 import { useLanguage } from './context/LanguageContext';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
@@ -134,6 +136,16 @@ function AppRoutes() {
                   <AdminDashboard />
                 </Layout>
               </AdminRoute>
+            }
+          />
+          <Route
+            path="/agent"
+            element={
+              <AgentRoute>
+                <Layout>
+                  <AgentDashboard />
+                </Layout>
+              </AgentRoute>
             }
           />
         </Routes>

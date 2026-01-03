@@ -30,7 +30,7 @@ export async function verifyGoogleToken(req, res, next) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
 
-      // Get user from database to include isAdmin field
+      // Get user from database to include isAdmin and isAgent fields
       const dbUser = await getUserFromDb(decoded.id);
 
       req.user = {
@@ -39,6 +39,8 @@ export async function verifyGoogleToken(req, res, next) {
         name: decoded.name,
         picture: decoded.picture || null,
         isAdmin: dbUser?.isAdmin || false,
+        isAgent: dbUser?.isAgent || false,
+        agencyName: dbUser?.agencyName || null,
       };
       return next();
     } catch (jwtError) {
@@ -51,7 +53,7 @@ export async function verifyGoogleToken(req, res, next) {
 
         const payload = ticket.getPayload();
 
-        // Get user from database to include isAdmin field
+        // Get user from database to include isAdmin and isAgent fields
         const dbUser = await getUserFromDb(payload.sub);
 
         req.user = {
@@ -60,6 +62,8 @@ export async function verifyGoogleToken(req, res, next) {
           name: payload.name,
           picture: payload.picture,
           isAdmin: dbUser?.isAdmin || false,
+          isAgent: dbUser?.isAgent || false,
+          agencyName: dbUser?.agencyName || null,
         };
 
         return next();

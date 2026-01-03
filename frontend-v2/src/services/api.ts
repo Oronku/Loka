@@ -45,6 +45,10 @@ export interface User {
   preferredCurrency?: string;
   provider?: string;
   isAdmin?: boolean;
+  isAgent?: boolean;
+  agencyName?: string;
+  agencyLicense?: string;
+  agencyDescription?: string;
 }
 
 export async function login(

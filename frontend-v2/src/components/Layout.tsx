@@ -28,6 +28,7 @@ import {
   LocationOn,
   Language as LanguageIcon,
   AdminPanelSettings,
+  BusinessCenter,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../context/AuthContext';
@@ -300,6 +301,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <LocationOn fontSize="small" />
                     {t('checkIn')}
                   </MenuItem>
+                  {user?.isAgent && (
+                    <MenuItem onClick={() => goTo('/agent')} sx={{ gap: 1 }}>
+                      <BusinessCenter fontSize="small" />
+                      Agent Dashboard
+                    </MenuItem>
+                  )}
                   {user?.isAdmin && (
                     <MenuItem onClick={() => goTo('/admin')} sx={{ gap: 1 }}>
                       <AdminPanelSettings fontSize="small" />
@@ -328,6 +335,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     icon: <LocationOn />,
                     label: t('checkIn'),
                   },
+                  ...(user?.isAgent
+                    ? [
+                        {
+                          to: '/agent',
+                          icon: <BusinessCenter />,
+                          label: 'Agent',
+                        },
+                      ]
+                    : []),
                   ...(user?.isAdmin
                     ? [
                         {
