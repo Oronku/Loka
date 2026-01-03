@@ -429,6 +429,22 @@ export default function AgentDashboard() {
                               icon={<PeopleIcon />}
                             />
                             <Chip
+                              label={
+                                trip.visibility === 'public'
+                                  ? '🌐 ציבורי'
+                                  : trip.visibility === 'private'
+                                    ? '🔗 פרטי'
+                                    : '📝 טיוטה'
+                              }
+                              size="small"
+                              variant="outlined"
+                              color={
+                                trip.visibility === 'public'
+                                  ? 'success'
+                                  : 'default'
+                              }
+                            />
+                            <Chip
                               label={`₪${trip.pricePerPerson.toLocaleString()}`}
                               color="primary"
                               size="small"

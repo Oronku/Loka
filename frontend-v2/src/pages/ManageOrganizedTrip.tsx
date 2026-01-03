@@ -303,6 +303,17 @@ export default function ManageOrganizedTrip() {
               label={getStatusText(trip.status)}
               color={getStatusColor(trip.status)}
             />
+            <Chip
+              label={
+                trip.visibility === 'public'
+                  ? '🌐 ציבורי'
+                  : trip.visibility === 'private'
+                    ? '🔗 פרטי'
+                    : '📝 טיוטה'
+              }
+              variant="outlined"
+              color={trip.visibility === 'public' ? 'success' : 'default'}
+            />
             {trip.status === 'draft' && (
               <Button variant="contained" onClick={handlePublishTrip}>
                 פרסם טיול
@@ -391,6 +402,57 @@ export default function ManageOrganizedTrip() {
           {/* Tab 0: Trip Details */}
           <TabPanel value={tabValue} index={0}>
             <Box sx={{ p: 2 }}>
+              <Typography variant="h6" gutterBottom>
+                פרטי הטיול
+              </Typography>
+
+              {/* Visibility Setting */}
+              <Paper sx={{ p: 2, mb: 3, bgcolor: 'background.default' }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  נראות הטיול
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                  <Chip
+                    label="🌐 ציבורי - מופיע באתר"
+                    onClick={() => {
+                      // TODO: Add update visibility function
+                      console.log('Update to public');
+                    }}
+                    color={trip.visibility === 'public' ? 'success' : 'default'}
+                    variant={
+                      trip.visibility === 'public' ? 'filled' : 'outlined'
+                    }
+                  />
+                  <Chip
+                    label="🔗 פרטי - נגיש בלינק"
+                    onClick={() => {
+                      console.log('Update to private');
+                    }}
+                    color={
+                      trip.visibility === 'private' ? 'primary' : 'default'
+                    }
+                    variant={
+                      trip.visibility === 'private' ? 'filled' : 'outlined'
+                    }
+                  />
+                  <Chip
+                    label="📝 טיוטה - רק אני"
+                    onClick={() => {
+                      console.log('Update to draft');
+                    }}
+                    color={trip.visibility === 'draft' ? 'warning' : 'default'}
+                    variant={
+                      trip.visibility === 'draft' ? 'filled' : 'outlined'
+                    }
+                  />
+                </Box>
+                {trip.visibility === 'private' && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    לינק לטיול: {window.location.origin}/trips/{trip._id}
+                  </Alert>
+                )}
+              </Paper>
+
               <Typography variant="h6" gutterBottom>
                 תיאור
               </Typography>

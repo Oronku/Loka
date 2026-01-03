@@ -17,6 +17,7 @@ import budgetRoutes from "./routes/budgets.js";
 import weatherRoutes from "./routes/weather.js";
 import adminRoutes from "./routes/admin.js";
 import agentRoutes from "./routes/agent.js";
+import organizedTripsRoutes from "./routes/organizedTrips.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -59,6 +60,7 @@ app.use("/api/budgets", budgetRoutes);
 app.use("/api/weather", weatherRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/agent", agentRoutes);
+app.use("/api/organized-trips", organizedTripsRoutes); // Public organized trips
 
 // Health check
 app.get("/api/health", (req, res) => {

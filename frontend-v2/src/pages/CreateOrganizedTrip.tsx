@@ -15,6 +15,7 @@ import {
   Chip,
   FormControlLabel,
   Checkbox,
+  MenuItem,
 } from '@mui/material';
 import { ArrowBack, ArrowForward, Save, Publish } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
@@ -126,6 +127,7 @@ export default function CreateOrganizedTrip() {
     currency: 'ILS',
     includedServices: [],
     notIncludedServices: [],
+    visibility: 'draft', // Default to draft
     meetingPoint: '',
     importantNotes: '',
   });
@@ -375,6 +377,21 @@ export default function CreateOrganizedTrip() {
                   inputProps={{ min: 1 }}
                 />
               </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  select
+                  label="נראות הטיול"
+                  value={formData.visibility}
+                  onChange={handleChange('visibility')}
+                  required
+                  helperText="בחר מי יוכל לראות את הטיול"
+                >
+                  <MenuItem value="draft">טיוטה - רק אני רואה</MenuItem>
+                  <MenuItem value="private">פרטי - נגיש רק דרך לינק</MenuItem>
+                  <MenuItem value="public">ציבורי - מופיע באתר</MenuItem>
+                </TextField>
+              </Grid>
             </Grid>
           </Box>
         );
@@ -504,6 +521,16 @@ export default function CreateOrganizedTrip() {
                   </Typography>
                   <Typography variant="body1">
                     {formData.maxParticipants}
+                  </Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="caption" color="text.secondary">
+                    נראות
+                  </Typography>
+                  <Typography variant="body1">
+                    {formData.visibility === 'public' && '🌐 ציבורי'}
+                    {formData.visibility === 'private' && '🔗 פרטי (לינק)'}
+                    {formData.visibility === 'draft' && '📝 טיוטה'}
                   </Typography>
                 </Grid>
               </Grid>

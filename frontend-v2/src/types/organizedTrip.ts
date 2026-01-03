@@ -31,6 +31,12 @@ export interface OrganizedTrip {
     | 'completed'
     | 'cancelled';
 
+  // Visibility - who can see this trip
+  visibility: 'public' | 'private' | 'draft';
+  // public: appears in public trips page
+  // private: accessible only via direct link (not in listings)
+  // draft: only visible to agent (not published yet)
+
   // Participants
   participants: Participant[];
 
@@ -188,6 +194,7 @@ export interface CreateOrganizedTripData {
   currency: string;
   includedServices: string[];
   notIncludedServices: string[];
+  visibility: 'public' | 'private' | 'draft'; // Added visibility
   coverImage?: string;
   meetingPoint?: string;
   importantNotes?: string;
