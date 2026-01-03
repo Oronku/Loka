@@ -17,6 +17,8 @@ import {
   ListItem,
   ListItemText,
   ListItemAvatar,
+  CircularProgress,
+  CardActions,
 } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
@@ -27,9 +29,13 @@ import {
   TrendingUp,
   AttachMoney,
   EventAvailable,
+  Edit,
+  Visibility,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { getAgentStats, getAgentTrips } from '../services/organizedTripsApi';
+import { OrganizedTrip } from '../types/organizedTrip';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -57,6 +63,35 @@ export default function AgentDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [tabValue, setTabValue] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState({
+    activeTrips: 0,
+    totalParticipants: 0,
+    upcomingDepartures: 0,
+    revenue: 0,
+  });
+  const [trips, setTrips] = useState<OrganizedTrip[]>([]);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [statsData, tripsData] = await Promise.all([
+        getAgentStats(),
+        getAgentTrips(),
+      ]);
+      setStats(statsData);
+      setTrips(tripsData);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'שגיאה בטעינת נתונים');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -66,12 +101,34 @@ export default function AgentDashboard() {
     navigate('/agent/trips/new');
   };
 
-  // Mock data - נחליף בנתונים אמיתיים מה-API
-  const stats = {
-    activeTrips: 5,
-    totalParticipants: 87,
-    upcomingDepartures: 3,
-    revenue: 45000,
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'published':
+        return 'success';
+      case 'draft':
+        return 'warning';
+      case 'cancelled':
+        return 'error';
+      case 'completed':
+        return 'info';
+      default:
+        return 'default';
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'published':
+        return 'פורסם';
+      case 'draft':
+        return 'טיוטה';
+      case 'cancelled':
+        return 'בוטל';
+      case 'completed':
+        return 'הסתיים';
+      default:
+        return status;
+    }
   };
 
   return (
@@ -226,7 +283,83 @@ export default function AgentDashboard() {
               <Typography variant="h6" gutterBottom>
                 טיולים קרובים
               </Typography>
-              <Alert severity="info">בקרוב: רשימת הטיולים הקרובים שלך</Alert>
+              {loading ? (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    py: 4,
+                  }}
+                >
+                  <CircularProgress />
+                </Box>
+              ) : error ? (
+                <Alert severity="error">{error}</Alert>
+              ) : trips.filter((t) => t.status === 'published').length > 0 ? (
+                <Grid container spacing={2}>
+                  {trips
+                    .filter((t) => t.status === 'published')
+                    .slice(0, 4)
+                    .map((trip) => (
+                      <Grid item xs={12} md={6} key={trip._id}>
+                        <Card>
+                          <CardContent>
+                            <Typography variant="h6" gutterBottom>
+                              {trip.title}
+                            </Typography>
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              gutterBottom
+                            >
+                              📍 {trip.destination}
+                            </Typography>
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                gap: 1,
+                                mt: 2,
+                                mb: 1,
+                              }}
+                            >
+                              <Chip
+                                label={`${trip.currentParticipants}/${trip.maxParticipants} משתתפים`}
+                                size="small"
+                              />
+                              <Chip
+                                label={`₪${trip.pricePerPerson.toLocaleString()}`}
+                                color="primary"
+                                size="small"
+                              />
+                            </Box>
+                          </CardContent>
+                          <CardActions>
+                            <Button
+                              size="small"
+                              startIcon={<Visibility />}
+                              onClick={() =>
+                                navigate(`/agent/trips/${trip._id}`)
+                              }
+                            >
+                              צפה
+                            </Button>
+                            <Button
+                              size="small"
+                              startIcon={<Edit />}
+                              onClick={() =>
+                                navigate(`/agent/trips/${trip._id}`)
+                              }
+                            >
+                              ערוך
+                            </Button>
+                          </CardActions>
+                        </Card>
+                      </Grid>
+                    ))}
+                </Grid>
+              ) : (
+                <Alert severity="info">אין טיולים פורסמו עדיין</Alert>
+              )}
             </Box>
           </TabPanel>
 
@@ -235,7 +368,99 @@ export default function AgentDashboard() {
               <Typography variant="h6" gutterBottom>
                 כל הטיולים המאורגנים
               </Typography>
-              <Alert severity="info">בקרוב: רשימת כל הטיולים שיצרת</Alert>
+              {loading ? (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    py: 4,
+                  }}
+                >
+                  <CircularProgress />
+                </Box>
+              ) : error ? (
+                <Alert severity="error">{error}</Alert>
+              ) : trips.length > 0 ? (
+                <Grid container spacing={2}>
+                  {trips.map((trip) => (
+                    <Grid item xs={12} md={6} lg={4} key={trip._id}>
+                      <Card>
+                        <CardContent>
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'start',
+                              mb: 1,
+                            }}
+                          >
+                            <Typography variant="h6">{trip.title}</Typography>
+                            <Chip
+                              label={getStatusText(trip.status)}
+                              color={getStatusColor(trip.status) as any}
+                              size="small"
+                            />
+                          </Box>
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            gutterBottom
+                          >
+                            📍 {trip.destination}
+                          </Typography>
+                          <Typography variant="body2" gutterBottom>
+                            📅{' '}
+                            {new Date(trip.startDate).toLocaleDateString(
+                              'he-IL'
+                            )}{' '}
+                            -{' '}
+                            {new Date(trip.endDate).toLocaleDateString('he-IL')}
+                          </Typography>
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              gap: 1,
+                              mt: 2,
+                            }}
+                          >
+                            <Chip
+                              label={`${trip.currentParticipants}/${trip.maxParticipants}`}
+                              size="small"
+                              icon={<PeopleIcon />}
+                            />
+                            <Chip
+                              label={`₪${trip.pricePerPerson.toLocaleString()}`}
+                              color="primary"
+                              size="small"
+                              icon={<AttachMoney />}
+                            />
+                          </Box>
+                        </CardContent>
+                        <CardActions>
+                          <Button
+                            size="small"
+                            startIcon={<Visibility />}
+                            onClick={() => navigate(`/agent/trips/${trip._id}`)}
+                          >
+                            צפה
+                          </Button>
+                          <Button
+                            size="small"
+                            startIcon={<Edit />}
+                            onClick={() => navigate(`/agent/trips/${trip._id}`)}
+                          >
+                            ערוך
+                          </Button>
+                        </CardActions>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
+              ) : (
+                <Alert severity="info">
+                  עדיין לא יצרת טיולים. התחל על ידי לחיצה על "צור טיול מאורגן"
+                </Alert>
+              )}
             </Box>
           </TabPanel>
 

@@ -18,6 +18,8 @@ import Friends from './pages/Friends';
 import CheckIn from './pages/CheckIn';
 import AdminDashboard from './pages/AdminDashboard';
 import AgentDashboard from './pages/AgentDashboard';
+import CreateOrganizedTrip from './pages/CreateOrganizedTrip';
+import ManageOrganizedTrip from './pages/ManageOrganizedTrip';
 import { useLanguage } from './context/LanguageContext';
 
 // Read Google OAuth client ID from environment for flexibility across dev/staging/prod
@@ -144,6 +146,26 @@ function AppRoutes() {
               <AgentRoute>
                 <Layout>
                   <AgentDashboard />
+                </Layout>
+              </AgentRoute>
+            }
+          />
+          <Route
+            path="/agent/trips/new"
+            element={
+              <AgentRoute>
+                <Layout>
+                  <CreateOrganizedTrip />
+                </Layout>
+              </AgentRoute>
+            }
+          />
+          <Route
+            path="/agent/trips/:tripId"
+            element={
+              <AgentRoute>
+                <Layout>
+                  <ManageOrganizedTrip />
                 </Layout>
               </AgentRoute>
             }
