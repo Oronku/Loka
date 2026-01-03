@@ -23,14 +23,96 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { createOrganizedTrip } from '../services/organizedTripsApi';
 import { CreateOrganizedTripData } from '../types/organizedTrip';
+import { useLanguage } from '../context/LanguageContext';
 
-const steps = ['פרטים בסיסיים', 'תמחור ומשתתפים', 'שירותים כלולים', 'סיכום'];
+const stepsHe = ['פרטים בסיסיים', 'תמחור ומשתתפים', 'שירותים כלולים', 'סיכום'];
+const stepsEn = [
+  'Basic Info',
+  'Pricing & Participants',
+  'Included Services',
+  'Summary',
+];
 
 export default function CreateOrganizedTrip() {
   const navigate = useNavigate();
+  const { language } = useLanguage();
   const [activeStep, setActiveStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const steps = language === 'he' ? stepsHe : stepsEn;
+  const t = {
+    title:
+      language === 'he' ? 'יצירת טיול מאורגן חדש' : 'Create New Organized Trip',
+    back: language === 'he' ? 'חזרה' : 'Back',
+    previous: language === 'he' ? 'הקודם' : 'Previous',
+    next: language === 'he' ? 'הבא' : 'Next',
+    saveAsDraft: language === 'he' ? 'שמור כטיוטה' : 'Save as Draft',
+    publishTrip: language === 'he' ? 'פרסם טיול' : 'Publish Trip',
+    errorMessage:
+      language === 'he'
+        ? 'נא למלא את כל השדות החובה'
+        : 'Please fill all required fields',
+
+    // Step 1
+    basicInfo:
+      language === 'he' ? 'פרטים בסיסיים של הטיול' : 'Trip Basic Information',
+    tripName: language === 'he' ? 'שם הטיול' : 'Trip Name',
+    tripNamePlaceholder:
+      language === 'he'
+        ? 'למשל: טיול מאורגן לרומא - 7 ימים'
+        : 'e.g., Organized Trip to Rome - 7 Days',
+    destination: language === 'he' ? 'יעד' : 'Destination',
+    destinationPlaceholder:
+      language === 'he' ? 'למשל: רומא, איטליה' : 'e.g., Rome, Italy',
+    meetingPoint: language === 'he' ? 'נקודת מפגש' : 'Meeting Point',
+    meetingPointPlaceholder:
+      language === 'he'
+        ? 'למשל: שדה התעופה בן גוריון, טרמינל 3'
+        : 'e.g., Ben Gurion Airport, Terminal 3',
+    description: language === 'he' ? 'תיאור הטיול' : 'Trip Description',
+    descriptionPlaceholder:
+      language === 'he'
+        ? 'תאר את הטיול, האטרקציות, הנקודות המרכזיות...'
+        : 'Describe the trip, attractions, highlights...',
+    importantNotes: language === 'he' ? 'הערות חשובות' : 'Important Notes',
+    importantNotesPlaceholder:
+      language === 'he'
+        ? 'מידע חשוב למשתתפים, דרישות מיוחדות...'
+        : 'Important information for participants, special requirements...',
+
+    // Step 2
+    datesAndPricing:
+      language === 'he'
+        ? 'תאריכים, תמחור ומשתתפים'
+        : 'Dates, Pricing & Participants',
+    startDate: language === 'he' ? 'תאריך התחלה' : 'Start Date',
+    endDate: language === 'he' ? 'תאריך סיום' : 'End Date',
+    pricePerPerson: language === 'he' ? 'מחיר למשתתף' : 'Price per Person',
+    maxParticipants:
+      language === 'he' ? 'מספר משתתפים מקסימלי' : 'Maximum Participants',
+
+    // Step 3
+    includedServices:
+      language === 'he'
+        ? 'שירותים כלולים ולא כלולים'
+        : 'Included and Excluded Services',
+    includedInPrice: language === 'he' ? '✓ כלול במחיר' : '✓ Included in Price',
+    notIncludedInPrice:
+      language === 'he' ? '✗ לא כלול במחיר' : '✗ Not Included in Price',
+    addIncludedService:
+      language === 'he'
+        ? 'הוסף שירות כלול (למשל: טיסות הלוך ושוב)'
+        : 'Add included service (e.g., Round-trip flights)',
+    addExcludedService:
+      language === 'he'
+        ? 'הוסף שירות לא כלול (למשל: ביטוח נסיעות)'
+        : 'Add excluded service (e.g., Travel insurance)',
+    add: language === 'he' ? 'הוסף' : 'Add',
+
+    // Step 4
+    summary: language === 'he' ? 'סיכום וסקירה' : 'Summary & Review',
+  };
 
   // Form data
   const [formData, setFormData] = useState<CreateOrganizedTripData>({
@@ -116,7 +198,14 @@ export default function CreateOrganizedTrip() {
       setLoading(true);
       setError(null);
       const result = await createOrganizedTrip(formData);
-      navigate(`/agent/trips/${result._id}`);
+      console.log('Server response:', result);
+      const tripId = result._id || result.tripId;
+      console.log('Trip ID:', tripId);
+      if (!tripId) {
+        setError('שגיאה: לא התקבל מזהה טיול מהשרת');
+        return;
+      }
+      navigate(`/agent/trips/${tripId}`);
     } catch (err: any) {
       setError(err.response?.data?.message || 'שגיאה בשמירת הטיול');
     } finally {
@@ -140,8 +229,15 @@ export default function CreateOrganizedTrip() {
       setLoading(true);
       setError(null);
       const result = await createOrganizedTrip({ ...formData });
+      console.log('Server response:', result);
+      const tripId = result._id || result.tripId;
+      console.log('Trip ID:', tripId);
+      if (!tripId) {
+        setError('שגיאה: לא התקבל מזהה טיול מהשרת');
+        return;
+      }
       // TODO: Publish the trip
-      navigate(`/agent/trips/${result._id}`);
+      navigate(`/agent/trips/${tripId}`);
     } catch (err: any) {
       setError(err.response?.data?.message || 'שגיאה בפרסום הטיול');
     } finally {

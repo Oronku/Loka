@@ -542,7 +542,7 @@ export default function ManageOrganizedTrip() {
               </Box>
 
               <Grid container spacing={2}>
-                {trip.documents.map((doc) => (
+                {trip?.documents?.map((doc) => (
                   <Grid item xs={12} sm={6} md={4} key={doc._id}>
                     <Card>
                       <CardContent>
@@ -568,7 +568,7 @@ export default function ManageOrganizedTrip() {
                     </Card>
                   </Grid>
                 ))}
-                {trip.documents.length === 0 && (
+                {(!trip?.documents || trip.documents.length === 0) && (
                   <Grid item xs={12}>
                     <Alert severity="info">אין מסמכים עדיין</Alert>
                   </Grid>
@@ -594,7 +594,7 @@ export default function ManageOrganizedTrip() {
               </Box>
 
               <List>
-                {trip.updates.map((update) => (
+                {trip?.updates?.map((update: any) => (
                   <Paper key={update._id} sx={{ mb: 2, p: 2 }}>
                     <Typography variant="subtitle1" fontWeight={600}>
                       {update.title}
@@ -607,7 +607,7 @@ export default function ManageOrganizedTrip() {
                     </Typography>
                   </Paper>
                 ))}
-                {trip.updates.length === 0 && (
+                {(!trip?.updates || trip.updates.length === 0) && (
                   <Alert severity="info">אין עדכונים עדיין</Alert>
                 )}
               </List>
