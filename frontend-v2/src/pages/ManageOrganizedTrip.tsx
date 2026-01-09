@@ -57,8 +57,10 @@ import {
   publishTrip,
   cancelTrip,
   updateTripVisibility,
+  updateOrganizedTrip,
 } from '../services/organizedTripsApi';
 import { OrganizedTrip, Participant } from '../types/organizedTrip';
+import ItineraryBuilder from '../components/ItineraryBuilder';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -93,14 +95,17 @@ export default function ManageOrganizedTrip() {
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [itineraryDialogOpen, setItineraryDialogOpen] = useState(false);
 
   // Form states
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
+  const [invitePhone, setInvitePhone] = useState('');
   const [updateTitle, setUpdateTitle] = useState('');
   const [updateMessage, setUpdateMessage] = useState('');
   const [documentTitle, setDocumentTitle] = useState('');
   const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [editedItinerary, setEditedItinerary] = useState<any[]>([]);
 
   useEffect(() => {
     loadTrip();
@@ -122,10 +127,15 @@ export default function ManageOrganizedTrip() {
   const handleInviteParticipant = async () => {
     if (!tripId || !inviteEmail || !inviteName) return;
     try {
-      await inviteParticipant(tripId, { email: inviteEmail, name: inviteName });
+      await inviteParticipant(tripId, {
+        email: inviteEmail,
+        name: inviteName,
+        phone: invitePhone || undefined,
+      });
       setInviteDialogOpen(false);
       setInviteEmail('');
       setInviteName('');
+      setInvitePhone('');
       loadTrip();
     } catch (err: any) {
       setError(err.response?.data?.message || 'שגיאה בשליחת הזמנה');
@@ -213,6 +223,27 @@ export default function ManageOrganizedTrip() {
         return 'info';
       default:
         return 'default';
+    }
+  };
+
+  const handleEditItinerary = () => {
+    if (trip?.itinerary) {
+      setEditedItinerary(trip.itinerary);
+    } else {
+      setEditedItinerary([]);
+    }
+    setItineraryDialogOpen(true);
+  };
+
+  const handleSaveItinerary = async () => {
+    if (!tripId) return;
+    try {
+      await updateOrganizedTrip(tripId, { itinerary: editedItinerary });
+      setItineraryDialogOpen(false);
+      await loadTrip();
+      setError(null);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'שגיאה בעדכון המסלול');
     }
   };
 
@@ -309,6 +340,19 @@ export default function ManageOrganizedTrip() {
               <Typography variant="body2" color="text.secondary">
                 📍 {trip.destination}
               </Typography>
+              {trip.tags && trip.tags.length > 0 && (
+                <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
+                  {trip.tags.map((tag) => (
+                    <Chip
+                      key={tag}
+                      label={`#${tag}`}
+                      size="small"
+                      color="secondary"
+                      variant="outlined"
+                    />
+                  ))}
+                </Box>
+              )}
             </Box>
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
@@ -408,6 +452,7 @@ export default function ManageOrganizedTrip() {
           <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
             <Tab label="פרטי טיול" />
             <Tab label={`משתתפים (${trip.participants.length})`} />
+            <Tab label="מסלול" />
             <Tab label="מסמכים" />
             <Tab label="עדכונים" />
           </Tabs>
@@ -454,7 +499,8 @@ export default function ManageOrganizedTrip() {
                 </Box>
                 {trip.visibility === 'private' && (
                   <Alert severity="info" sx={{ mt: 2 }}>
-                    לינק לטיול: {window.location.origin}/trips/{trip._id}
+                    לינק לטיול: {window.location.origin}/organized-trips/
+                    {trip._id}
                   </Alert>
                 )}
               </Paper>
@@ -529,7 +575,9 @@ export default function ManageOrganizedTrip() {
                     <TableRow>
                       <TableCell>שם</TableCell>
                       <TableCell>אימייל</TableCell>
+                      <TableCell>טלפון</TableCell>
                       <TableCell>סטטוס</TableCell>
+                      <TableCell>רישום</TableCell>
                       <TableCell>תאריך הצטרפות</TableCell>
                       <TableCell>פעולות</TableCell>
                     </TableRow>
@@ -550,6 +598,16 @@ export default function ManageOrganizedTrip() {
                           </Box>
                         </TableCell>
                         <TableCell>{participant.email}</TableCell>
+                        <TableCell>
+                          {participant.phone || (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              לא צוין
+                            </Typography>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <Box
                             sx={{
@@ -574,6 +632,20 @@ export default function ManageOrganizedTrip() {
                           </Box>
                         </TableCell>
                         <TableCell>
+                          <Chip
+                            label={
+                              participant.isRegistered
+                                ? '🟢 רשום'
+                                : '🔴 לא רשום'
+                            }
+                            size="small"
+                            color={
+                              participant.isRegistered ? 'success' : 'default'
+                            }
+                            variant="outlined"
+                          />
+                        </TableCell>
+                        <TableCell>
                           {participant.joinedAt
                             ? new Date(participant.joinedAt).toLocaleDateString(
                                 'he-IL'
@@ -593,8 +665,188 @@ export default function ManageOrganizedTrip() {
             </Box>
           </TabPanel>
 
-          {/* Tab 2: Documents */}
+          {/* Tab 2: Itinerary */}
           <TabPanel value={tabValue} index={2}>
+            <Box sx={{ p: 2 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  mb: 3,
+                }}
+              >
+                <Box>
+                  <Typography variant="h6" gutterBottom>
+                    מסלול הטיול - יום אחר יום
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    כך נראה המסלול למשתתפים בדף הציבורי
+                  </Typography>
+                </Box>
+                <Button
+                  variant="contained"
+                  startIcon={<Edit />}
+                  onClick={handleEditItinerary}
+                >
+                  ערוך מסלול
+                </Button>
+              </Box>
+
+              {trip.itinerary && trip.itinerary.length > 0 ? (
+                <Box sx={{ mt: 3 }}>
+                  {trip.itinerary.map((day, index) => (
+                    <Paper
+                      key={index}
+                      variant="outlined"
+                      sx={{
+                        p: 3,
+                        mb: 2,
+                        bgcolor: 'background.default',
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 2,
+                          mb: 2,
+                        }}
+                      >
+                        <Chip
+                          label={`יום ${day.day}`}
+                          color="primary"
+                          sx={{ fontWeight: 700 }}
+                        />
+                        <Typography variant="body2" color="text.secondary">
+                          {new Date(day.date).toLocaleDateString('he-IL', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
+                        </Typography>
+                      </Box>
+                      <Typography
+                        variant="h6"
+                        fontWeight={600}
+                        gutterBottom
+                        sx={{ mt: 1 }}
+                      >
+                        {day.title}
+                      </Typography>
+                      {day.description && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          paragraph
+                        >
+                          {day.description}
+                        </Typography>
+                      )}
+                      {day.activities && day.activities.length > 0 && (
+                        <List dense>
+                          {day.activities.map((activity, actIdx) => (
+                            <ListItem key={actIdx} sx={{ pl: 0 }}>
+                              <ListItemAvatar>
+                                <Avatar
+                                  sx={{
+                                    bgcolor:
+                                      activity.type === 'accommodation'
+                                        ? 'primary.main'
+                                        : activity.type === 'meal'
+                                          ? 'success.main'
+                                          : activity.type === 'attraction'
+                                            ? 'secondary.main'
+                                            : activity.type === 'transport'
+                                              ? 'info.main'
+                                              : 'action.active',
+                                    width: 32,
+                                    height: 32,
+                                  }}
+                                >
+                                  {activity.type === 'accommodation'
+                                    ? '🏨'
+                                    : activity.type === 'meal'
+                                      ? '🍽️'
+                                      : activity.type === 'attraction'
+                                        ? '🎯'
+                                        : activity.type === 'transport'
+                                          ? '✈️'
+                                          : '📝'}
+                                </Avatar>
+                              </ListItemAvatar>
+                              <ListItemText
+                                primary={
+                                  <Box
+                                    sx={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 1,
+                                      flexWrap: 'wrap',
+                                    }}
+                                  >
+                                    {activity.time && (
+                                      <Typography
+                                        variant="body2"
+                                        color="primary"
+                                        fontWeight={600}
+                                        sx={{ minWidth: 50 }}
+                                      >
+                                        {activity.time}
+                                      </Typography>
+                                    )}
+                                    <Typography
+                                      variant="body1"
+                                      fontWeight={500}
+                                    >
+                                      {activity.title}
+                                    </Typography>
+                                  </Box>
+                                }
+                                secondary={
+                                  <>
+                                    {activity.description && (
+                                      <Typography
+                                        variant="body2"
+                                        color="text.secondary"
+                                        component="span"
+                                        display="block"
+                                      >
+                                        {activity.description}
+                                      </Typography>
+                                    )}
+                                    {activity.location && (
+                                      <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                        component="span"
+                                        display="block"
+                                        sx={{ mt: 0.5 }}
+                                      >
+                                        📍 {activity.location}
+                                      </Typography>
+                                    )}
+                                  </>
+                                }
+                              />
+                            </ListItem>
+                          ))}
+                        </List>
+                      )}
+                    </Paper>
+                  ))}
+                </Box>
+              ) : (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  טרם הוגדר מסלול לטיול זה. ניתן להוסיף מסלול בעת יצירת הטיול.
+                </Alert>
+              )}
+            </Box>
+          </TabPanel>
+
+          {/* Tab 3: Documents */}
+          <TabPanel value={tabValue} index={3}>
             <Box sx={{ p: 2 }}>
               <Box
                 sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}
@@ -645,8 +897,8 @@ export default function ManageOrganizedTrip() {
             </Box>
           </TabPanel>
 
-          {/* Tab 3: Updates */}
-          <TabPanel value={tabValue} index={3}>
+          {/* Tab 4: Updates */}
+          <TabPanel value={tabValue} index={4}>
             <Box sx={{ p: 2 }}>
               <Box
                 sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}
@@ -692,19 +944,32 @@ export default function ManageOrganizedTrip() {
         >
           <DialogTitle>הזמן משתתף לטיול</DialogTitle>
           <DialogContent>
+            <Alert severity="info" sx={{ mt: 2, mb: 2 }}>
+              ניתן להוסיף משתתף גם אם הוא עדיין לא רשום במערכת. אם יירשם מאוחר
+              יותר עם אותו מייל, הטיול יתקשר אליו אוטומטית.
+            </Alert>
             <TextField
               fullWidth
-              label="שם מלא"
+              label="שם מלא *"
               value={inviteName}
               onChange={(e) => setInviteName(e.target.value)}
-              sx={{ mt: 2, mb: 2 }}
+              sx={{ mb: 2 }}
             />
             <TextField
               fullWidth
-              label="כתובת אימייל"
+              label="כתובת אימייל *"
               type="email"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              fullWidth
+              label="טלפון (אופציונלי)"
+              type="tel"
+              value={invitePhone}
+              onChange={(e) => setInvitePhone(e.target.value)}
+              placeholder="050-1234567"
             />
           </DialogContent>
           <DialogActions>
@@ -795,6 +1060,30 @@ export default function ManageOrganizedTrip() {
               disabled={!documentTitle || !documentFile}
             >
               העלה
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Itinerary Edit Dialog */}
+        <Dialog
+          open={itineraryDialogOpen}
+          onClose={() => setItineraryDialogOpen(false)}
+          maxWidth="md"
+          fullWidth
+        >
+          <DialogTitle>ערוך מסלול טיול</DialogTitle>
+          <DialogContent>
+            <Box sx={{ pt: 2 }}>
+              <ItineraryBuilder
+                itinerary={editedItinerary}
+                onChange={setEditedItinerary}
+              />
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setItineraryDialogOpen(false)}>ביטול</Button>
+            <Button variant="contained" onClick={handleSaveItinerary}>
+              שמור מסלול
             </Button>
           </DialogActions>
         </Dialog>

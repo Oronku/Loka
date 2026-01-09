@@ -28,6 +28,7 @@ import {
   LocationOn,
   Language as LanguageIcon,
   AdminPanelSettings,
+  Business,
   BusinessCenter,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
@@ -283,7 +284,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <Dashboard fontSize="small" />
                     {t('home')}
                   </MenuItem>
-                  <MenuItem onClick={() => goTo('/trips')} sx={{ gap: 1 }}>
+                  <MenuItem
+                    onClick={() => goTo('/organized-trips')}
+                    sx={{ gap: 1 }}
+                  >
                     <Flight fontSize="small" />
                     טיולים מאורגנים
                   </MenuItem>
@@ -311,6 +315,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
                       Agent Dashboard
                     </MenuItem>
                   )}
+                  {(user?.isAgencyAdmin || user?.isAdmin) && (
+                    <MenuItem onClick={() => goTo('/agency')} sx={{ gap: 1 }}>
+                      <Business fontSize="small" />
+                      ניהול סוכנות
+                    </MenuItem>
+                  )}
                   {user?.isAdmin && (
                     <MenuItem onClick={() => goTo('/admin')} sx={{ gap: 1 }}>
                       <AdminPanelSettings fontSize="small" />
@@ -323,7 +333,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Box sx={{ display: 'flex', gap: 1 }}>
                 {[
                   { to: '/', icon: <Dashboard />, label: t('home') },
-                  { to: '/trips', icon: <Flight />, label: 'טיולים מאורגנים' },
+                  {
+                    to: '/organized-trips',
+                    icon: <Flight />,
+                    label: 'טיולים מאורגנים',
+                  },
                   { to: '/trip/new', icon: <Flight />, label: t('newTrip') },
                   { to: '/quicket', icon: <LocalOffer />, label: 'Quicket' },
                   {

@@ -9,6 +9,7 @@ import AdminRoute from './components/AdminRoute';
 import AgentRoute from './components/AgentRoute';
 import Home from './pages/Home';
 import NewTripWizard from './pages/NewTripWizard';
+import SimpleCreateTrip from './pages/SimpleCreateTrip';
 import TripDetails from './pages/TripDetails';
 import Login from './pages/Login';
 import Quicket from './pages/Quicket';
@@ -18,6 +19,7 @@ import Friends from './pages/Friends';
 import CheckIn from './pages/CheckIn';
 import AdminDashboard from './pages/AdminDashboard';
 import AgentDashboard from './pages/AgentDashboard';
+import AgencyDashboard from './pages/AgencyDashboard';
 import CreateOrganizedTrip from './pages/CreateOrganizedTrip';
 import ManageOrganizedTrip from './pages/ManageOrganizedTrip';
 import PublicTripsPage from './pages/PublicTripsPage';
@@ -60,6 +62,16 @@ function AppRoutes() {
           />
           <Route
             path="/trip/new"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SimpleCreateTrip />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trip/new/wizard"
             element={
               <ProtectedRoute>
                 <Layout>
@@ -154,6 +166,16 @@ function AppRoutes() {
             }
           />
           <Route
+            path="/agency"
+            element={
+              <AgentRoute>
+                <Layout>
+                  <AgencyDashboard />
+                </Layout>
+              </AgentRoute>
+            }
+          />
+          <Route
             path="/agent/trips/new"
             element={
               <AgentRoute>
@@ -173,9 +195,9 @@ function AppRoutes() {
               </AgentRoute>
             }
           />
-          {/* Public trips routes - no auth required */}
+          {/* Public organized trips routes - no auth required */}
           <Route
-            path="/trips"
+            path="/organized-trips"
             element={
               <Layout>
                 <PublicTripsPage />
@@ -183,7 +205,7 @@ function AppRoutes() {
             }
           />
           <Route
-            path="/trips/:tripId"
+            path="/organized-trips/:tripId"
             element={
               <Layout>
                 <PublicTripView />

@@ -287,6 +287,9 @@ export function groupTripByDay(trip: Trip): DayBucket[] {
   (trip.hotels || []).forEach((h) => {
     if (h.checkIn) {
       add(h.checkIn.slice(0, 10), 'hotels', h);
+    } else if (trip.startDate) {
+      // If hotel has no checkIn date, add it to the first day of the trip
+      add(trip.startDate, 'hotels', h);
     }
   });
   (trip.rides || []).forEach((r) => {

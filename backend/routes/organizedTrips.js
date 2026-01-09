@@ -21,6 +21,8 @@ router.get("/public", async (req, res) => {
       maxPrice,
       startDate,
       endDate,
+      tags,
+      agencyName,
       limit = 20,
     } = req.query;
 
@@ -48,6 +50,17 @@ router.get("/public", async (req, res) => {
     }
     if (endDate) {
       filter.endDate = { $lte: endDate };
+    }
+
+    // Add tags filter
+    if (tags) {
+      const tagsArray = Array.isArray(tags) ? tags : [tags];
+      filter.tags = { $all: tagsArray };
+    }
+
+    // Add agency name filter
+    if (agencyName) {
+      filter.agencyName = new RegExp(agencyName, "i");
     }
 
     const trips = await organizedTrips

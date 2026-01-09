@@ -386,4 +386,158 @@ router.get("/users/all", async (req, res) => {
   }
 });
 
+// ==================== AGENTS MANAGEMENT ====================
+
+// Get all agents
+router.get("/agents", async (req, res) => {
+  try {
+    const db = await getDb();
+
+    // Get all users who are agents
+    const agents = await db
+      .collection("users")
+      .find({ isAgent: true })
+      .project({
+        _id: 1,
+        name: 1,
+        email: 1,
+        isAgent: 1,
+        isAdmin: 1,
+        agencyName: 1,
+        agencyLicense: 1,
+        agentPhone: 1,
+        createdAt: 1,
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    // Get trip counts for each agent
+    const agentsWithCounts = await Promise.all(
+      agents.map(async (agent) => {
+        const tripsCount = await db
+          .collection("organized_trips")
+          .countDocuments({
+            agentId: agent._id.toString(),
+          });
+        return {
+          ...agent,
+          tripsCount,
+        };
+      })
+    );
+
+    res.json(agentsWithCounts);
+  } catch (error) {
+    console.error("Error fetching agents:", error);
+    res.status(500).json({ error: "Failed to fetch agents" });
+  }
+});
+
+// Update agent details
+router.put("/agents/:userId", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { ObjectId } = await import("mongodb");
+    const { userId } = req.params;
+    const { agencyName, agencyLicense, agentPhone, isAdmin } = req.body;
+
+    // Prevent user from removing their own admin status
+    if (req.user.id === userId && isAdmin === false) {
+      return res.status(400).json({
+        error: "Cannot remove your own admin privileges",
+      });
+    }
+
+    const result = await db.collection("users").updateOne(
+      { _id: new ObjectId(userId) },
+      {
+        $set: {
+          agencyName,
+          agencyLicense,
+          agentPhone,
+          isAdmin,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    res.json({ message: "Agent updated successfully" });
+  } catch (error) {
+    console.error("Error updating agent:", error);
+    res.status(500).json({ error: "Failed to update agent" });
+  }
+});
+
+// Toggle agent status
+router.patch("/agents/:userId/toggle-agent", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { ObjectId } = await import("mongodb");
+    const { userId } = req.params;
+    const { isAgent } = req.body;
+
+    const result = await db.collection("users").updateOne(
+      { _id: new ObjectId(userId) },
+      {
+        $set: {
+          isAgent,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      message: isAgent
+        ? "User granted agent privileges"
+        : "Agent privileges removed",
+    });
+  } catch (error) {
+    console.error("Error toggling agent status:", error);
+    res.status(500).json({ error: "Failed to toggle agent status" });
+  }
+});
+
+// Remove agent (set isAgent to false)
+router.delete("/agents/:userId", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { ObjectId } = await import("mongodb");
+    const { userId } = req.params;
+
+    // Don't allow removing yourself
+    if (req.user.id === userId) {
+      return res.status(400).json({
+        error: "Cannot remove your own agent privileges",
+      });
+    }
+
+    const result = await db.collection("users").updateOne(
+      { _id: new ObjectId(userId) },
+      {
+        $set: {
+          isAgent: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    res.json({ message: "Agent removed successfully" });
+  } catch (error) {
+    console.error("Error removing agent:", error);
+    res.status(500).json({ error: "Failed to remove agent" });
+  }
+});
+
 export default router;

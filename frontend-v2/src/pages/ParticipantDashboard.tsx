@@ -280,7 +280,9 @@ export default function ParticipantDashboard() {
                               size="small"
                               variant="outlined"
                               startIcon={<Description />}
-                              onClick={() => navigate(`/trips/${trip._id}`)}
+                              onClick={() =>
+                                navigate(`/organized-trips/${trip._id}`)
+                              }
                             >
                               פרטי הטיול
                             </Button>

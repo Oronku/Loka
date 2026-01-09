@@ -11,6 +11,7 @@ import {
   register as apiRegister,
   User,
 } from '../services/api';
+import PendingTripsDialog from '../components/PendingTripsDialog';
 
 interface AuthContextType {
   user: User | null;
@@ -30,6 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showPendingTripsDialog, setShowPendingTripsDialog] = useState(false);
+  const [justLoggedIn, setJustLoggedIn] = useState(false);
 
   useEffect(() => {
     // Check if user is already logged in (from localStorage)
@@ -41,6 +44,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(JSON.parse(storedUser));
     }
   }, []);
+
+  // Check for pending trips after login
+  useEffect(() => {
+    if (justLoggedIn && user && user.email) {
+      // Small delay to ensure token is set
+      setTimeout(() => {
+        setShowPendingTripsDialog(true);
+        setJustLoggedIn(false);
+      }, 500);
+    }
+  }, [justLoggedIn, user]);
 
   const login = (credentialResponse: CredentialResponse) => {
     if (credentialResponse.credential) {
@@ -72,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('authToken', token);
       localStorage.setItem('user', JSON.stringify(userData));
       setError(null);
+      setJustLoggedIn(true); // Trigger pending trips check
     }
   };
 
@@ -90,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(tokenRes);
       localStorage.setItem('user', JSON.stringify(userRes));
       localStorage.setItem('authToken', tokenRes);
+      setJustLoggedIn(true); // Trigger pending trips check
     } catch (err: any) {
       setError(err.message);
       throw err;
@@ -112,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(tokenRes);
       localStorage.setItem('user', JSON.stringify(userRes));
       localStorage.setItem('authToken', tokenRes);
+      setJustLoggedIn(true); // Trigger pending trips check
     } catch (err: any) {
       setError(err.message);
       throw err;
@@ -149,6 +166,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
+      {user && user.email && (
+        <PendingTripsDialog
+          open={showPendingTripsDialog}
+          onClose={() => setShowPendingTripsDialog(false)}
+          userEmail={user.email}
+        />
+      )}
     </AuthContext.Provider>
   );
 }

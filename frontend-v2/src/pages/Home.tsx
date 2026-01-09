@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { listTrips } from '../services/api';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -17,7 +17,6 @@ import {
   Paper,
   Fade,
   Skeleton,
-  Dialog,
   Autocomplete,
   TextField,
 } from '@mui/material';
@@ -38,7 +37,6 @@ import {
   LocationCity,
   Search,
 } from '@mui/icons-material';
-import NewTripWizard from './NewTripWizard';
 import TripStatistics from '../components/TripStatistics';
 import AllTripsNotificationsSummary from '../components/AllTripsNotificationsSummary';
 import { Tabs, Tab } from '@mui/material';
@@ -46,7 +44,7 @@ import { useLanguage } from '../context/LanguageContext';
 
 export default function Home() {
   const { t } = useLanguage();
-  const [openNew, setOpenNew] = useState(false);
+  const navigate = useNavigate();
   const [trips, setTrips] = useState<any[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
@@ -255,7 +253,7 @@ export default function Home() {
                 variant="contained"
                 size="large"
                 startIcon={<Add />}
-                onClick={() => setOpenNew(true)}
+                onClick={() => navigate('/trip/new')}
                 sx={{
                   bgcolor: 'white',
                   color: 'primary.main',
@@ -280,14 +278,6 @@ export default function Home() {
           </Container>
         </Box>
       </Paper>
-
-      {/* New Trip Dialog (full-screen) to avoid layout reflow when opening wizard */}
-      <Dialog fullScreen open={openNew} onClose={() => setOpenNew(false)}>
-        <Container maxWidth="md" sx={{ py: 4 }}>
-          {/* Lazy-load the wizard inside the dialog to keep route behavior intact */}
-          <NewTripWizard />
-        </Container>
-      </Dialog>
 
       {/* Tabs */}
       <Box sx={{ mb: 4 }}>
@@ -357,7 +347,7 @@ export default function Home() {
               variant="contained"
               size="medium"
               startIcon={<Add />}
-              onClick={() => setOpenNew(true)}
+              onClick={() => navigate('/trip/new')}
               sx={{
                 boxShadow: 'none',
                 '&:hover': {
@@ -626,7 +616,7 @@ export default function Home() {
                     <Button
                       variant="contained"
                       startIcon={<Add />}
-                      onClick={() => setOpenNew(true)}
+                      onClick={() => navigate('/trip/new')}
                       size="large"
                     >
                       {t('createFirstTrip')}

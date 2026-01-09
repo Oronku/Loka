@@ -17,6 +17,7 @@ import budgetRoutes from "./routes/budgets.js";
 import weatherRoutes from "./routes/weather.js";
 import adminRoutes from "./routes/admin.js";
 import agentRoutes from "./routes/agent.js";
+import agencyRoutes from "./routes/agency.js";
 import organizedTripsRoutes from "./routes/organizedTrips.js";
 
 const app = express();
@@ -60,6 +61,7 @@ app.use("/api/budgets", budgetRoutes);
 app.use("/api/weather", weatherRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/agent", agentRoutes);
+app.use("/api/agency", agencyRoutes); // Agency management for agency admins
 app.use("/api/organized-trips", organizedTripsRoutes); // Public organized trips
 
 // Health check

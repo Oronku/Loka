@@ -42,6 +42,7 @@ interface PublicTrip {
   coverImage?: string;
   agencyName?: string;
   status: string;
+  tags?: string[];
 }
 
 export default function PublicTripsPage() {
@@ -56,6 +57,18 @@ export default function PublicTripsPage() {
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [sortBy, setSortBy] = useState('date'); // date, price, popular
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [agencyFilter, setAgencyFilter] = useState('');
+
+  // Get all unique tags from trips
+  const allTags = Array.from(
+    new Set(trips.flatMap((trip) => trip.tags || []))
+  ).sort();
+
+  // Get all unique agencies from trips
+  const allAgencies = Array.from(
+    new Set(trips.map((trip) => trip.agencyName).filter(Boolean))
+  ).sort();
 
   useEffect(() => {
     loadTrips();
@@ -82,14 +95,28 @@ export default function PublicTripsPage() {
 
   const filteredTrips = trips
     .filter((trip) => {
+      // Search query filter
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
-        return (
+        const matchesSearch =
           trip.title.toLowerCase().includes(query) ||
           trip.destination.toLowerCase().includes(query) ||
-          trip.description.toLowerCase().includes(query)
-        );
+          trip.description.toLowerCase().includes(query);
+        if (!matchesSearch) return false;
       }
+
+      // Tags filter
+      if (selectedTags.length > 0) {
+        const tripTags = trip.tags || [];
+        const matchesTags = selectedTags.every((tag) => tripTags.includes(tag));
+        if (!matchesTags) return false;
+      }
+
+      // Agency filter
+      if (agencyFilter && trip.agencyName !== agencyFilter) {
+        return false;
+      }
+
       return true;
     })
     .sort((a, b) => {
@@ -197,8 +224,63 @@ export default function PublicTripsPage() {
                 <MenuItem value="popular">פופולריים</MenuItem>
               </TextField>
             </Grid>
+            {allAgencies.length > 0 && (
+              <Grid item xs={12} sm={6} md={2}>
+                <TextField
+                  fullWidth
+                  select
+                  label="סוכנות"
+                  value={agencyFilter}
+                  onChange={(e) => setAgencyFilter(e.target.value)}
+                >
+                  <MenuItem value="">כל הסוכנויות</MenuItem>
+                  {allAgencies.map((agency) => (
+                    <MenuItem key={agency} value={agency}>
+                      {agency}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Grid>
+            )}
           </Grid>
         </Paper>
+
+        {/* Tags Filter */}
+        {allTags.length > 0 && (
+          <Box sx={{ mt: 2, mb: 3 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              סינון לפי תגיות:
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {allTags.map((tag) => (
+                <Chip
+                  key={tag}
+                  label={`#${tag}`}
+                  onClick={() => {
+                    if (selectedTags.includes(tag)) {
+                      setSelectedTags(selectedTags.filter((t) => t !== tag));
+                    } else {
+                      setSelectedTags([...selectedTags, tag]);
+                    }
+                  }}
+                  color={selectedTags.includes(tag) ? 'primary' : 'default'}
+                  variant={selectedTags.includes(tag) ? 'filled' : 'outlined'}
+                  sx={{ cursor: 'pointer' }}
+                />
+              ))}
+              {selectedTags.length > 0 && (
+                <Chip
+                  label="נקה הכל"
+                  onClick={() => setSelectedTags([])}
+                  color="error"
+                  variant="outlined"
+                  size="small"
+                  sx={{ cursor: 'pointer' }}
+                />
+              )}
+            </Box>
+          </Box>
+        )}
 
         {/* Results */}
         {loading ? (
@@ -294,6 +376,33 @@ export default function PublicTripsPage() {
                       >
                         {trip.description}
                       </Typography>
+                      {trip.tags && trip.tags.length > 0 && (
+                        <Box
+                          sx={{
+                            mb: 2,
+                            display: 'flex',
+                            gap: 0.5,
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          {trip.tags.slice(0, 3).map((tag) => (
+                            <Chip
+                              key={tag}
+                              label={`#${tag}`}
+                              size="small"
+                              color="secondary"
+                              variant="outlined"
+                            />
+                          ))}
+                          {trip.tags.length > 3 && (
+                            <Chip
+                              label={`+${trip.tags.length - 3}`}
+                              size="small"
+                              variant="outlined"
+                            />
+                          )}
+                        </Box>
+                      )}
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                         <Chip
                           icon={<People />}
@@ -324,7 +433,7 @@ export default function PublicTripsPage() {
                       </Typography>
                       <Button
                         variant="contained"
-                        onClick={() => navigate(`/trips/${trip._id}`)}
+                        onClick={() => navigate(`/organized-trips/${trip._id}`)}
                       >
                         פרטים נוספים
                       </Button>

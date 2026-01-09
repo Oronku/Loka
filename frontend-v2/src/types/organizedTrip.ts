@@ -37,6 +37,9 @@ export interface OrganizedTrip {
   // private: accessible only via direct link (not in listings)
   // draft: only visible to agent (not published yet)
 
+  // Tags for filtering
+  tags?: string[]; // e.g., ['צילום', 'צלילה', 'משפחות', 'סקי']
+
   // Participants
   participants: Participant[];
 
@@ -68,11 +71,12 @@ export interface OrganizedTrip {
 
 export interface Participant {
   _id?: string;
-  userId?: string;
+  userId?: string; // null if not registered yet
   email: string;
   name: string;
   phone?: string;
   status: 'invited' | 'confirmed' | 'paid' | 'cancelled';
+  isRegistered: boolean; // true if user has an account in the system
   invitedAt: string;
   joinedAt?: string;
   confirmedAt?: string;
@@ -196,6 +200,7 @@ export interface CreateOrganizedTripData {
   includedServices: string[];
   notIncludedServices: string[];
   visibility: 'public' | 'private' | 'draft'; // Added visibility
+  tags?: string[]; // Added tags
   coverImage?: string;
   meetingPoint?: string;
   importantNotes?: string;

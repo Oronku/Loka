@@ -1,6 +1,7 @@
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { ObjectId } from "mongodb";
 import { getDatabase } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 
@@ -258,6 +259,259 @@ router.put("/change-password", verifyGoogleToken, async (req, res) => {
   } catch (error) {
     console.error("Change password error:", error);
     res.status(500).json({ error: "Failed to change password" });
+  }
+});
+
+// ==================== AGENCY INVITATIONS (USER SIDE) ====================
+
+// Get invitations for current user
+router.get("/invitations", verifyGoogleToken, async (req, res) => {
+  try {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const userEmail = req.user.email;
+    const invitations = db.collection("agency_invitations");
+
+    const userInvitations = await invitations
+      .find({
+        email: userEmail,
+        status: "pending",
+        expiresAt: { $gt: new Date() },
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json(userInvitations);
+  } catch (error) {
+    console.error("Error fetching user invitations:", error);
+    res.status(500).json({ error: "Failed to fetch invitations" });
+  }
+});
+
+// Accept agency invitation
+router.post(
+  "/invitations/:invitationId/accept",
+  verifyGoogleToken,
+  async (req, res) => {
+    try {
+      const db = getDatabase();
+      if (!db) {
+        return res.status(503).json({ error: "Database not available" });
+      }
+
+      const { invitationId } = req.params;
+      const userEmail = req.user.email;
+      const userId = req.user.id;
+
+      const invitations = db.collection("agency_invitations");
+      const users = db.collection("users");
+
+      // Get invitation
+      const invitation = await invitations.findOne({
+        _id: new ObjectId(invitationId),
+        email: userEmail,
+        status: "pending",
+      });
+
+      if (!invitation) {
+        return res.status(404).json({ error: "הזמנה לא נמצאה או פגה תוקפה" });
+      }
+
+      // Check if expired
+      if (new Date(invitation.expiresAt) < new Date()) {
+        await invitations.updateOne(
+          { _id: new ObjectId(invitationId) },
+          { $set: { status: "expired" } }
+        );
+        return res.status(400).json({ error: "ההזמנה פגה תוקף" });
+      }
+
+      // Update user to be agent in this agency
+      await users.updateOne(
+        { _id: new ObjectId(userId) },
+        {
+          $set: {
+            isAgent: true,
+            agencyName: invitation.agencyName,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      // Mark invitation as accepted
+      await invitations.updateOne(
+        { _id: new ObjectId(invitationId) },
+        {
+          $set: {
+            status: "accepted",
+            acceptedAt: new Date(),
+            acceptedBy: userId,
+          },
+        }
+      );
+
+      res.json({
+        message: "ההזמנה אושרה בהצלחה!",
+        agencyName: invitation.agencyName,
+      });
+    } catch (error) {
+      console.error("Error accepting invitation:", error);
+      res.status(500).json({ error: "Failed to accept invitation" });
+    }
+  }
+);
+
+// Reject agency invitation
+router.post(
+  "/invitations/:invitationId/reject",
+  verifyGoogleToken,
+  async (req, res) => {
+    try {
+      const db = getDatabase();
+      if (!db) {
+        return res.status(503).json({ error: "Database not available" });
+      }
+
+      const { invitationId } = req.params;
+      const userEmail = req.user.email;
+
+      const invitations = db.collection("agency_invitations");
+
+      // Get invitation
+      const invitation = await invitations.findOne({
+        _id: new ObjectId(invitationId),
+        email: userEmail,
+        status: "pending",
+      });
+
+      if (!invitation) {
+        return res.status(404).json({ error: "הזמנה לא נמצאה" });
+      }
+
+      // Mark invitation as rejected
+      await invitations.updateOne(
+        { _id: new ObjectId(invitationId) },
+        {
+          $set: {
+            status: "rejected",
+            rejectedAt: new Date(),
+          },
+        }
+      );
+
+      res.json({ message: "ההזמנה נדחתה" });
+    } catch (error) {
+      console.error("Error rejecting invitation:", error);
+      res.status(500).json({ error: "Failed to reject invitation" });
+    }
+  }
+);
+
+// Check for pending organized trips for user's email
+router.get("/check-pending-trips", verifyGoogleToken, async (req, res) => {
+  try {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const userEmail = req.user.email;
+    const organizedTrips = db.collection("organized_trips");
+
+    // Find trips where user is a participant but not registered
+    const tripsWithPendingParticipation = await organizedTrips
+      .find({
+        "participants.email": userEmail,
+        "participants.isRegistered": false,
+      })
+      .toArray();
+
+    // Extract participant data for each trip
+    const pendingTrips = tripsWithPendingParticipation.map((trip) => {
+      const participant = trip.participants.find(
+        (p) => p.email === userEmail && p.isRegistered === false
+      );
+
+      return {
+        tripId: trip._id.toString(),
+        tripTitle: trip.title,
+        destination: trip.destination,
+        startDate: trip.startDate,
+        endDate: trip.endDate,
+        agentName: trip.agentName,
+        agencyName: trip.agencyName,
+        participantStatus: participant?.status,
+        invitedAt: participant?.invitedAt,
+      };
+    });
+
+    res.json({
+      count: pendingTrips.length,
+      trips: pendingTrips,
+    });
+  } catch (error) {
+    console.error("Error checking pending trips:", error);
+    res.status(500).json({ error: "Failed to check pending trips" });
+  }
+});
+
+// Link pending trips to registered user
+router.post("/link-trips", verifyGoogleToken, async (req, res) => {
+  try {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const { ObjectId } = await import("mongodb");
+    const userId = req.user.id;
+    const userEmail = req.user.email;
+    const { tripIds } = req.body; // Array of trip IDs to link
+
+    if (!Array.isArray(tripIds) || tripIds.length === 0) {
+      return res.status(400).json({ error: "Trip IDs array is required" });
+    }
+
+    const organizedTrips = db.collection("organized_trips");
+
+    // Update all specified trips
+    const updatePromises = tripIds.map((tripId) =>
+      organizedTrips.updateOne(
+        {
+          _id: new ObjectId(tripId),
+          "participants.email": userEmail,
+          "participants.isRegistered": false,
+        },
+        {
+          $set: {
+            "participants.$[elem].userId": userId,
+            "participants.$[elem].isRegistered": true,
+            "participants.$[elem].status": "confirmed",
+            "participants.$[elem].joinedAt": new Date().toISOString(),
+            "participants.$[elem].confirmedAt": new Date().toISOString(),
+          },
+        },
+        {
+          arrayFilters: [
+            { "elem.email": userEmail, "elem.isRegistered": false },
+          ],
+        }
+      )
+    );
+
+    const results = await Promise.all(updatePromises);
+    const linkedCount = results.filter((r) => r.modifiedCount > 0).length;
+
+    res.json({
+      message: `${linkedCount} טיולים קושרו בהצלחה`,
+      linkedCount,
+    });
+  } catch (error) {
+    console.error("Error linking trips:", error);
+    res.status(500).json({ error: "Failed to link trips" });
   }
 });
 

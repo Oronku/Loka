@@ -130,10 +130,12 @@ export default function CreateOrganizedTrip() {
     visibility: 'draft', // Default to draft
     meetingPoint: '',
     importantNotes: '',
+    tags: [],
   });
 
   const [newService, setNewService] = useState('');
   const [newExcluded, setNewExcluded] = useState('');
+  const [newTag, setNewTag] = useState('');
 
   const handleNext = () => {
     setActiveStep((prevActiveStep) => prevActiveStep + 1);
@@ -307,6 +309,71 @@ export default function CreateOrganizedTrip() {
                   onChange={handleChange('importantNotes')}
                   placeholder="מידע חשוב למשתתפים, דרישות מיוחדות..."
                 />
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="subtitle2" gutterBottom>
+                  תגיות (#)
+                </Typography>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  הוסף תגיות לסינון הטיול (למשל: צילום, צלילה, משפחות)
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    placeholder="הוסף תגית..."
+                    value={newTag}
+                    onChange={(e) => setNewTag(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (
+                          newTag.trim() &&
+                          !formData.tags?.includes(newTag.trim())
+                        ) {
+                          setFormData({
+                            ...formData,
+                            tags: [...(formData.tags || []), newTag.trim()],
+                          });
+                          setNewTag('');
+                        }
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      if (
+                        newTag.trim() &&
+                        !formData.tags?.includes(newTag.trim())
+                      ) {
+                        setFormData({
+                          ...formData,
+                          tags: [...(formData.tags || []), newTag.trim()],
+                        });
+                        setNewTag('');
+                      }
+                    }}
+                  >
+                    הוסף
+                  </Button>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  {formData.tags?.map((tag, index) => (
+                    <Chip
+                      key={index}
+                      label={`#${tag}`}
+                      onDelete={() => {
+                        setFormData({
+                          ...formData,
+                          tags: formData.tags?.filter((_, i) => i !== index),
+                        });
+                      }}
+                      color="primary"
+                      variant="outlined"
+                    />
+                  ))}
+                </Box>
               </Grid>
             </Grid>
           </Box>

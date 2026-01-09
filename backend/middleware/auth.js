@@ -40,6 +40,7 @@ export async function verifyGoogleToken(req, res, next) {
         picture: decoded.picture || null,
         isAdmin: dbUser?.isAdmin || false,
         isAgent: dbUser?.isAgent || false,
+        isAgencyAdmin: dbUser?.isAgencyAdmin || false,
         agencyName: dbUser?.agencyName || null,
       };
       return next();
@@ -63,6 +64,7 @@ export async function verifyGoogleToken(req, res, next) {
           picture: payload.picture,
           isAdmin: dbUser?.isAdmin || false,
           isAgent: dbUser?.isAgent || false,
+          isAgencyAdmin: dbUser?.isAgencyAdmin || false,
           agencyName: dbUser?.agencyName || null,
         };
 

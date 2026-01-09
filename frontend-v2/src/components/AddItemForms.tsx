@@ -1094,10 +1094,12 @@ export function AddFlightForm({
 
 export function AddHotelForm({
   tripId,
+  trip,
   onUpdated,
   onDone,
 }: {
   tripId: string;
+  trip?: Trip;
   onUpdated: (t: Trip) => void;
   onDone?: () => void;
 }) {
@@ -1105,8 +1107,21 @@ export function AddHotelForm({
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [hotelDetail, setHotelDetail] = useState<any | null>(null);
-  const [checkIn, setCheckIn] = useState('');
-  const [checkOut, setCheckOut] = useState('');
+
+  // Initialize with trip dates if available
+  const initialCheckIn = trip?.startDate
+    ? trip.startDate.includes('T')
+      ? trip.startDate.split('T')[0]
+      : trip.startDate.slice(0, 10)
+    : '';
+  const initialCheckOut = trip?.endDate
+    ? trip.endDate.includes('T')
+      ? trip.endDate.split('T')[0]
+      : trip.endDate.slice(0, 10)
+    : '';
+
+  const [checkIn, setCheckIn] = useState(initialCheckIn);
+  const [checkOut, setCheckOut] = useState(initialCheckOut);
   const [arrivalTime, setArrivalTime] = useState('');
   const [nights, setNights] = useState('');
   const [cost, setCost] = useState('');

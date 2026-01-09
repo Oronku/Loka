@@ -53,12 +53,19 @@ router.get("/trips", async (req, res) => {
     }
 
     const agentId = req.user.id;
+    console.log("🔍 Agent looking for trips with agentId:", agentId);
+
     const organizedTrips = db.collection("organized_trips");
 
     const trips = await organizedTrips
       .find({ agentId: agentId })
       .sort({ createdAt: -1 })
       .toArray();
+
+    console.log("📋 Found trips:", trips.length);
+    if (trips.length > 0) {
+      console.log("First trip agentId:", trips[0].agentId);
+    }
 
     res.json(trips);
   } catch (error) {
@@ -218,15 +225,37 @@ router.post("/trips/:id/invite", async (req, res) => {
     }
 
     const { ObjectId } = await import("mongodb");
-    const { userId, email, name } = req.body;
+    const { userId, email, name, phone } = req.body;
+
+    // Validate required fields
+    if (!email || !name) {
+      return res.status(400).json({ error: "Email and name are required" });
+    }
 
     const organizedTrips = db.collection("organized_trips");
+    const users = db.collection("users");
+
+    // Check if user exists in system by email
+    let isRegistered = false;
+    let actualUserId = userId || null;
+
+    if (email && !userId) {
+      const existingUser = await users.findOne({ email: email });
+      if (existingUser) {
+        actualUserId = existingUser._id.toString();
+        isRegistered = true;
+      }
+    } else if (userId) {
+      isRegistered = true;
+    }
 
     const participant = {
-      userId: userId || null,
+      userId: actualUserId,
       email: email,
       name: name,
+      phone: phone || null,
       status: "invited",
+      isRegistered: isRegistered,
       invitedAt: new Date().toISOString(),
       paidAmount: 0,
       personalDocs: [],

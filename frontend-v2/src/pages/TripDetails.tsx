@@ -48,6 +48,8 @@ import {
   AddAttractionForm,
 } from '../components/AddItemForms';
 import GenerateRide from '../components/GenerateRide';
+import TripMapSplitView from '../components/TripMapSplitView';
+import EmptyTripState from '../components/EmptyTripState';
 import {
   GoogleMap,
   LoadScript,
@@ -386,6 +388,18 @@ export default function TripDetails() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { t } = useLanguage();
+
+  // Helper function to add days to a date string (YYYY-MM-DD) without timezone issues
+  const addDaysToDate = (dateStr: string, days: number): string => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-indexed
+    date.setDate(date.getDate() + days);
+    const newYear = date.getFullYear();
+    const newMonth = String(date.getMonth() + 1).padStart(2, '0');
+    const newDay = String(date.getDate()).padStart(2, '0');
+    return `${newYear}-${newMonth}-${newDay}`;
+  };
+
   const [trip, setTrip] = useState<Trip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterCategory>('all');
@@ -831,7 +845,39 @@ export default function TripDetails() {
     return `${datePart}T${timePart}`;
   };
 
-  // Helper function to calculate arrival time for rides
+  // Helper function to safely extract date part (YYYY-MM-DD) from various date formats
+  const extractDatePart = (
+    dateStr: string | undefined | null | Date
+  ): string => {
+    if (!dateStr) return '';
+
+    // Handle Date objects
+    if (dateStr instanceof Date) {
+      const year = dateStr.getFullYear();
+      const month = String(dateStr.getMonth() + 1).padStart(2, '0');
+      const day = String(dateStr.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    if (typeof dateStr !== 'string') return '';
+
+    // Handle ISO format with T
+    if (dateStr.includes('T')) {
+      return dateStr.split('T')[0];
+    }
+
+    // Handle space-separated format
+    if (dateStr.includes(' ')) {
+      return dateStr.split(' ')[0];
+    }
+
+    // Already in YYYY-MM-DD format
+    if (dateStr.length >= 10 && dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+      return dateStr.slice(0, 10);
+    }
+
+    return '';
+  }; // Helper function to calculate arrival time for rides
   const calculateRideArrivalTime = (
     pickupTime: string,
     duration: string
@@ -955,11 +1001,18 @@ export default function TripDetails() {
 
   const handleEditSearchSelect = async (result: any) => {
     setEditSearchResults([]);
-    setEditSearchQuery(result.name || '');
+    setEditSearchQuery(''); // Clear the search query after selection
 
     try {
       if (editItem.type === 'hotel') {
         const details = await hotelDetails(result.placeId);
+
+        // If dates are empty, initialize them with trip dates
+        const checkIn = editItem.data.checkIn || trip?.startDate || '';
+        const checkOut =
+          editItem.data.checkOut ||
+          (trip?.startDate ? addDaysToDate(trip.startDate, 1) : '');
+
         setEditItem({
           ...editItem,
           data: {
@@ -968,6 +1021,8 @@ export default function TripDetails() {
             name: details.hotel?.name || result.name,
             address: details.hotel?.formattedAddress || result.formattedAddress,
             rating: details.hotel?.rating || editItem.data.rating,
+            checkIn: checkIn,
+            checkOut: checkOut,
           },
         });
       } else if (editItem.type === 'attraction') {
@@ -1046,22 +1101,37 @@ export default function TripDetails() {
   };
 
   const handleEditItemSave = async () => {
-    if (!id || !editItem.type || editItem.index === -1) return;
+    if (!id || !editItem.type) return;
     try {
-      // Delete old item and add updated one
       let updated: Trip;
-      if (editItem.type === 'flight') {
-        updated = await deleteFlightFromTrip(id, editItem.index);
-        updated = await addFlightToTrip(id, editItem.data);
-      } else if (editItem.type === 'hotel') {
-        updated = await deleteHotelFromTrip(id, editItem.index);
-        updated = await addHotelToTrip(id, editItem.data);
-      } else if (editItem.type === 'ride') {
-        updated = await deleteRideFromTrip(id, editItem.index);
-        updated = await addRideToTrip(id, editItem.data);
+
+      // If index is -1, we're adding a new item
+      if (editItem.index === -1) {
+        if (editItem.type === 'flight') {
+          updated = await addFlightToTrip(id, editItem.data);
+        } else if (editItem.type === 'hotel') {
+          updated = await addHotelToTrip(id, editItem.data);
+        } else if (editItem.type === 'ride') {
+          updated = await addRideToTrip(id, editItem.data);
+        } else {
+          updated = await addAttractionToTrip(id, editItem.data);
+        }
       } else {
-        updated = await deleteAttractionFromTrip(id, editItem.index);
-        updated = await addAttractionToTrip(id, editItem.data);
+        // If index >= 0, we're editing an existing item
+        // Delete old item and add updated one
+        if (editItem.type === 'flight') {
+          updated = await deleteFlightFromTrip(id, editItem.index);
+          updated = await addFlightToTrip(id, editItem.data);
+        } else if (editItem.type === 'hotel') {
+          updated = await deleteHotelFromTrip(id, editItem.index);
+          updated = await addHotelToTrip(id, editItem.data);
+        } else if (editItem.type === 'ride') {
+          updated = await deleteRideFromTrip(id, editItem.index);
+          updated = await addRideToTrip(id, editItem.data);
+        } else {
+          updated = await deleteAttractionFromTrip(id, editItem.index);
+          updated = await addAttractionToTrip(id, editItem.data);
+        }
       }
 
       setTrip(updated);
@@ -1764,6 +1834,81 @@ export default function TripDetails() {
             />
           </Tabs>
         </Card>
+
+        {/* EMPTY TRIP STATE - Show when trip has no content OR missing key items */}
+        {(viewMode === 'list' || viewMode === 'timeline') &&
+          filter === 'all' &&
+          // Show if missing any of: flights, hotels, or attractions
+          ((trip.flights || []).length === 0 ||
+            (trip.hotels || []).length === 0 ||
+            (trip.attractions || []).length === 0) && (
+            <EmptyTripState
+              onAddFlight={() => {
+                setEditItem({
+                  open: true,
+                  type: 'flight',
+                  index: -1,
+                  data: {
+                    airline: '',
+                    flightNumber: '',
+                    departureAirport: '',
+                    arrivalAirport: '',
+                    departureTime: '',
+                    arrivalTime: '',
+                    bookingReference: '',
+                    seatNumber: '',
+                    price: 0,
+                  },
+                });
+              }}
+              onAddHotel={() => {
+                // Initialize with trip dates
+                const defaultCheckIn = trip.startDate || '';
+                const defaultCheckOut = trip.startDate
+                  ? addDaysToDate(trip.startDate, 1)
+                  : '';
+
+                setEditItem({
+                  open: true,
+                  type: 'hotel',
+                  index: -1,
+                  data: {
+                    name: '',
+                    address: '',
+                    checkIn: defaultCheckIn,
+                    checkOut: defaultCheckOut,
+                    confirmationNumber: '',
+                    roomType: '',
+                    price: 0,
+                  },
+                });
+              }}
+              onAddAttraction={() => {
+                setEditItem({
+                  open: true,
+                  type: 'attraction',
+                  index: -1,
+                  data: {
+                    name: '',
+                    address: '',
+                    date: '',
+                    time: '',
+                    notes: '',
+                    price: 0,
+                  },
+                });
+              }}
+              destination={
+                typeof trip.destinations?.[0] === 'string'
+                  ? trip.destinations[0]
+                  : trip.destinations?.[0]?.name
+              }
+              hasFlights={(trip.flights || []).length > 0}
+              hasHotels={(trip.hotels || []).length > 0}
+              hasAttractions={(trip.attractions || []).length > 0}
+              hasRides={(trip.rides || []).length > 0}
+            />
+          )}
 
         {/* LIST VIEW */}
         {viewMode === 'list' && (
@@ -4146,8 +4291,19 @@ export default function TripDetails() {
           </Box>
         )}
 
-        {/* MAP VIEW */}
-        {viewMode === 'map' && <TripMapView trip={trip} />}
+        {/* MAP VIEW - New Split View */}
+        {viewMode === 'map' && (
+          <Box sx={{ mt: 2 }}>
+            <TripMapSplitView
+              trip={trip}
+              onAddPlace={(place) => {
+                // Handle adding a new place from the map
+                console.log('Add place from map:', place);
+                // You can implement logic to add as attraction or custom location
+              }}
+            />
+          </Box>
+        )}
 
         {/* GANTT VIEW */}
         {viewMode === 'gantt' && (
@@ -5422,12 +5578,12 @@ export default function TripDetails() {
                     })
                   }
                 />
-                <Box display="flex" gap={2}>
+                <Box display="flex" gap={2} sx={{ width: '100%' }}>
                   <TextField
                     fullWidth
                     type="date"
                     label="Check-in Date"
-                    value={editItem.data.checkIn?.slice(0, 10) || ''}
+                    value={extractDatePart(editItem.data.checkIn)}
                     onChange={(e) =>
                       setEditItem({
                         ...editItem,
@@ -5435,12 +5591,13 @@ export default function TripDetails() {
                       })
                     }
                     InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1 }}
                   />
                   <TextField
                     fullWidth
                     type="date"
                     label="Check-out Date"
-                    value={editItem.data.checkOut?.slice(0, 10) || ''}
+                    value={extractDatePart(editItem.data.checkOut)}
                     onChange={(e) =>
                       setEditItem({
                         ...editItem,
@@ -5448,6 +5605,7 @@ export default function TripDetails() {
                       })
                     }
                     InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1 }}
                   />
                 </Box>
                 <TextField
@@ -5976,7 +6134,7 @@ export default function TripDetails() {
                     fullWidth
                     type="date"
                     label="Scheduled Date"
-                    value={editItem.data.scheduledDate?.slice(0, 10) || ''}
+                    value={extractDatePart(editItem.data.scheduledDate)}
                     onChange={(e) =>
                       setEditItem({
                         ...editItem,
@@ -6005,23 +6163,141 @@ export default function TripDetails() {
                     InputLabelProps={{ shrink: true }}
                   />
                 </Box>
+
+                {/* Conditional fields based on attraction type */}
+                {editItem.data.attractionType === 'restaurant' ? (
+                  // Restaurant-specific fields
+                  <>
+                    <TextField
+                      fullWidth
+                      label="Reservation Name"
+                      value={editItem.data.reservationName || ''}
+                      onChange={(e) =>
+                        setEditItem({
+                          ...editItem,
+                          data: {
+                            ...editItem.data,
+                            reservationName: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="שם על ההזמנה"
+                    />
+                    <Box display="flex" gap={2}>
+                      <TextField
+                        fullWidth
+                        type="number"
+                        label="Number of People"
+                        value={editItem.data.numberOfPeople || ''}
+                        onChange={(e) =>
+                          setEditItem({
+                            ...editItem,
+                            data: {
+                              ...editItem.data,
+                              numberOfPeople: Number(e.target.value),
+                            },
+                          })
+                        }
+                        inputProps={{ min: 1 }}
+                      />
+                      <FormControl fullWidth>
+                        <InputLabel>Credit Card Held?</InputLabel>
+                        <Select
+                          value={editItem.data.creditCardHeld || 'no'}
+                          label="Credit Card Held?"
+                          onChange={(e) =>
+                            setEditItem({
+                              ...editItem,
+                              data: {
+                                ...editItem.data,
+                                creditCardHeld: e.target.value,
+                              },
+                            })
+                          }
+                        >
+                          <MenuItem value="yes">Yes ✓</MenuItem>
+                          <MenuItem value="no">No</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Box>
+                    <Box display="flex" gap={2}>
+                      <TextField
+                        fullWidth
+                        type="number"
+                        label="Minimum Charge"
+                        value={editItem.data.minimumCharge || ''}
+                        onChange={(e) =>
+                          setEditItem({
+                            ...editItem,
+                            data: {
+                              ...editItem.data,
+                              minimumCharge: Number(e.target.value),
+                            },
+                          })
+                        }
+                        inputProps={{ min: 0 }}
+                        placeholder="מינימום תשלום אם יש"
+                      />
+                      <TextField
+                        fullWidth
+                        label="Cancellation Policy"
+                        value={editItem.data.cancellationPolicy || ''}
+                        onChange={(e) =>
+                          setEditItem({
+                            ...editItem,
+                            data: {
+                              ...editItem.data,
+                              cancellationPolicy: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="למשל: 24 שעות מראש"
+                      />
+                    </Box>
+                  </>
+                ) : (
+                  // Regular attraction fields
+                  <Box display="flex" gap={2}>
+                    <TextField
+                      fullWidth
+                      type="number"
+                      label="Number of Tickets"
+                      value={editItem.data.numberOfTickets || ''}
+                      onChange={(e) =>
+                        setEditItem({
+                          ...editItem,
+                          data: {
+                            ...editItem.data,
+                            numberOfTickets: Number(e.target.value),
+                          },
+                        })
+                      }
+                      inputProps={{ min: 1 }}
+                    />
+                    <FormControl fullWidth>
+                      <InputLabel>Cost Type</InputLabel>
+                      <Select
+                        value={editItem.data.costType || 'total'}
+                        label="Cost Type"
+                        onChange={(e) =>
+                          setEditItem({
+                            ...editItem,
+                            data: {
+                              ...editItem.data,
+                              costType: e.target.value,
+                            },
+                          })
+                        }
+                      >
+                        <MenuItem value="per-ticket">Per Ticket</MenuItem>
+                        <MenuItem value="total">Total</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Box>
+                )}
+
+                {/* Cost field (common for both) */}
                 <Box display="flex" gap={2}>
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Number of Tickets"
-                    value={editItem.data.numberOfTickets || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          numberOfTickets: Number(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1 }}
-                  />
                   <TextField
                     fullWidth
                     type="number"
@@ -6037,24 +6313,6 @@ export default function TripDetails() {
                       })
                     }
                   />
-                  <FormControl fullWidth>
-                    <InputLabel>Cost Type</InputLabel>
-                    <Select
-                      value={editItem.data.costType || 'total'}
-                      label="Cost Type"
-                      onChange={(e) =>
-                        setEditItem({
-                          ...editItem,
-                          data: { ...editItem.data, costType: e.target.value },
-                        })
-                      }
-                    >
-                      <MenuItem value="per-ticket">Per Ticket</MenuItem>
-                      <MenuItem value="total">Total</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Box>
-                <Box display="flex" gap={2}>
                   <TextField
                     fullWidth
                     type="number"
@@ -6071,18 +6329,18 @@ export default function TripDetails() {
                     }
                     inputProps={{ min: 0, max: 5, step: 0.1 }}
                   />
-                  <TextField
-                    fullWidth
-                    label="Website"
-                    value={editItem.data.website || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: { ...editItem.data, website: e.target.value },
-                      })
-                    }
-                  />
                 </Box>
+                <TextField
+                  fullWidth
+                  label="Website"
+                  value={editItem.data.website || ''}
+                  onChange={(e) =>
+                    setEditItem({
+                      ...editItem,
+                      data: { ...editItem.data, website: e.target.value },
+                    })
+                  }
+                />
               </Stack>
             </DialogContent>
             <DialogActions>
@@ -6231,6 +6489,7 @@ function AddItemModalLauncher({
           {tab === 1 && (
             <AddHotelForm
               tripId={trip.id}
+              trip={trip}
               onUpdated={onUpdated}
               onDone={handleClose}
             />

@@ -61,6 +61,7 @@ interface PublicTrip {
   importantNotes?: string;
   status: string;
   itinerary?: any[];
+  tags?: string[];
 }
 
 export default function PublicTripView() {
@@ -226,6 +227,18 @@ export default function PublicTripView() {
                 />
                 {trip.status === 'full' && <Chip label="מלא" color="error" />}
               </Box>
+              {trip.tags && trip.tags.length > 0 && (
+                <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  {trip.tags.map((tag) => (
+                    <Chip
+                      key={tag}
+                      label={`#${tag}`}
+                      color="secondary"
+                      variant="outlined"
+                    />
+                  ))}
+                </Box>
+              )}
               {trip.agencyName && (
                 <Typography
                   variant="subtitle1"
@@ -290,13 +303,219 @@ export default function PublicTripView() {
               </Grid>
             </Paper>
 
+            {/* Itinerary */}
+            {trip.itinerary && trip.itinerary.length > 0 && (
+              <Paper sx={{ p: 3, mb: 3 }}>
+                <Typography variant="h5" fontWeight={700} gutterBottom>
+                  מסלול הטיול - יום אחר יום
+                </Typography>
+                <Box sx={{ mt: 3 }}>
+                  {trip.itinerary.map((day: any, index: number) => (
+                    <Box
+                      key={index}
+                      sx={{
+                        mb: 3,
+                        pb: 3,
+                        borderBottom:
+                          index < trip.itinerary!.length - 1
+                            ? '1px solid'
+                            : 'none',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 2,
+                          mb: 1,
+                        }}
+                      >
+                        <Chip
+                          label={`יום ${day.day}`}
+                          color="primary"
+                          sx={{ fontWeight: 700 }}
+                        />
+                        <Typography variant="body2" color="text.secondary">
+                          {new Date(day.date).toLocaleDateString('he-IL', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
+                        </Typography>
+                      </Box>
+                      <Typography
+                        variant="h6"
+                        fontWeight={600}
+                        gutterBottom
+                        sx={{ mt: 1 }}
+                      >
+                        {day.title}
+                      </Typography>
+                      {day.description && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          paragraph
+                        >
+                          {day.description}
+                        </Typography>
+                      )}
+                      {day.activities && day.activities.length > 0 && (
+                        <List dense>
+                          {day.activities.map(
+                            (activity: any, actIdx: number) => (
+                              <ListItem key={actIdx} sx={{ pl: 0 }}>
+                                <ListItemIcon sx={{ minWidth: 36 }}>
+                                  {activity.type === 'accommodation' && (
+                                    <LocationOn
+                                      color="primary"
+                                      fontSize="small"
+                                    />
+                                  )}
+                                  {activity.type === 'meal' && (
+                                    <CheckCircle
+                                      color="success"
+                                      fontSize="small"
+                                    />
+                                  )}
+                                  {activity.type === 'attraction' && (
+                                    <LocationOn
+                                      color="secondary"
+                                      fontSize="small"
+                                    />
+                                  )}
+                                  {activity.type === 'transport' && (
+                                    <CalendarToday
+                                      color="info"
+                                      fontSize="small"
+                                    />
+                                  )}
+                                  {activity.type === 'other' && (
+                                    <CheckCircle
+                                      color="action"
+                                      fontSize="small"
+                                    />
+                                  )}
+                                </ListItemIcon>
+                                <ListItemText
+                                  primary={
+                                    <Box
+                                      sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 1,
+                                      }}
+                                    >
+                                      {activity.time && (
+                                        <Typography
+                                          variant="body2"
+                                          color="text.secondary"
+                                          sx={{ minWidth: 50 }}
+                                        >
+                                          {activity.time}
+                                        </Typography>
+                                      )}
+                                      <Typography
+                                        variant="body1"
+                                        fontWeight={500}
+                                      >
+                                        {activity.title}
+                                      </Typography>
+                                    </Box>
+                                  }
+                                  secondary={
+                                    <>
+                                      {activity.description && (
+                                        <Typography
+                                          variant="body2"
+                                          color="text.secondary"
+                                        >
+                                          {activity.description}
+                                        </Typography>
+                                      )}
+                                      {activity.location && (
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                          sx={{ display: 'block', mt: 0.5 }}
+                                        >
+                                          📍 {activity.location}
+                                        </Typography>
+                                      )}
+                                    </>
+                                  }
+                                />
+                              </ListItem>
+                            )
+                          )}
+                        </List>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              </Paper>
+            )}
+
             {/* Important Notes */}
             {trip.importantNotes && (
               <Paper sx={{ p: 3, mb: 3 }}>
                 <Typography variant="h5" fontWeight={700} gutterBottom>
-                  מידע חשוב
+                  📋 מידע חשוב לטיול
                 </Typography>
-                <Alert severity="info">{trip.importantNotes}</Alert>
+                <Box sx={{ mt: 3 }}>
+                  {trip.importantNotes.split('\n\n').map((section, index) => {
+                    const lines = section.trim().split('\n');
+                    const title = lines[0];
+                    const items = lines.slice(1);
+
+                    return (
+                      <Box key={index} sx={{ mb: 3 }}>
+                        <Typography
+                          variant="h6"
+                          fontWeight={600}
+                          color="primary"
+                          gutterBottom
+                          sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+                        >
+                          {title}
+                        </Typography>
+                        <Box
+                          component="ul"
+                          sx={{
+                            m: 0,
+                            pl: 2,
+                            listStyleType: 'none',
+                          }}
+                        >
+                          {items.map((item, itemIndex) => (
+                            <Box
+                              component="li"
+                              key={itemIndex}
+                              sx={{
+                                py: 0.5,
+                                pl: 2,
+                                position: 'relative',
+                                '&:before': {
+                                  content: '"•"',
+                                  position: 'absolute',
+                                  left: 0,
+                                  color: 'primary.main',
+                                  fontWeight: 'bold',
+                                },
+                              }}
+                            >
+                              <Typography variant="body2">
+                                {item.replace(/^[-•]\s*/, '')}
+                              </Typography>
+                            </Box>
+                          ))}
+                        </Box>
+                      </Box>
+                    );
+                  })}
+                </Box>
               </Paper>
             )}
 

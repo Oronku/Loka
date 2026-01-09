@@ -14,6 +14,7 @@ import {
   Flight as FlightIcon,
   Place as PlaceIcon,
   CardTravel as TripIcon,
+  Business as BusinessIcon,
 } from '@mui/icons-material';
 
 // Statistics Components (to be created)
@@ -21,6 +22,7 @@ import UsersStatistics from '../components/admin/UsersStatistics';
 import DestinationsStatistics from '../components/admin/DestinationsStatistics';
 import FlightsStatistics from '../components/admin/FlightsStatistics';
 import TripsStatistics from '../components/admin/TripsStatistics';
+import AgentsManagement from '../components/admin/AgentsManagement';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -91,6 +93,7 @@ export default function AdminDashboard() {
               iconPosition="start"
             />
             <Tab icon={<PeopleIcon />} label="Users" iconPosition="start" />
+            <Tab icon={<BusinessIcon />} label="Agents" iconPosition="start" />
             <Tab
               icon={<PlaceIcon />}
               label="Destinations"
@@ -122,14 +125,18 @@ export default function AdminDashboard() {
           </TabPanel>
 
           <TabPanel value={tabValue} index={2}>
-            <DestinationsStatistics />
+            <AgentsManagement />
           </TabPanel>
 
           <TabPanel value={tabValue} index={3}>
-            <FlightsStatistics />
+            <DestinationsStatistics />
           </TabPanel>
 
           <TabPanel value={tabValue} index={4}>
+            <FlightsStatistics />
+          </TabPanel>
+
+          <TabPanel value={tabValue} index={5}>
             <TripsStatistics />
           </TabPanel>
         </Paper>

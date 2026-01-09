@@ -46,6 +46,7 @@ export interface User {
   provider?: string;
   isAdmin?: boolean;
   isAgent?: boolean;
+  isAgencyAdmin?: boolean;
   agencyName?: string;
   agencyLicense?: string;
   agencyDescription?: string;
