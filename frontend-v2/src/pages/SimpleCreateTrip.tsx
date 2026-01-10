@@ -24,6 +24,7 @@ import {
   ArrowForward,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import {
   createTrip as createTripAPI,
   citiesAutocomplete,
@@ -32,6 +33,7 @@ import {
 export default function SimpleCreateTrip() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLanguage();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,18 +85,18 @@ export default function SimpleCreateTrip() {
 
   // Popular destinations for suggestions when no input
   const popularDestinations = [
-    'תל אביב, ישראל',
-    'ירושלים, ישראל',
-    'אילת, ישראל',
-    'ניו יורק, ארה"ב',
-    'לונדון, בריטניה',
-    'פריז, צרפת',
-    'ברצלונה, ספרד',
-    'רומא, איטליה',
-    'דובאי, איחוד האמירויות',
-    'בנגקוק, תאילנד',
-    'טוקיו, יפן',
-    'בלי, אינדונזיה',
+    t('telAviv'),
+    t('jerusalem'),
+    t('eilat'),
+    t('newYork'),
+    t('london'),
+    t('paris'),
+    t('barcelona'),
+    t('rome'),
+    t('dubai'),
+    t('bangkok'),
+    t('tokyo'),
+    t('bali'),
   ];
 
   const handleAddDestination = () => {
@@ -127,23 +129,23 @@ export default function SimpleCreateTrip() {
 
   const validateForm = () => {
     if (!tripName.trim()) {
-      setError('נא להזין שם לטיול');
+      setError(t('pleaseEnterTripName'));
       return false;
     }
     if (destinations.length === 0) {
-      setError('נא להוסיף לפחות יעד אחד');
+      setError(t('pleaseAddDestination'));
       return false;
     }
     if (!startDate) {
-      setError('נא לבחור תאריך התחלה');
+      setError(t('pleaseSelectStartDate'));
       return false;
     }
     if (!endDate) {
-      setError('נא לבחור תאריך סיום');
+      setError(t('pleaseSelectEndDate'));
       return false;
     }
     if (endDate < startDate) {
-      setError('תאריך הסיום חייב להיות אחרי תאריך ההתחלה');
+      setError(t('endDateMustBeAfterStart'));
       return false;
     }
     return true;
@@ -180,7 +182,7 @@ export default function SimpleCreateTrip() {
       navigate(`/trips/${createdTrip.id}`);
     } catch (err: any) {
       console.error('Error creating trip:', err);
-      setError(err.response?.data?.message || 'שגיאה ביצירת הטיול');
+      setError(err.response?.data?.message || t('errorCreatingTrip'));
     } finally {
       setLoading(false);
     }
@@ -199,10 +201,10 @@ export default function SimpleCreateTrip() {
         <Stack spacing={1} mb={4} alignItems="center">
           <FlightTakeoff sx={{ fontSize: 56, color: 'primary.main' }} />
           <Typography variant="h4" fontWeight={700} textAlign="center">
-            צור טיול חדש
+            {t('createNewTrip')}
           </Typography>
           <Typography variant="body2" color="text.secondary" textAlign="center">
-            התחל עם הפרטים הבסיסיים - תוכל להוסיף טיסות, מלונות ואטרקציות אחר כך
+            {t('startWithBasics')}
           </Typography>
         </Stack>
 
@@ -218,11 +220,11 @@ export default function SimpleCreateTrip() {
             {/* Trip Name */}
             <Box>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>
-                שם הטיול *
+                {t('tripNameRequired')}
               </Typography>
               <TextField
                 fullWidth
-                placeholder='לדוגמה: "טיול משפחתי ליוון" או "סוף שבוע בפראג"'
+                placeholder={t('tripNamePlaceholder')}
                 value={tripName}
                 onChange={(e) => setTripName(e.target.value)}
                 InputProps={{
@@ -238,7 +240,8 @@ export default function SimpleCreateTrip() {
             {/* Destinations */}
             <Box>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>
-                יעדים * {destinations.length > 0 && `(${destinations.length})`}
+                {t('destinationsRequired')}{' '}
+                {destinations.length > 0 && `(${destinations.length})`}
               </Typography>
               <Autocomplete
                 freeSolo
@@ -263,7 +266,7 @@ export default function SimpleCreateTrip() {
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    placeholder='לדוגמה: "תל אביב" או "פריז, צרפת"'
+                    placeholder={t('destinationPlaceholder')}
                     onKeyPress={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
@@ -298,7 +301,7 @@ export default function SimpleCreateTrip() {
                 disabled={!destinationInput.trim()}
                 sx={{ mt: 1 }}
               >
-                הוסף יעד
+                {t('addDestination')}
               </Button>
 
               {destinations.length > 0 && (
@@ -321,7 +324,7 @@ export default function SimpleCreateTrip() {
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <Box flex={1}>
                   <Typography variant="subtitle2" fontWeight={600} mb={1}>
-                    תאריך התחלה *
+                    {t('startDateRequired')}
                   </Typography>
                   <DatePicker
                     value={startDate}
@@ -342,7 +345,7 @@ export default function SimpleCreateTrip() {
                 </Box>
                 <Box flex={1}>
                   <Typography variant="subtitle2" fontWeight={600} mb={1}>
-                    תאריך סיום *
+                    {t('endDateRequired')}
                   </Typography>
                   <DatePicker
                     value={endDate}
@@ -368,13 +371,13 @@ export default function SimpleCreateTrip() {
             {/* Description */}
             <Box>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>
-                תיאור (אופציונלי)
+                {t('descriptionOptional')}
               </Typography>
               <TextField
                 fullWidth
                 multiline
                 rows={3}
-                placeholder="תאר את הטיול שלך... מה המטרה? עם מי אתה נוסע?"
+                placeholder={t('descriptionPlaceholder')}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 InputProps={{
@@ -393,12 +396,12 @@ export default function SimpleCreateTrip() {
             {/* Participants */}
             <Box>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>
-                משתתפים (אופציונלי){' '}
+                {t('participantsOptional')}{' '}
                 {participants.length > 0 && `(${participants.length})`}
               </Typography>
               <TextField
                 fullWidth
-                placeholder="שם המשתתף"
+                placeholder={t('participantName')}
                 value={participantInput}
                 onChange={(e) => setParticipantInput(e.target.value)}
                 onKeyPress={(e) => {
@@ -421,7 +424,7 @@ export default function SimpleCreateTrip() {
                 disabled={!participantInput.trim()}
                 sx={{ mt: 1 }}
               >
-                הוסף משתתף
+                {t('addParticipant')}
               </Button>
 
               {participants.length > 0 && (
@@ -442,10 +445,10 @@ export default function SimpleCreateTrip() {
             {/* Info Box */}
             <Alert severity="info" sx={{ bgcolor: 'primary.lighter' }}>
               <Typography variant="body2" fontWeight={500}>
-                💡 טיפ: אחרי יצירת הטיול תוכל להוסיף:
+                {t('tipAfterCreation')}
               </Typography>
               <Typography variant="caption" display="block" mt={0.5}>
-                ✈️ טיסות • 🏨 מלונות • 🎯 אטרקציות • 🚗 נסיעות
+                {t('flightsHotelsEtc')}
               </Typography>
             </Alert>
 
@@ -457,7 +460,7 @@ export default function SimpleCreateTrip() {
                 onClick={() => navigate('/trips')}
                 disabled={loading}
               >
-                ביטול
+                {t('cancel')}
               </Button>
               <Button
                 variant="contained"
@@ -469,7 +472,7 @@ export default function SimpleCreateTrip() {
                 disabled={loading}
                 sx={{ minWidth: 180 }}
               >
-                {loading ? 'יוצר טיול...' : 'צור טיול והמשך'}
+                {loading ? t('creatingTrip') : t('createTripAndContinue')}
               </Button>
             </Stack>
           </Stack>
@@ -483,7 +486,7 @@ export default function SimpleCreateTrip() {
           display="block"
           mt={3}
         >
-          * שדות חובה
+          {t('requiredFields')}
         </Typography>
       </Box>
     </Box>

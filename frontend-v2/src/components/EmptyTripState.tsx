@@ -15,6 +15,7 @@ import {
   Add,
   TipsAndUpdates,
 } from '@mui/icons-material';
+import { useLanguage } from '../context/LanguageContext';
 
 interface EmptyTripStateProps {
   onAddFlight: () => void;
@@ -37,6 +38,8 @@ export default function EmptyTripState({
   hasAttractions = false,
   hasRides = false,
 }: EmptyTripStateProps) {
+  const { t } = useLanguage();
+
   // Calculate what's missing
   const missingCount = [!hasFlights, !hasHotels, !hasAttractions].filter(
     Boolean
@@ -62,11 +65,11 @@ export default function EmptyTripState({
             <TipsAndUpdates sx={{ fontSize: 40, color: 'primary.main' }} />
             <Box>
               <Typography variant="h6" fontWeight={600} color="primary.main">
-                🎉 הטיול שלך נוצר בהצלחה!
+                {t('tripCreatedSuccess')}
               </Typography>
               <Typography variant="body2" color="text.secondary" mt={0.5}>
-                עכשיו הזמן להתחיל לתכנן - הוסף טיסות, מלונות ואטרקציות
-                {destination && ` ל${destination}`}
+                {t('nowStartPlanning')}
+                {destination && ` ${destination}`}
               </Typography>
             </Box>
           </Stack>
@@ -77,7 +80,7 @@ export default function EmptyTripState({
       {missingCount > 0 && (
         <>
           <Typography variant="h6" fontWeight={600} mb={3} textAlign="center">
-            {isEmpty ? 'במה תרצה להתחיל?' : 'מה עוד תרצה להוסיף?'}
+            {isEmpty ? t('whatToStartWith') : t('whatElseToAdd')}
           </Typography>
 
           <Stack spacing={2}>
@@ -113,14 +116,14 @@ export default function EmptyTripState({
                     </Box>
                     <Box flex={1}>
                       <Typography variant="h6" fontWeight={600}>
-                        הוסף טיסות ✈️
+                        {t('addFlightsTitle')}
                       </Typography>
                       <Typography
                         variant="body2"
                         color="text.secondary"
                         mt={0.5}
                       >
-                        חפש לפי מספר טיסה או מסלול - נמלא את כל הפרטים בשבילך
+                        {t('addFlightsDesc')}
                       </Typography>
                     </Box>
                     <Button
@@ -132,7 +135,7 @@ export default function EmptyTripState({
                         '&:hover': { bgcolor: 'primary.dark' },
                       }}
                     >
-                      התחל
+                      {t('start')}
                     </Button>
                   </Stack>
                 </CardContent>
@@ -171,14 +174,14 @@ export default function EmptyTripState({
                     </Box>
                     <Box flex={1}>
                       <Typography variant="h6" fontWeight={600}>
-                        הוסף מלונות 🏨
+                        {t('addHotelsTitle')}
                       </Typography>
                       <Typography
                         variant="body2"
                         color="text.secondary"
                         mt={0.5}
                       >
-                        חפש מלונות בקרבת המקום, בדוק דירוגים ומחירים
+                        {t('addHotelsDesc')}
                       </Typography>
                     </Box>
                     <Button
@@ -190,7 +193,7 @@ export default function EmptyTripState({
                         '&:hover': { bgcolor: 'secondary.dark' },
                       }}
                     >
-                      התחל
+                      {t('start')}
                     </Button>
                   </Stack>
                 </CardContent>
@@ -229,14 +232,14 @@ export default function EmptyTripState({
                     </Box>
                     <Box flex={1}>
                       <Typography variant="h6" fontWeight={600}>
-                        הוסף אטרקציות 🎯
+                        {t('addAttractionsTitle')}
                       </Typography>
                       <Typography
                         variant="body2"
                         color="text.secondary"
                         mt={0.5}
                       >
-                        מוזיאונים, פארקים, מסעדות - כל מה שתרצה לעשות
+                        {t('addAttractionsDesc')}
                       </Typography>
                     </Box>
                     <Button
@@ -248,7 +251,7 @@ export default function EmptyTripState({
                         '&:hover': { bgcolor: 'warning.dark' },
                       }}
                     >
-                      התחל
+                      {t('start')}
                     </Button>
                   </Stack>
                 </CardContent>
@@ -270,20 +273,20 @@ export default function EmptyTripState({
           }}
         >
           <Typography variant="subtitle2" fontWeight={600} mb={2}>
-            💡 טיפים לתכנון מוצלח:
+            {t('tipsForSuccess')}
           </Typography>
           <Stack spacing={1}>
             <Typography variant="body2" color="text.secondary">
-              • <strong>התחל מהטיסות</strong> - הן קובעות את מסגרת הזמן של הטיול
+              • {t('tipStartWithFlights')}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              • <strong>בחר מלון מרכזי</strong> - חסוך זמן ונסיעות
+              • {t('tipCentralHotel')}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              • <strong>תכנן מראש</strong> - חלק מהאטרקציות דורשות הזמנה מוקדמת
+              • {t('tipPlanAhead')}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              • <strong>השתמש במפה</strong> - לוודא שהמיקומים קרובים אחד לשני
+              • {t('tipUseMap')}
             </Typography>
           </Stack>
         </Paper>
