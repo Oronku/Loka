@@ -1,0 +1,980 @@
+import { useState, useEffect } from 'react';
+import { createTrip, citiesAutocomplete, placeDetails } from '../services/api';
+import type { Trip, Destination } from '../types/domain';
+import { useNavigate, Link } from 'react-router-dom';
+import {
+  AddFlightForm,
+  AddHotelForm,
+  AddRideForm,
+  AddAttractionForm,
+} from '../components/AddItemForms';
+import {
+  Box,
+  Stepper,
+  Step,
+  StepLabel,
+  Button,
+  TextField,
+  Typography,
+  Paper,
+  Stack,
+  Grid,
+  CircularProgress,
+  Card,
+  CardContent,
+  Divider,
+  Chip,
+  Alert,
+  useMediaQuery,
+  Autocomplete,
+} from '@mui/material';
+import {
+  ArrowBack,
+  ArrowForward,
+  Check,
+  Flight as FlightIcon,
+  Hotel as HotelIcon,
+  DirectionsCar,
+  AttractionsOutlined,
+  Info,
+  LocationOn,
+} from '@mui/icons-material';
+import { useTheme } from '@mui/material/styles';
+import { useLanguage } from '../context/LanguageContext';
+import { useNotification } from '../context/NotificationContext';
+
+interface BasicInfo {
+  name: string;
+  destinations: Destination[];
+  startDate: string;
+  endDate: string;
+}
+
+export default function NewTripWizard() {
+  const { t } = useLanguage();
+  const { showSuccess, showError } = useNotification();
+  const [step, setStep] = useState<number>(0);
+  const [basic, setBasic] = useState<BasicInfo>({
+    name: '',
+    destinations: [],
+    startDate: '',
+    endDate: '',
+  });
+  const [creating, setCreating] = useState(false);
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const navigate = useNavigate();
+  const theme = useTheme();
+  const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // City autocomplete state
+  const [cityOptions, setCityOptions] = useState<any[]>([]);
+  const [cityInputValue, setCityInputValue] = useState('');
+  const [loadingCities, setLoadingCities] = useState(false);
+
+  const steps = [
+    t('stepBasicInfo'),
+    t('flights'),
+    t('hotels'),
+    t('rides'),
+    t('attractions'),
+    t('stepReview'),
+  ];
+
+  // Reset wizard when component mounts (new trip creation)
+  useEffect(() => {
+    setStep(0);
+    setBasic({ name: '', destinations: [], startDate: '', endDate: '' });
+    setTrip(null);
+    setCreating(false);
+  }, []);
+
+  // City autocomplete search
+  useEffect(() => {
+    if (cityInputValue.length < 2) {
+      setCityOptions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setLoadingCities(true);
+      try {
+        const results = await citiesAutocomplete(cityInputValue);
+        console.log('City autocomplete results:', results);
+        setCityOptions(results.suggestions || results.predictions || []);
+      } catch (error) {
+        console.error('City search error:', error);
+        setCityOptions([]);
+      } finally {
+        setLoadingCities(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [cityInputValue]);
+
+  const next = () => setStep((s) => Math.min(s + 1, steps.length - 1));
+  const prev = () => setStep((s) => Math.max(s - 1, 0));
+
+  async function createBasicTrip() {
+    if (!basic.name || !basic.startDate || !basic.endDate) return;
+    setCreating(true);
+    try {
+      const newTrip = await createTrip({
+        name: basic.name,
+        destinations: basic.destinations,
+        startDate: basic.startDate,
+        endDate: basic.endDate,
+        flights: [],
+        hotels: [],
+        rides: [],
+        attractions: [],
+      } as any);
+      setTrip(newTrip);
+      showSuccess(t('tripCreationSuccess'));
+      next();
+    } catch (e: any) {
+      showError(e?.response?.data?.message || e.message || t('errorOccurred'));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  const canFinish = !!trip;
+
+  return (
+    <Box
+      sx={{
+        maxWidth: 1000,
+        mx: 'auto',
+        width: '100%',
+        px: { xs: 1, sm: 2, md: 0 },
+      }}
+    >
+      {/* Header */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 2, md: 3 },
+          mb: 4,
+          bgcolor: 'primary.main',
+          color: 'white',
+          borderRadius: 2,
+        }}
+      >
+        <Stack
+          direction={{ xs: 'column-reverse', sm: 'row' }}
+          justifyContent="space-between"
+          alignItems={{ xs: 'flex-start', sm: 'center' }}
+          spacing={2}
+          mb={2}
+        >
+          <Button
+            type="button"
+            onClick={() => {
+              window.location.href = '/';
+            }}
+            startIcon={<ArrowBack />}
+            sx={{
+              color: 'white',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
+              width: { xs: '100%', sm: 'auto' },
+            }}
+          >
+            {t('cancel')}
+          </Button>
+        </Stack>
+        <Typography
+          variant="h4"
+          fontWeight={700}
+          sx={{ fontSize: { xs: '2rem', md: '2.5rem' } }}
+        >
+          {t('createNewTripTitle')}
+        </Typography>
+        <Typography
+          fontWeight={900}
+          variant="body1"
+          sx={{
+            mt: 1,
+            opacity: 0.9,
+            fontSize: { xs: '0.95rem', sm: '1rem' },
+          }}
+        >
+          {t('organizeEverything')}
+        </Typography>
+      </Paper>
+
+      {/* Stepper */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 2, md: 3 },
+          mb: 4,
+          border: '1px solid',
+          borderColor: 'divider',
+        }}
+      >
+        {isSmall ? (
+          <Stack direction="row" gap={1} flexWrap="wrap">
+            {steps.map((label, idx) => (
+              <Chip
+                key={label}
+                label={label}
+                color={idx === step ? 'primary' : 'default'}
+                variant={idx === step ? 'filled' : 'outlined'}
+                size="small"
+                sx={{ flexGrow: 1, minWidth: '45%' }}
+              />
+            ))}
+          </Stack>
+        ) : (
+          <Stepper activeStep={step} alternativeLabel>
+            {steps.map((label) => (
+              <Step key={label}>
+                <StepLabel>{label}</StepLabel>
+              </Step>
+            ))}
+          </Stepper>
+        )}
+      </Paper>
+
+      {/* Step 0: Basic Info */}
+      {step === 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2, md: 4 },
+            border: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
+          <Stack spacing={3}>
+            <Box>
+              <Typography variant="h5" fontWeight={600} gutterBottom>
+                {t('tripBasicInfo')}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {t('tripNameHelper')}
+              </Typography>
+            </Box>
+
+            <TextField
+              label={t('tripName')}
+              placeholder={t('tripNamePlaceholder')}
+              value={basic.name}
+              onChange={(e) => setBasic({ ...basic, name: e.target.value })}
+              fullWidth
+              required
+              helperText={t('tripNameHelper')}
+            />
+
+            <Autocomplete
+              multiple
+              freeSolo
+              options={cityOptions}
+              value={basic.destinations}
+              onChange={(_, newValue: any[]) => {
+                // Convert string or object values to Destination format
+                const destinations: Destination[] = newValue.map((v) => {
+                  if (typeof v === 'string') {
+                    return { name: v };
+                  } else if (v.placeId) {
+                    // From our backend (suggestions format)
+                    return {
+                      name: v.name,
+                      placeId: v.placeId,
+                      formatted: v.formattedAddress,
+                    };
+                  } else if (v.description) {
+                    // From Google API (predictions format)
+                    return {
+                      name: v.structured_formatting?.main_text || v.description,
+                      placeId: v.place_id,
+                      formatted: v.description,
+                      country: v.structured_formatting?.secondary_text,
+                    };
+                  } else {
+                    return v;
+                  }
+                });
+                setBasic({ ...basic, destinations });
+              }}
+              inputValue={cityInputValue}
+              onInputChange={(_, newInputValue) => {
+                setCityInputValue(newInputValue);
+              }}
+              getOptionLabel={(option: any) => {
+                if (typeof option === 'string') return option;
+                if (option.name) return option.name;
+                if (option.structured_formatting?.main_text)
+                  return option.structured_formatting.main_text;
+                return option.description || option.formattedAddress || '';
+              }}
+              renderOption={(props, option: any) => (
+                <Box component="li" {...props}>
+                  <LocationOn sx={{ mr: 1, color: 'primary.main' }} />
+                  <Stack>
+                    <Typography variant="body2">
+                      {option.name ||
+                        option.structured_formatting?.main_text ||
+                        option.description}
+                    </Typography>
+                    {(option.formattedAddress ||
+                      option.structured_formatting?.secondary_text) && (
+                      <Typography variant="caption" color="text.secondary">
+                        {option.formattedAddress ||
+                          option.structured_formatting?.secondary_text}
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              )}
+              loading={loadingCities}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={t('destinations')}
+                  placeholder="Add cities..."
+                  helperText="Type to search cities worldwide"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingCities ? (
+                          <CircularProgress color="inherit" size={20} />
+                        ) : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label={t('startDate')}
+                  type="date"
+                  value={basic.startDate}
+                  onChange={(e) =>
+                    setBasic({ ...basic, startDate: e.target.value })
+                  }
+                  fullWidth
+                  required
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label={t('endDate')}
+                  type="date"
+                  value={basic.endDate}
+                  onChange={(e) =>
+                    setBasic({ ...basic, endDate: e.target.value })
+                  }
+                  fullWidth
+                  required
+                  InputLabelProps={{ shrink: true }}
+                  error={
+                    !!(
+                      basic.startDate &&
+                      basic.endDate &&
+                      basic.endDate < basic.startDate
+                    )
+                  }
+                  helperText={
+                    basic.startDate &&
+                    basic.endDate &&
+                    basic.endDate < basic.startDate
+                      ? t('invalidDateRange')
+                      : undefined
+                  }
+                />
+              </Grid>
+            </Grid>
+
+            <Divider />
+
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={2}
+              justifyContent="space-between"
+            >
+              <Button
+                variant="outlined"
+                size="large"
+                onClick={async () => {
+                  if (!basic.name || !basic.startDate || !basic.endDate) {
+                    showError('Please fill in trip name and dates first');
+                    return;
+                  }
+
+                  // Start creating trip with AI
+                  setCreating(true);
+                  try {
+                    showSuccess(
+                      '✨ AI is planning your perfect trip with real places...'
+                    );
+
+                    // First create the basic trip
+                    const tripData = {
+                      name: basic.name,
+                      destinations: basic.destinations,
+                      startDate: basic.startDate,
+                      endDate: basic.endDate,
+                      userId: 'placeholder',
+                    };
+
+                    const newTrip = await createTrip(tripData);
+
+                    // Now get SMART AI suggestions (Gemini + Google Places)
+                    const response = await fetch('/api/ai/create-smart-trip', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({
+                        trip: {
+                          destinations: tripData.destinations,
+                          startDate: tripData.startDate,
+                          endDate: tripData.endDate,
+                        },
+                        preferences: {
+                          interests: 'culture, food, sightseeing',
+                          pace: 'moderate',
+                          dailyBudget: 'moderate',
+                        },
+                      }),
+                    });
+
+                    if (response.status === 503) {
+                      showError(
+                        '⚠️ AI service requires API key. Configure GEMINI_API_KEY or OPENAI_API_KEY'
+                      );
+                      setTimeout(() => navigate(`/trips/${newTrip.id}`), 2000);
+                      return;
+                    }
+
+                    if (!response.ok) {
+                      const errorData = await response.json();
+                      throw new Error(
+                        errorData.error || 'Failed to get AI suggestions'
+                      );
+                    }
+
+                    const aiData = await response.json();
+
+                    if (aiData.success && aiData.itinerary) {
+                      const provider =
+                        aiData.aiProvider === 'gemini'
+                          ? '🔵 Gemini'
+                          : '🟢 OpenAI';
+                      const placesInfo = aiData.enrichedWithGooglePlaces
+                        ? ' + 📍 Google Places'
+                        : '';
+
+                      // Try to get real prices with affiliate links
+                      try {
+                        const pricesResponse = await fetch(
+                          '/api/ai/get-real-prices',
+                          {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({
+                              destination: tripData.destinations[0],
+                              checkIn: tripData.startDate,
+                              checkOut: tripData.endDate,
+                              origin: 'TLV', // TODO: Get user's location
+                            }),
+                          }
+                        );
+
+                        if (pricesResponse.ok) {
+                          const pricesData = await pricesResponse.json();
+                          const avgHotel = pricesData.averageHotelPrice;
+                          const avgFlight = pricesData.averageFlightPrice;
+                          const priceInfo =
+                            avgHotel || avgFlight
+                              ? ` | Avg: Hotel $${avgHotel || '?'}, Flight $${avgFlight || '?'}`
+                              : '';
+
+                          showSuccess(
+                            `🎉 ${provider}${placesInfo} created ${aiData.tripDays}-day itinerary with ${aiData.totalActivities} activities${priceInfo}! 💰 Booking links available!`
+                          );
+                        } else {
+                          showSuccess(
+                            `🎉 ${provider}${placesInfo} created ${aiData.tripDays}-day itinerary with ${aiData.totalActivities} real activities!`
+                          );
+                        }
+                      } catch (priceError) {
+                        console.log('Could not fetch real prices:', priceError);
+                        showSuccess(
+                          `🎉 ${provider}${placesInfo} created ${aiData.tripDays}-day itinerary with ${aiData.totalActivities} real activities!`
+                        );
+                      }
+
+                      // Navigate to the new trip after short delay
+                      setTimeout(() => {
+                        navigate(`/trips/${newTrip.id}`);
+                      }, 2500);
+                    } else {
+                      throw new Error('Invalid AI response');
+                    }
+                  } catch (error) {
+                    console.error('AI Trip Creation Error:', error);
+                    const errorMessage =
+                      error instanceof Error
+                        ? error.message
+                        : 'Failed to create AI trip. Try manual creation.';
+                    showError(errorMessage);
+                  } finally {
+                    setCreating(false);
+                  }
+                }}
+                disabled={
+                  !basic.name ||
+                  !basic.startDate ||
+                  !basic.endDate ||
+                  creating ||
+                  basic.endDate < basic.startDate
+                }
+                startIcon={
+                  creating ? <CircularProgress size={20} /> : <FlightIcon />
+                }
+                fullWidth={isSmall}
+              >
+                ✨ Let AI Help Me Plan
+              </Button>
+              <Button
+                variant="contained"
+                size="large"
+                onClick={createBasicTrip}
+                disabled={
+                  !basic.name ||
+                  !basic.startDate ||
+                  !basic.endDate ||
+                  creating ||
+                  basic.endDate < basic.startDate
+                }
+                startIcon={
+                  creating ? <CircularProgress size={20} /> : <Check />
+                }
+                fullWidth={isSmall}
+              >
+                {creating
+                  ? t('creatingTrip')
+                  : trip
+                    ? `${t('update')} & ${t('continue')}`
+                    : `${t('create')} & ${t('continue')}`}
+              </Button>
+            </Stack>
+          </Stack>
+        </Paper>
+      )}
+
+      {/* Flights step */}
+      {step === 1 && (
+        <StepCard
+          title={t('addFlight')}
+          subtitle={
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
+          }
+        >
+          {trip ? (
+            <div className="space-y-4">
+              <AddFlightForm
+                key={`flight-${trip.id}`}
+                tripId={trip.id}
+                onUpdated={setTrip}
+              />
+              {trip.flights.length > 0 && (
+                <div>
+                  <div className="text-sm font-medium mb-1">{t('flights')}</div>
+                  <ul className="list-disc pl-5 text-sm text-gray-700">
+                    {trip.flights.map((f, i) => (
+                      <li key={i}>
+                        {f.flightNumber} {f.departureAirportCode}→
+                        {f.arrivalAirportCode} (
+                        {(f.departureDateTime || '').slice(0, 10)})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <WizardNav onBack={prev} onNext={next} />
+            </div>
+          ) : (
+            <WizardNav onBack={prev} onNext={next} nextDisabled />
+          )}
+        </StepCard>
+      )}
+
+      {/* Hotels step */}
+      {step === 2 && (
+        <StepCard
+          title={t('addHotel')}
+          subtitle={
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
+          }
+        >
+          {trip ? (
+            <div className="space-y-4">
+              <AddHotelForm
+                key={`hotel-${trip.id}`}
+                tripId={trip.id}
+                onUpdated={setTrip}
+              />
+              {trip.hotels.length > 0 && (
+                <div>
+                  <div className="text-sm font-medium mb-1">{t('hotels')}</div>
+                  <ul className="list-disc pl-5 text-sm text-gray-700">
+                    {trip.hotels.map((h, i) => (
+                      <li key={i}>
+                        {h.name} ({h.checkIn} → {h.checkOut})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <WizardNav onBack={prev} onNext={next} />
+            </div>
+          ) : (
+            <WizardNav onBack={prev} onNext={next} nextDisabled />
+          )}
+        </StepCard>
+      )}
+
+      {/* Rides step */}
+      {step === 3 && (
+        <StepCard
+          title={t('addRide')}
+          subtitle={
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
+          }
+        >
+          {trip ? (
+            <div className="space-y-4">
+              <AddRideForm
+                key={`ride-${trip.id}`}
+                tripId={trip.id}
+                onUpdated={setTrip}
+              />
+              {trip.rides.length > 0 && (
+                <div>
+                  <div className="text-sm font-medium mb-1">{t('rides')}</div>
+                  <ul className="list-disc pl-5 text-sm text-gray-700">
+                    {trip.rides.map((r, i) => (
+                      <li key={i}>
+                        {r.pickup} → {r.dropoff}{' '}
+                        {r.distance ? `(${r.distance})` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <WizardNav onBack={prev} onNext={next} />
+            </div>
+          ) : (
+            <WizardNav onBack={prev} onNext={next} nextDisabled />
+          )}
+        </StepCard>
+      )}
+
+      {/* Attractions step */}
+      {step === 4 && (
+        <StepCard
+          title={t('addAttraction')}
+          subtitle={
+            trip ? `${t('trip')}: ${trip.name}` : t('tripCreationSuccess')
+          }
+        >
+          {trip ? (
+            <div className="space-y-4">
+              <AddAttractionForm
+                key={`attraction-${trip.id}`}
+                tripId={trip.id}
+                onUpdated={setTrip}
+              />
+              {trip.attractions.length > 0 && (
+                <div>
+                  <div className="text-sm font-medium mb-1">
+                    Attractions added
+                  </div>
+                  <ul className="list-disc pl-5 text-sm text-gray-700">
+                    {trip.attractions.map((a, i) => (
+                      <li key={i}>
+                        {a.name}{' '}
+                        {a.scheduledDate
+                          ? `(${a.scheduledDate}${
+                              a.scheduledTime ? ' ' + a.scheduledTime : ''
+                            })`
+                          : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <WizardNav onBack={prev} onNext={next} />
+            </div>
+          ) : (
+            <WizardNav onBack={prev} onNext={next} nextDisabled />
+          )}
+        </StepCard>
+      )}
+
+      {/* Review step */}
+      {step === 5 && (
+        <StepCard
+          title={t('reviewAndCreate')}
+          subtitle={trip ? t('tripCreationSuccess') : t('tripBasicInfo')}
+        >
+          {trip ? (
+            <Stack spacing={3}>
+              <Card
+                elevation={0}
+                sx={{
+                  bgcolor: 'success.lighter',
+                  border: '2px solid',
+                  borderColor: 'success.main',
+                }}
+              >
+                <CardContent>
+                  <Stack direction="row" spacing={2} alignItems="center" mb={2}>
+                    <Check sx={{ color: 'success.main', fontSize: 32 }} />
+                    <Typography variant="h6" fontWeight={600}>
+                      {t('tripCreationSuccess')}
+                    </Typography>
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">
+                    {t('reviewDetails')} "{trip.name}"
+                  </Typography>
+                </CardContent>
+              </Card>
+
+              <Paper
+                elevation={0}
+                sx={{ p: 3, border: '1px solid', borderColor: 'divider' }}
+              >
+                <Typography variant="h6" fontWeight={600} gutterBottom>
+                  {t('tripSummary')}
+                </Typography>
+                <Divider sx={{ my: 2 }} />
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <Typography variant="body2" color="text.secondary">
+                      {t('travelDates')}
+                    </Typography>
+                    <Typography variant="body1" fontWeight={500}>
+                      {new Date(trip.startDate).toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                      })}{' '}
+                      →{' '}
+                      {new Date(trip.endDate).toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </Typography>
+                  </Grid>
+                  {trip.destinations?.length > 0 && (
+                    <Grid item xs={12}>
+                      <Typography variant="body2" color="text.secondary">
+                        {t('destinations')}
+                      </Typography>
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        flexWrap="wrap"
+                        gap={1}
+                        mt={0.5}
+                      >
+                        {trip.destinations.map((dest, i) => (
+                          <Chip
+                            key={i}
+                            label={typeof dest === 'string' ? dest : dest.name}
+                            size="small"
+                            icon={<LocationOn />}
+                            sx={{
+                              bgcolor: 'primary.50',
+                              color: 'primary.dark',
+                            }}
+                          />
+                        ))}
+                      </Stack>
+                    </Grid>
+                  )}
+                  <Grid item xs={12}>
+                    <Divider sx={{ my: 1 }} />
+                  </Grid>
+                  <Grid item xs={6} sm={3}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <FlightIcon color="primary" />
+                      <Box>
+                        <Typography variant="h5" fontWeight={600}>
+                          {trip.flights.length}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {t('flights')}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={6} sm={3}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <HotelIcon color="secondary" />
+                      <Box>
+                        <Typography variant="h5" fontWeight={600}>
+                          {trip.hotels.length}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {t('hotels')}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={6} sm={3}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <DirectionsCar color="info" />
+                      <Box>
+                        <Typography variant="h5" fontWeight={600}>
+                          {trip.rides.length}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {t('rides')}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={6} sm={3}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <AttractionsOutlined color="success" />
+                      <Box>
+                        <Typography variant="h5" fontWeight={600}>
+                          {trip.attractions.length}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {t('attractions')}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Paper>
+
+              <Stack direction="row" spacing={2} justifyContent="space-between">
+                <Button
+                  onClick={prev}
+                  variant="outlined"
+                  startIcon={<ArrowBack />}
+                >
+                  {t('back')}
+                </Button>
+                <Button
+                  disabled={!canFinish}
+                  onClick={() => navigate(`/trips/${trip!.id}`)}
+                  variant="contained"
+                  size="large"
+                  endIcon={<Check />}
+                >
+                  {t('finish')} & {t('viewTrip')}
+                </Button>
+              </Stack>
+            </Stack>
+          ) : (
+            <Stack spacing={2}>
+              <Alert severity="warning" icon={<Info />}>
+                {t('tripBasicInfo')}
+              </Alert>
+              <Stack direction="row" spacing={2} justifyContent="flex-end">
+                <Button
+                  onClick={prev}
+                  variant="outlined"
+                  startIcon={<ArrowBack />}
+                >
+                  {t('back')}
+                </Button>
+                <Button disabled variant="contained">
+                  {t('finish')}
+                </Button>
+              </Stack>
+            </Stack>
+          )}
+        </StepCard>
+      )}
+    </Box>
+  );
+}
+
+function StepCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: { xs: 2, md: 4 },
+        border: '1px solid',
+        borderColor: 'divider',
+      }}
+    >
+      <Box mb={3}>
+        <Typography variant="h5" fontWeight={600} gutterBottom>
+          {title}
+        </Typography>
+        {subtitle && (
+          <Typography variant="body2" color="text.secondary">
+            {subtitle}
+          </Typography>
+        )}
+      </Box>
+      <Box>{children}</Box>
+    </Paper>
+  );
+}
+
+function WizardNav({
+  onBack,
+  onNext,
+  nextDisabled,
+}: {
+  onBack: () => void;
+  onNext: () => void;
+  nextDisabled?: boolean;
+}) {
+  const { t } = useLanguage();
+  return (
+    <Stack
+      direction={{ xs: 'column-reverse', sm: 'row' }}
+      spacing={2}
+      justifyContent="flex-end"
+      mt={3}
+      alignItems={{ xs: 'stretch', sm: 'center' }}
+    >
+      <Button
+        onClick={onBack}
+        variant="outlined"
+        startIcon={<ArrowBack />}
+        fullWidth
+        sx={{ width: { xs: '100%', sm: 'auto' } }}
+      >
+        {t('back')}
+      </Button>
+      <Button
+        onClick={onNext}
+        disabled={!!nextDisabled}
+        variant="contained"
+        endIcon={<ArrowForward />}
+        sx={{ width: { xs: '100%', sm: 'auto' } }}
+      >
+        {t('next')}
+      </Button>
+    </Stack>
+  );
+}

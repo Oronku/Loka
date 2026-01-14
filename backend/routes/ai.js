@@ -125,12 +125,106 @@ router.post("/message", async (req, res) => {
     const userId = req.user.id;
 
     // 1. Get user's trips for context
-    const trips = await db
+    const allTrips = await db
       .collection("trips")
       .find({
         $or: [{ userId: userId }, { "sharedWith.userId": userId }],
       })
+      .sort({ startDate: -1 }) // Sort by start date, newest first
       .toArray();
+
+    // Filter trips based on message context
+    const now = new Date();
+    const lowerMsg = message.toLowerCase();
+    const isFutureTripsRequest = 
+      lowerMsg.includes("future") || 
+      lowerMsg.includes("upcoming") || 
+      lowerMsg.includes("עתיד") || 
+      lowerMsg.includes("קרוב") ||
+      lowerMsg.includes("הבא") ||
+      lowerMsg.includes("next");
+    
+    const isPastTripsRequest = 
+      lowerMsg.includes("past") || 
+      lowerMsg.includes("previous") || 
+      lowerMsg.includes("עבר") || 
+      lowerMsg.includes("קודם");
+
+    let trips = allTrips;
+    if (isFutureTripsRequest) {
+      // Only show trips that haven't ended yet (endDate is in the future)
+      trips = allTrips.filter(t => {
+        try {
+          const endDate = new Date(t.endDate);
+          // Set time to end of day for comparison
+          endDate.setHours(23, 59, 59, 999);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          return endDate >= today;
+        } catch (e) {
+          console.error('Error parsing endDate:', t.endDate, e);
+          return false;
+        }
+      });
+    } else if (isPastTripsRequest) {
+      // Only show trips that have ended
+      trips = allTrips.filter(t => {
+        try {
+          const endDate = new Date(t.endDate);
+          endDate.setHours(23, 59, 59, 999);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          return endDate < today;
+        } catch (e) {
+          console.error('Error parsing endDate:', t.endDate, e);
+          return false;
+        }
+      });
+    }
+
+    // Format trips with status information - only include trips that match the request
+    const formattedTrips = trips.map((t) => {
+      const startDate = new Date(t.startDate);
+      const endDate = new Date(t.endDate);
+      
+      // Normalize dates to start of day for comparison
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tripEndDate = new Date(endDate);
+      tripEndDate.setHours(23, 59, 59, 999);
+      const tripStartDate = new Date(startDate);
+      tripStartDate.setHours(0, 0, 0, 0);
+      
+      const isPast = tripEndDate < today;
+      const isUpcoming = tripStartDate > today;
+      const isCurrent = tripStartDate <= today && tripEndDate >= today;
+      const daysUntil = isUpcoming ? Math.ceil((tripStartDate - today) / (1000 * 60 * 60 * 24)) : null;
+      const duration = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+      
+      // Format dates nicely
+      const formatDate = (dateStr) => {
+        const d = new Date(dateStr);
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+      };
+      
+      return {
+        id: t._id,
+        name: t.name,
+        startDate: t.startDate,
+        endDate: t.endDate,
+        formattedStartDate: formatDate(t.startDate),
+        formattedEndDate: formatDate(t.endDate),
+        dates: `${formatDate(t.startDate)} to ${formatDate(t.endDate)}`,
+        destinations: t.destinations || [],
+        status: isPast ? 'past' : isCurrent ? 'current' : 'upcoming',
+        daysUntil: daysUntil,
+        duration: duration,
+        hasFlights: (t.flights || []).length > 0,
+        hasHotels: (t.hotels || []).length > 0,
+        hasAttractions: (t.attractions || []).length > 0,
+      };
+    });
 
     // 2. Use OpenAI if available
     if (openai) {
@@ -138,14 +232,15 @@ router.post("/message", async (req, res) => {
         const systemPrompt = `
 You are Loka, a smart travel assistant for the MeetLoka app.
 Your goal is to help users plan, manage, and understand their trips.
-You have access to the user's current trips: ${JSON.stringify(
-          trips.map((t) => ({
-            id: t._id,
-            name: t.name,
-            dates: t.startDate + " to " + t.endDate,
-            destinations: t.destinations,
-          }))
-        )}
+
+You have access to the user's trips: ${JSON.stringify(formattedTrips)}
+
+IMPORTANT: When displaying trips:
+- If user asks for "future trips" / "upcoming trips" / "טיולים עתידיים" → Show only trips with status "upcoming" or "current"
+- If user asks for "past trips" / "טיולים בעבר" → Show only trips with status "past"
+- Always format trip information clearly with dates and destinations
+- For upcoming trips, mention how many days until the trip starts (daysUntil field)
+- Group trips by status when showing multiple trips
 
 When a user asks to create a trip or add items, you should use the available tools.
 Always be helpful, concise, and friendly.
@@ -245,12 +340,77 @@ Always be helpful, concise, and friendly.
           });
         }
 
-        // Normal text response
-        return res.json({
+        // Normal text response - include trips data if it's a trip listing request
+        const responseData = {
           text: responseMessage.content,
           action: null,
           timestamp: new Date(),
-        });
+        };
+        
+        // If this is a trip listing request, include structured trips data
+        if (isFutureTripsRequest || isPastTripsRequest || lowerMsg.includes("trips") || lowerMsg.includes("טיולים")) {
+          // Filter trips again to ensure only relevant ones are included
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          const tripsData = trips
+            .filter((t) => {
+              // Double-check filtering based on request type
+              try {
+                const endDate = new Date(t.endDate);
+                endDate.setHours(23, 59, 59, 999);
+                
+                if (isFutureTripsRequest) {
+                  // Only include trips that haven't ended yet
+                  return endDate >= today;
+                } else if (isPastTripsRequest) {
+                  // Only include trips that have ended
+                  return endDate < today;
+                }
+                // If no specific request, include all trips
+                return true;
+              } catch (e) {
+                console.error('Error parsing endDate:', t.endDate, e);
+                return false;
+              }
+            })
+            .map((t) => {
+              const startDate = new Date(t.startDate);
+              const endDate = new Date(t.endDate);
+              
+              // Normalize dates to start of day for comparison
+              const tripEndDate = new Date(endDate);
+              tripEndDate.setHours(23, 59, 59, 999);
+              const tripStartDate = new Date(startDate);
+              tripStartDate.setHours(0, 0, 0, 0);
+              
+              const isPast = tripEndDate < today;
+              const isUpcoming = tripStartDate > today;
+              const isCurrent = tripStartDate <= today && tripEndDate >= today;
+              const daysUntil = isUpcoming ? Math.ceil((tripStartDate - today) / (1000 * 60 * 60 * 24)) : null;
+              const duration = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+              
+              return {
+                id: t._id.toString(),
+                name: t.name,
+                destinations: t.destinations || [],
+                startDate: t.startDate,
+                endDate: t.endDate,
+                duration: duration,
+                daysUntil: daysUntil,
+                status: isPast ? 'past' : isUpcoming ? 'upcoming' : 'current',
+                flights: (t.flights || []).length,
+                hotels: (t.hotels || []).length,
+                attractions: (t.attractions || []).length,
+              };
+            });
+          
+          if (tripsData.length > 0) {
+            responseData.trips = tripsData;
+          }
+        }
+        
+        return res.json(responseData);
       } catch (aiError) {
         console.error("OpenAI API Error:", aiError);
         // Fallback to rule-based if API fails
@@ -261,8 +421,106 @@ Always be helpful, concise, and friendly.
 
     let responseText = "";
     let action = null;
+    
+    // Handle trip listing requests
+    if (lowerMsg.includes("trips") || lowerMsg.includes("טיולים") || lowerMsg.includes("list") || lowerMsg.includes("show")) {
+      if (trips.length === 0) {
+        if (isFutureTripsRequest) {
+          responseText = "You don't have any upcoming trips. Would you like me to help you plan one?";
+        } else if (isPastTripsRequest) {
+          responseText = "You don't have any past trips.";
+        } else {
+          responseText = "You don't have any trips yet. Would you like me to help you plan one?";
+        }
+      } else {
+        // Sort trips by start date (soonest first)
+        const sortedTrips = [...trips].sort((a, b) => {
+          return new Date(a.startDate) - new Date(b.startDate);
+        });
+        
+        const formatDate = (dateStr) => {
+          const d = new Date(dateStr);
+          const months = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+          return `${d.getDate()} ב${months[d.getMonth()]} ${d.getFullYear()}`;
+        };
+        
+        const tripList = sortedTrips.map((t, idx) => {
+          const startDate = new Date(t.startDate);
+          const endDate = new Date(t.endDate);
+          const isPast = endDate < now;
+          const isUpcoming = startDate > now;
+          const daysUntil = isUpcoming ? Math.ceil((startDate - now) / (1000 * 60 * 60 * 24)) : null;
+          const duration = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+          
+          const destinations = (t.destinations || []).length > 0 
+            ? (t.destinations || []).join(', ') 
+            : 'לא צוין יעד';
+          
+          let statusText = isPast ? 'עבר' : isUpcoming ? `מתחיל בעוד ${daysUntil} ימים` : 'נוכחי';
+          
+          const details = [];
+          if ((t.flights || []).length > 0) details.push(`✈️ ${(t.flights || []).length} טיס${(t.flights || []).length > 1 ? 'ות' : 'ה'}`);
+          if ((t.hotels || []).length > 0) details.push(`🏨 ${(t.hotels || []).length} מלון${(t.hotels || []).length > 1 ? 'ים' : ''}`);
+          if ((t.attractions || []).length > 0) details.push(`🎯 ${(t.attractions || []).length} פעילות${(t.attractions || []).length > 1 ? 'ים' : ''}`);
+          
+          return `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    const lowerMsg = message.toLowerCase();
+✈️ **${t.name}**
+
+📍 **יעדים:** ${destinations}
+
+📅 **תאריכים:** ${formatDate(t.startDate)} → ${formatDate(t.endDate)}
+   ⏱️ **משך:** ${duration} ${duration === 1 ? 'יום' : 'ימים'}
+
+⏰ **סטטוס:** ${statusText}${details.length > 0 ? '\n\n' + details.join('  •  ') : ''}`;
+        }).join('\n\n');
+        
+        const header = isFutureTripsRequest 
+          ? "הנה הטיולים העתידיים שלך:\n\n" 
+          : isPastTripsRequest 
+            ? "הנה הטיולים בעבר שלך:\n\n"
+            : "הנה כל הטיולים שלך:\n\n";
+        
+        responseText = header + tripList + "\n\nאם יש משהו ספציפי שתרצה להוסיף או לשאול על אחד מהטיולים, אני כאן לעזור! 😊";
+        
+        // Include structured trip data for frontend to render as cards
+        const tripsData = sortedTrips.map((t) => {
+          const startDate = new Date(t.startDate);
+          const endDate = new Date(t.endDate);
+          const isPast = endDate < now;
+          const isUpcoming = startDate > now;
+          const daysUntil = isUpcoming ? Math.ceil((startDate - now) / (1000 * 60 * 60 * 24)) : null;
+          const duration = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+          
+          return {
+            id: t._id.toString(),
+            name: t.name,
+            destinations: t.destinations || [],
+            startDate: t.startDate,
+            endDate: t.endDate,
+            duration: duration,
+            daysUntil: daysUntil,
+            status: isPast ? 'past' : isUpcoming ? 'upcoming' : 'current',
+            flights: (t.flights || []).length,
+            hotels: (t.hotels || []).length,
+            attractions: (t.attractions || []).length,
+          };
+        });
+        
+        return res.json({
+          text: responseText,
+          action: action,
+          timestamp: new Date(),
+          trips: tripsData, // Structured data for frontend
+        });
+      }
+      
+      return res.json({
+        text: responseText,
+        action: action,
+        timestamp: new Date(),
+      });
+    }
 
     if (lowerMsg.includes("create") && lowerMsg.includes("trip")) {
       // Trip creation flow

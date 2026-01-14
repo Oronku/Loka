@@ -1,0 +1,1466 @@
+import { useEffect, useState, useMemo } from 'react';
+import { listTrips } from '../services/api';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Box,
+  Typography,
+  Button,
+  Card,
+  CardContent,
+  CardActionArea,
+  Grid,
+  Alert,
+  CircularProgress,
+  Chip,
+  Stack,
+  Container,
+  Paper,
+  Fade,
+  Skeleton,
+  Autocomplete,
+  TextField,
+} from '@mui/material';
+import {
+  AddCircleOutline,
+  CalendarToday,
+  FlightTakeoff,
+  Explore,
+  Hotel,
+  Attractions,
+  Visibility as VisibilityIcon,
+  Analytics,
+  Dashboard as DashboardIcon,
+  ViewModule,
+  ViewList,
+  ViewComfy,
+  FilterList,
+  LocationOn,
+  Search,
+  Luggage,
+} from '@mui/icons-material';
+import TripStatistics from '../components/TripStatistics';
+import AllTripsNotificationsSummary from '../components/AllTripsNotificationsSummary';
+import { Tabs, Tab } from '@mui/material';
+import { useLanguage } from '../context/LanguageContext';
+import AnimatedLogo from '../components/AnimatedLogo';
+import { motion } from 'framer-motion';
+
+export default function Home() {
+  const { t } = useLanguage();
+  const navigate = useNavigate();
+  const [trips, setTrips] = useState<any[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState(0);
+  const [tripFilter, setTripFilter] = useState<
+    'all' | 'upcoming' | 'ongoing' | 'past'
+  >('all');
+  const [autoFilterSet, setAutoFilterSet] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'compact'>('grid');
+  const [selectedCity, setSelectedCity] = useState<string | null>(null);
+
+  useEffect(() => {
+    listTrips()
+      .then((data) => {
+        // Ensure data is an array
+        if (Array.isArray(data)) {
+          setTrips(data);
+        } else {
+          console.error('listTrips returned non-array:', data);
+          setTrips([]);
+          setError(t('errorOccurred'));
+        }
+      })
+      .catch((e) => {
+        console.error('Error loading trips:', e);
+        setError(e.message);
+        setTrips([]); // Set to empty array on error
+      });
+  }, []);
+
+  // Auto-set filter to show current trip or upcoming trips
+  useEffect(() => {
+    if (!trips || trips.length === 0 || autoFilterSet) return;
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    // Check if there's a current trip (ongoing)
+    const hasCurrentTrip = trips.some((trip) => {
+      const startDate = new Date(trip.startDate);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(trip.endDate);
+      endDate.setHours(23, 59, 59, 999);
+      return startDate <= now && endDate >= now;
+    });
+
+    if (hasCurrentTrip) {
+      setTripFilter('ongoing');
+      setAutoFilterSet(true);
+      return;
+    }
+
+    // If no current trip, check if there are upcoming trips
+    const hasUpcomingTrips = trips.some((trip) => {
+      const startDate = new Date(trip.startDate);
+      startDate.setHours(0, 0, 0, 0);
+      return startDate > now;
+    });
+
+    if (hasUpcomingTrips) {
+      setTripFilter('upcoming');
+      setAutoFilterSet(true);
+    }
+  }, [trips, autoFilterSet]);
+
+  // Filter trips by date
+  const getTripStatus = (trip: any) => {
+    const now = new Date();
+    const startDate = new Date(trip.startDate);
+    const endDate = new Date(trip.endDate);
+
+    if (now < startDate) return 'upcoming';
+    if (now > endDate) return 'past';
+    return 'ongoing';
+  };
+
+  const filterTrips = (trips: any[]) => {
+    let filtered = trips;
+
+    // Filter by status
+    if (tripFilter !== 'all') {
+      filtered = filtered.filter((trip) => getTripStatus(trip) === tripFilter);
+    }
+
+    // Filter by city
+    if (selectedCity) {
+      filtered = filtered.filter((trip) => {
+        if (!trip.destinations) return false;
+        return trip.destinations.some((dest: any) => {
+          if (typeof dest === 'string') {
+            return dest.toLowerCase().includes(selectedCity.toLowerCase());
+          }
+          return dest.name?.toLowerCase().includes(selectedCity.toLowerCase());
+        });
+      });
+    }
+
+    return filtered;
+  };
+
+  // Sort trips by date
+  const sortTrips = (trips: any[]) => {
+    return [...trips].sort((a, b) => {
+      const now = new Date();
+      const aStatus = getTripStatus(a);
+      const bStatus = getTripStatus(b);
+      const aStart = new Date(a.startDate);
+      const bStart = new Date(b.startDate);
+      const aEnd = new Date(a.endDate);
+      const bEnd = new Date(b.endDate);
+
+      // Priority: ongoing > upcoming > past
+      const statusPriority = { ongoing: 0, upcoming: 1, past: 2 };
+      const aPriority = statusPriority[aStatus];
+      const bPriority = statusPriority[bStatus];
+
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
+
+      // Within same status, sort by date
+      if (aStatus === 'upcoming') {
+        // Upcoming: closest first (ascending start date)
+        return aStart.getTime() - bStart.getTime();
+      } else if (aStatus === 'past') {
+        // Past: most recent first (descending end date)
+        return bEnd.getTime() - aEnd.getTime();
+      } else {
+        // Ongoing: earliest start date first
+        return aStart.getTime() - bStart.getTime();
+      }
+    });
+  };
+
+  const ownedTrips = trips?.filter((t) => t.isOwner) || [];
+  const sharedTrips = trips?.filter((t) => t.isShared) || [];
+
+  const filteredOwnedTrips = sortTrips(filterTrips(ownedTrips));
+  const filteredSharedTrips = sortTrips(filterTrips(sharedTrips));
+
+  // Get unique cities from all trips
+  const allCities = useMemo(() => {
+    const cities = new Set<string>();
+    trips?.forEach((trip) => {
+      trip.destinations?.forEach((dest: any) => {
+        const cityName = typeof dest === 'string' ? dest : dest.name;
+        if (cityName) cities.add(cityName);
+      });
+    });
+    return Array.from(cities).sort();
+  }, [trips]);
+
+  // Count trips by status
+  const upcomingCount = ownedTrips.filter(
+    (t) => getTripStatus(t) === 'upcoming'
+  ).length;
+  const ongoingCount = ownedTrips.filter(
+    (t) => getTripStatus(t) === 'ongoing'
+  ).length;
+  const pastCount = ownedTrips.filter(
+    (t) => getTripStatus(t) === 'past'
+  ).length;
+
+  return (
+    <Container maxWidth="xl">
+      {/* Hero Section - Clean Professional Design */}
+      <Paper
+        elevation={0}
+        sx={{
+          bgcolor: 'background.paper',
+          borderRadius: 3,
+          mb: 6,
+          overflow: 'hidden',
+          position: 'relative',
+          border: '1px solid',
+          borderColor: 'divider',
+        }}
+      >
+                <Box
+                  sx={{
+                    background: 'linear-gradient(135deg, #0EA5E9 0%, #3B82F6 50%, #6366F1 100%)',
+                    py: { xs: 10, md: 14 },
+                    px: { xs: 3, md: 6 },
+                    position: 'relative',
+                    overflow: 'hidden',
+                    '&::before': {
+                      content: '""',
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: 'radial-gradient(circle at 30% 50%, rgba(255,255,255,0.1) 0%, transparent 50%)',
+                    },
+                  }}
+                >
+          {/* Subtle decorative pattern */}
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              opacity: 0.05,
+              backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+            }}
+          />
+
+          <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
+            <Stack spacing={3} alignItems="center" textAlign="center">
+              <AnimatedLogo />
+
+              <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ 
+                  type: 'spring', 
+                  stiffness: 100, 
+                  damping: 15,
+                  delay: 0.4 
+                }}
+              >
+                <Typography
+                  variant="h1"
+                  component="h1"
+                  sx={{
+                    fontSize: { xs: '2.25rem', sm: '3rem', md: '3.75rem' },
+                    fontWeight: 700,
+                    color: 'white',
+                    lineHeight: 1.2,
+                    letterSpacing: '-0.02em',
+                    textShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                  }}
+                >
+                  {t('planYourNextTrip')}
+                </Typography>
+              </motion.div>
+
+              <Typography
+                variant="h6"
+                sx={{
+                  color: 'rgba(255,255,255,0.95)',
+                  maxWidth: 600,
+                  fontWeight: 400,
+                  lineHeight: 1.7,
+                  fontSize: { xs: '1rem', sm: '1.125rem' },
+                }}
+              >
+                {t('organizeEverything')}
+              </Typography>
+              <Button
+                variant="contained"
+                size="large"
+                startIcon={<AddCircleOutline />}
+                onClick={() => navigate('/trip/new')}
+                sx={{
+                  bgcolor: 'white',
+                  color: 'primary.main',
+                  mt: 3,
+                  px: 5,
+                  py: 2,
+                  fontSize: '1.1rem',
+                  fontWeight: 700,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+                  borderRadius: 3,
+                  textTransform: 'none',
+                  '&:hover': {
+                    bgcolor: 'grey.50',
+                    transform: 'translateY(-4px) scale(1.02)',
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.25)',
+                  },
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                }}
+              >
+                {t('createNewTrip')}
+              </Button>
+            </Stack>
+          </Container>
+        </Box>
+      </Paper>
+
+      {/* Tabs */}
+      <Box sx={{ mb: 5 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
+            overflow: 'hidden',
+          }}
+        >
+          <Tabs
+            value={activeTab}
+            onChange={(_, v) => setActiveTab(v)}
+            sx={{
+              '& .MuiTab-root': {
+                textTransform: 'none',
+                fontSize: '1rem',
+                fontWeight: 600,
+                minHeight: 64,
+                px: 4,
+                transition: 'all 0.3s ease',
+                '&.Mui-selected': {
+                  color: 'primary.main',
+                  fontWeight: 700,
+                },
+              },
+              '& .MuiTabs-indicator': {
+                height: 3,
+                borderRadius: '3px 3px 0 0',
+                background: 'linear-gradient(90deg, #0EA5E9 0%, #3B82F6 100%)',
+              },
+            }}
+          >
+          <Tab
+            icon={<DashboardIcon />}
+            label={t('myTrips')}
+            iconPosition="start"
+            sx={{ gap: 1.5 }}
+          />
+          <Tab
+            icon={<Analytics />}
+            label={t('statistics')}
+            iconPosition="start"
+            sx={{ gap: 1.5 }}
+          />
+        </Tabs>
+        </Paper>
+      </Box>
+
+      {activeTab === 1 && (
+        <Box sx={{ mt: 2 }}>
+          <TripStatistics trips={trips || []} />
+        </Box>
+      )}
+
+      {activeTab === 0 && (
+        <Box>
+          {/* Active Notifications Summary */}
+          {trips && trips.length > 0 && (
+            <Box sx={{ mb: 4 }}>
+              <AllTripsNotificationsSummary trips={trips} />
+            </Box>
+          )}
+
+          {/* Owned Trips Section Header */}
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            justifyContent="space-between"
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+            spacing={2}
+            mb={3}
+            mt={trips && trips.length > 0 ? 0 : 2}
+          >
+            <Box>
+              <Typography
+                variant="h5"
+                component="h2"
+                fontWeight={600}
+                gutterBottom
+              >
+                {t('myTrips')}
+              </Typography>
+              {trips && (
+                <Typography variant="body2" color="text.secondary">
+                  {filteredOwnedTrips.length}{' '}
+                  {filteredOwnedTrips.length === 1 ? t('trip') : t('trips')}
+                </Typography>
+              )}
+            </Box>
+            <Button
+              variant="contained"
+              size="medium"
+                      startIcon={<AddCircleOutline />}
+              onClick={() => navigate('/trip/new')}
+              sx={{
+                boxShadow: 'none',
+                '&:hover': {
+                  boxShadow: '0 4px 12px rgba(25, 118, 210, 0.2)',
+                },
+              }}
+            >
+              {t('newTrip')}
+            </Button>
+          </Stack>
+
+          {/* Filter Buttons and View Mode Toggle */}
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="center"
+            mb={3}
+            gap={2}
+            flexWrap="wrap"
+          >
+            {/* Filter Chips */}
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                overflowX: 'auto',
+                pb: 1,
+                flex: 1,
+              }}
+            >
+              <Chip
+                label={`${t('all')} (${ownedTrips.length})`}
+                onClick={() => setTripFilter('all')}
+                color={tripFilter === 'all' ? 'primary' : 'default'}
+                variant={tripFilter === 'all' ? 'filled' : 'outlined'}
+                sx={{
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  height: 36,
+                  px: 1.5,
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    bgcolor:
+                      tripFilter === 'all' ? 'primary.dark' : 'action.hover',
+                    transform: 'translateY(-2px)',
+                    boxShadow: tripFilter === 'all' ? '0 4px 12px rgba(14, 165, 233, 0.3)' : '0 2px 8px rgba(0,0,0,0.1)',
+                  },
+                }}
+              />
+              <Chip
+                label={`${t('upcoming')} (${upcomingCount})`}
+                onClick={() => setTripFilter('upcoming')}
+                color={tripFilter === 'upcoming' ? 'primary' : 'default'}
+                variant={tripFilter === 'upcoming' ? 'filled' : 'outlined'}
+                sx={{
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  '&:hover': {
+                    bgcolor:
+                      tripFilter === 'upcoming'
+                        ? 'primary.main'
+                        : 'action.hover',
+                  },
+                }}
+              />
+              <Chip
+                label={`${t('ongoing')} (${ongoingCount})`}
+                onClick={() => setTripFilter('ongoing')}
+                color={tripFilter === 'ongoing' ? 'success' : 'default'}
+                variant={tripFilter === 'ongoing' ? 'filled' : 'outlined'}
+                sx={{
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  '&:hover': {
+                    bgcolor:
+                      tripFilter === 'ongoing'
+                        ? 'success.main'
+                        : 'action.hover',
+                  },
+                }}
+              />
+              <Chip
+                label={`${t('past')} (${pastCount})`}
+                onClick={() => setTripFilter('past')}
+                color={tripFilter === 'past' ? 'default' : 'default'}
+                variant={tripFilter === 'past' ? 'filled' : 'outlined'}
+                sx={{
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  '&:hover': {
+                    bgcolor:
+                      tripFilter === 'past'
+                        ? 'action.selected'
+                        : 'action.hover',
+                  },
+                }}
+              />
+            </Stack>
+
+            {/* City Filter with Search */}
+            {allCities.length > 0 && (
+              <Autocomplete
+                size="small"
+                options={allCities}
+                value={selectedCity}
+                onChange={(_, newValue) => setSelectedCity(newValue)}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    placeholder={t('searchByCity')}
+                    variant="outlined"
+                    InputProps={{
+                      ...params.InputProps,
+                      startAdornment: (
+                        <>
+                          <Search sx={{ color: 'text.secondary', mr: 1 }} />
+                          {params.InputProps.startAdornment}
+                        </>
+                      ),
+                    }}
+                  />
+                )}
+                sx={{
+                  width: { xs: '100%', sm: 300 },
+                  '& .MuiOutlinedInput-root': {
+                    bgcolor: 'background.paper',
+                  },
+                }}
+              />
+            )}
+
+            {/* View Mode Toggle */}
+            <Paper
+              elevation={0}
+              sx={{
+                border: '1px solid',
+                borderColor: 'divider',
+                display: 'flex',
+              }}
+            >
+              <Stack direction="row">
+                <Button
+                  size="small"
+                  onClick={() => setViewMode('grid')}
+                  sx={{
+                    minWidth: 40,
+                    px: 1.5,
+                    borderRadius: 0,
+                    bgcolor:
+                      viewMode === 'grid' ? 'primary.main' : 'transparent',
+                    color: viewMode === 'grid' ? 'white' : 'text.secondary',
+                    '&:hover': {
+                      bgcolor:
+                        viewMode === 'grid' ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                >
+                  <ViewModule />
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setViewMode('list')}
+                  sx={{
+                    minWidth: 40,
+                    px: 1.5,
+                    borderRadius: 0,
+                    borderLeft: '1px solid',
+                    borderColor: 'divider',
+                    bgcolor:
+                      viewMode === 'list' ? 'primary.main' : 'transparent',
+                    color: viewMode === 'list' ? 'white' : 'text.secondary',
+                    '&:hover': {
+                      bgcolor:
+                        viewMode === 'list' ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                >
+                  <ViewList />
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setViewMode('compact')}
+                  sx={{
+                    minWidth: 40,
+                    px: 1.5,
+                    borderRadius: 0,
+                    borderLeft: '1px solid',
+                    borderColor: 'divider',
+                    bgcolor:
+                      viewMode === 'compact' ? 'primary.main' : 'transparent',
+                    color: viewMode === 'compact' ? 'white' : 'text.secondary',
+                    '&:hover': {
+                      bgcolor:
+                        viewMode === 'compact'
+                          ? 'primary.dark'
+                          : 'action.hover',
+                    },
+                  }}
+                >
+                  <ViewComfy />
+                </Button>
+              </Stack>
+            </Paper>
+          </Stack>
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 3 }}>
+              {error}
+            </Alert>
+          )}
+
+          {!trips && !error && (
+            <Grid container spacing={3}>
+              {[1, 2, 3].map((n) => (
+                <Grid item xs={12} sm={6} md={4} key={n}>
+                  <Card>
+                    <CardContent>
+                      <Skeleton variant="text" width="60%" height={32} />
+                      <Skeleton
+                        variant="text"
+                        width="80%"
+                        height={24}
+                        sx={{ mt: 2 }}
+                      />
+                      <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+                        <Skeleton variant="rounded" width={80} height={24} />
+                        <Skeleton variant="rounded" width={80} height={24} />
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+          )}
+
+          {trips &&
+            filteredOwnedTrips.length === 0 &&
+            filteredSharedTrips.length === 0 && (
+              <Fade in timeout={800}>
+                <Paper
+                  elevation={0}
+                  sx={{
+                    textAlign: 'center',
+                    py: 12,
+                    px: 4,
+                    background: 'linear-gradient(135deg, rgba(248,250,252,1) 0%, rgba(241,245,249,1) 100%)',
+                    border: '2px dashed',
+                    borderColor: 'primary.main',
+                    borderRadius: 4,
+                    position: 'relative',
+                    overflow: 'hidden',
+                    '&::before': {
+                      content: '""',
+                      position: 'absolute',
+                      top: -50,
+                      right: -50,
+                      width: 200,
+                      height: 200,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle, rgba(14, 165, 233, 0.1) 0%, transparent 70%)',
+                    },
+                  }}
+                >
+                  <Luggage
+                    sx={{
+                      fontSize: 96,
+                      color: 'primary.main',
+                      mb: 3,
+                      opacity: 0.6,
+                      filter: 'drop-shadow(0 4px 8px rgba(14, 165, 233, 0.2))',
+                    }}
+                  />
+                  <Typography variant="h5" gutterBottom fontWeight={700}>
+                    {tripFilter === 'all'
+                      ? t('noTripsYet')
+                      : tripFilter === 'upcoming'
+                        ? t('noUpcomingTrips')
+                        : tripFilter === 'ongoing'
+                          ? t('noOngoingTrips')
+                          : t('noPastTrips')}
+                  </Typography>
+                  <Typography variant="body1" color="text.secondary" mb={4} sx={{ maxWidth: 500 }}>
+                    {tripFilter === 'all'
+                      ? t('startPlanningFirstTrip')
+                      : `${t('youDontHaveAny')} ${t(tripFilter)} ${t('trips')}`}
+                  </Typography>
+                  {tripFilter === 'all' && (
+                    <Button
+                      variant="contained"
+                      startIcon={<AddCircleOutline />}
+                      onClick={() => navigate('/trip/new')}
+                      size="large"
+                      sx={{
+                        px: 4,
+                        py: 1.5,
+                        borderRadius: 2,
+                        boxShadow: '0 4px 14px rgba(14, 165, 233, 0.3)',
+                        '&:hover': {
+                          transform: 'translateY(-2px)',
+                          boxShadow: '0 6px 20px rgba(14, 165, 233, 0.4)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      {t('createFirstTrip')}
+                    </Button>
+                  )}
+                </Paper>
+              </Fade>
+            )}
+
+          {/* Owned Trips Grid */}
+          <Grid container spacing={viewMode === 'compact' ? 2 : 3}>
+            {filteredOwnedTrips.map((trip, index) => (
+              <Grid
+                item
+                xs={12}
+                sm={viewMode === 'list' ? 12 : viewMode === 'compact' ? 6 : 6}
+                md={viewMode === 'list' ? 12 : viewMode === 'compact' ? 4 : 4}
+                lg={viewMode === 'list' ? 12 : viewMode === 'compact' ? 3 : 4}
+                key={trip._id || trip.id || index}
+              >
+                <Fade in timeout={500 + index * 100}>
+                  <Card
+                    sx={{
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: viewMode === 'list' ? 'row' : 'column',
+                      position: 'relative',
+                      transition: 'all 0.2s ease',
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      '&:hover': {
+                        transform:
+                          viewMode !== 'compact'
+                            ? 'translateY(-4px)'
+                            : 'translateY(-2px)',
+                        boxShadow: '0 12px 24px rgba(25, 118, 210, 0.12)',
+                        borderColor: 'primary.main',
+                      },
+                    }}
+                  >
+                    <CardActionArea
+                      component={Link}
+                      to={`/trips/${trip._id || trip.id}`}
+                      sx={{
+                        height: '100%',
+                        display: 'flex',
+                        flexDirection: viewMode === 'list' ? 'row' : 'column',
+                        alignItems: 'stretch',
+                      }}
+                    >
+                      <CardContent
+                        sx={{
+                          p: viewMode === 'compact' ? 2 : 3,
+                          height: '100%',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          flex: 1,
+                        }}
+                      >
+                        {/* Header with Icon */}
+                        <Stack
+                          direction="row"
+                          spacing={viewMode === 'compact' ? 1.5 : 2}
+                          alignItems="flex-start"
+                          mb={viewMode === 'compact' ? 1.5 : 2}
+                        >
+                                    {viewMode !== 'compact' && (
+                                      <Box
+                                        sx={{
+                                          p: 2,
+                                          borderRadius: 2.5,
+                                          background: 'linear-gradient(135deg, #0EA5E9 0%, #3B82F6 100%)',
+                                          color: 'white',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          boxShadow: '0 4px 12px rgba(14, 165, 233, 0.3)',
+                                          transition: 'all 0.3s ease',
+                                        }}
+                                      >
+                                        <Luggage sx={{ fontSize: 28 }} />
+                                      </Box>
+                                    )}
+                          <Box flex={1}>
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              alignItems="center"
+                              mb={0.5}
+                            >
+                                    {viewMode === 'compact' && (
+                                      <Luggage
+                                        sx={{ fontSize: 20, color: 'primary.main' }}
+                                      />
+                                    )}
+                              <Typography
+                                variant={
+                                  viewMode === 'compact' ? 'subtitle1' : 'h6'
+                                }
+                                fontWeight={600}
+                                sx={{
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp:
+                                    viewMode === 'compact' ? 1 : 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  flex: 1,
+                                }}
+                              >
+                                {trip.title || trip.name || t('untitledTrip')}
+                              </Typography>
+                              {viewMode !== 'list' && (
+                                <Chip
+                                  label={
+                                    getTripStatus(trip) === 'upcoming'
+                                      ? t('upcoming')
+                                      : getTripStatus(trip) === 'ongoing'
+                                        ? t('ongoing')
+                                        : t('past')
+                                  }
+                                  size="small"
+                                  color={
+                                    getTripStatus(trip) === 'upcoming'
+                                      ? 'primary'
+                                      : getTripStatus(trip) === 'ongoing'
+                                        ? 'success'
+                                        : 'default'
+                                  }
+                                  sx={{
+                                    height: 24,
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                  }}
+                                />
+                              )}
+                            </Stack>
+                          </Box>
+                        </Stack>
+
+                        {/* Date Range */}
+                        {trip.startDate && trip.endDate && (
+                                  <Box
+                                    sx={{
+                                      mb: viewMode === 'compact' ? 1.5 : 3,
+                                      p: viewMode === 'compact' ? 1.5 : 2,
+                                      borderRadius: 2,
+                                      background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.08) 0%, rgba(59, 130, 246, 0.05) 100%)',
+                                      border: '1px solid',
+                                      borderColor: 'rgba(14, 165, 233, 0.15)',
+                                      backdropFilter: 'blur(10px)',
+                                    }}
+                                  >
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              alignItems="center"
+                            >
+                                    <CalendarToday
+                                      sx={{
+                                        fontSize: viewMode === 'compact' ? 16 : 18,
+                                        color: 'primary.main',
+                                      }}
+                                    />
+                              <Typography
+                                variant={
+                                  viewMode === 'compact' ? 'caption' : 'body2'
+                                }
+                                fontWeight={500}
+                                color="text.primary"
+                              >
+                                {new Date(trip.startDate).toLocaleDateString(
+                                  'en-US',
+                                  {
+                                    month: 'short',
+                                    day: 'numeric',
+                                  }
+                                )}
+                                {' → '}
+                                {new Date(trip.endDate).toLocaleDateString(
+                                  'en-US',
+                                  {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                  }
+                                )}
+                              </Typography>
+                            </Stack>
+                          </Box>
+                        )}
+
+                        {/* Stats Chips */}
+                        {viewMode !== 'compact' && (
+                          <Box sx={{ mt: 'auto' }}>
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              flexWrap="wrap"
+                              gap={1}
+                            >
+                              {trip.flights?.length > 0 && (
+                                <Chip
+                                  size="small"
+                                  icon={<FlightTakeoff sx={{ fontSize: 16 }} />}
+                                  label={trip.flights.length}
+                                  sx={{
+                                    bgcolor: 'rgba(25, 118, 210, 0.1)',
+                                    color: 'primary.main',
+                                    fontWeight: 600,
+                                    border: '1px solid',
+                                    borderColor: 'rgba(25, 118, 210, 0.2)',
+                                    '& .MuiChip-icon': {
+                                      color: 'primary.main',
+                                    },
+                                  }}
+                                />
+                              )}
+                              {trip.hotels?.length > 0 && (
+                                <Chip
+                                  size="small"
+                                  icon={<Hotel sx={{ fontSize: 16 }} />}
+                                  label={trip.hotels.length}
+                                  sx={{
+                                    bgcolor: 'rgba(66, 165, 245, 0.1)',
+                                    color: 'secondary.main',
+                                    fontWeight: 600,
+                                    border: '1px solid',
+                                    borderColor: 'rgba(66, 165, 245, 0.2)',
+                                    '& .MuiChip-icon': {
+                                      color: 'secondary.main',
+                                    },
+                                  }}
+                                />
+                              )}
+                              {trip.attractions?.length > 0 && (
+                                <Chip
+                                  size="small"
+                                  icon={<Attractions sx={{ fontSize: 16 }} />}
+                                  label={trip.attractions.length}
+                                  sx={{
+                                    bgcolor: 'rgba(16, 185, 129, 0.1)',
+                                    color: 'success.main',
+                                    fontWeight: 600,
+                                    border: '1px solid',
+                                    borderColor: 'rgba(16, 185, 129, 0.2)',
+                                    '& .MuiChip-icon': {
+                                      color: 'success.main',
+                                    },
+                                  }}
+                                />
+                              )}
+                            </Stack>
+                          </Box>
+                        )}
+
+                        {/* Compact Mode - Simple Stats */}
+                        {viewMode === 'compact' && (
+                          <Stack
+                            direction="row"
+                            spacing={1.5}
+                            sx={{ mt: 'auto' }}
+                          >
+                            {trip.flights?.length > 0 && (
+                              <Stack
+                                direction="row"
+                                spacing={0.5}
+                                alignItems="center"
+                              >
+                                <Flight
+                                  sx={{ fontSize: 14, color: 'primary.main' }}
+                                />
+                                <Typography
+                                  variant="caption"
+                                  fontWeight={600}
+                                  color="text.secondary"
+                                >
+                                  {trip.flights.length}
+                                </Typography>
+                              </Stack>
+                            )}
+                            {trip.hotels?.length > 0 && (
+                              <Stack
+                                direction="row"
+                                spacing={0.5}
+                                alignItems="center"
+                              >
+                                <Hotel
+                                  sx={{
+                                    fontSize: 14,
+                                    color: 'secondary.main',
+                                  }}
+                                />
+                                <Typography
+                                  variant="caption"
+                                  fontWeight={600}
+                                  color="text.secondary"
+                                >
+                                  {trip.hotels.length}
+                                </Typography>
+                              </Stack>
+                            )}
+                            {trip.attractions?.length > 0 && (
+                              <Stack
+                                direction="row"
+                                spacing={0.5}
+                                alignItems="center"
+                              >
+                                <Attractions
+                                  sx={{ fontSize: 14, color: 'success.main' }}
+                                />
+                                <Typography
+                                  variant="caption"
+                                  fontWeight={600}
+                                  color="text.secondary"
+                                >
+                                  {trip.attractions.length}
+                                </Typography>
+                              </Stack>
+                            )}
+                          </Stack>
+                        )}
+                      </CardContent>
+                    </CardActionArea>
+                  </Card>
+                </Fade>
+              </Grid>
+            ))}
+          </Grid>
+
+          {/* Shared Trips Section */}
+          {filteredSharedTrips.length > 0 && (
+            <Box sx={{ mt: 6 }}>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                justifyContent="space-between"
+                alignItems={{ xs: 'flex-start', sm: 'center' }}
+                spacing={2}
+                mb={4}
+              >
+                <Box>
+                  <Stack
+                    direction="row"
+                    spacing={1.5}
+                    alignItems="center"
+                    mb={0.5}
+                  >
+                    <Typography variant="h5" component="h2" fontWeight={600}>
+                      {t('sharedWithYou')}
+                    </Typography>
+                    <Chip
+                      icon={<VisibilityIcon />}
+                      label={t('viewOnly')}
+                      size="small"
+                      sx={{
+                        bgcolor: 'rgba(66, 165, 245, 0.1)',
+                        color: 'secondary.main',
+                        border: '1px solid',
+                        borderColor: 'rgba(66, 165, 245, 0.2)',
+                      }}
+                    />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">
+                    {filteredSharedTrips.length}{' '}
+                    {filteredSharedTrips.length === 1 ? t('trip') : t('trips')}
+                  </Typography>
+                </Box>
+              </Stack>
+
+              <Grid container spacing={viewMode === 'compact' ? 2 : 3}>
+                {filteredSharedTrips.map((trip, index) => (
+                  <Grid
+                    item
+                    xs={12}
+                    sm={
+                      viewMode === 'list' ? 12 : viewMode === 'compact' ? 6 : 6
+                    }
+                    md={
+                      viewMode === 'list' ? 12 : viewMode === 'compact' ? 4 : 4
+                    }
+                    lg={
+                      viewMode === 'list' ? 12 : viewMode === 'compact' ? 3 : 4
+                    }
+                    key={trip._id || trip.id || index}
+                  >
+                    <Fade in timeout={500 + index * 100}>
+                      <Card
+                        sx={{
+                          height: '100%',
+                          display: 'flex',
+                          flexDirection: viewMode === 'list' ? 'row' : 'column',
+                          position: 'relative',
+                          transition: 'all 0.2s ease',
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          '&:hover': {
+                            transform:
+                              viewMode !== 'compact'
+                                ? 'translateY(-4px)'
+                                : 'translateY(-2px)',
+                            boxShadow: '0 12px 24px rgba(66, 165, 245, 0.12)',
+                            borderColor: 'secondary.main',
+                          },
+                        }}
+                      >
+                        {/* Shared badge */}
+                        <Box
+                          sx={{
+                            position: 'absolute',
+                            top: 12,
+                            right: 12,
+                            zIndex: 1,
+                          }}
+                        >
+                          <Chip
+                            icon={<VisibilityIcon sx={{ fontSize: 14 }} />}
+                            label={t('shared')}
+                            size="small"
+                            sx={{
+                              bgcolor: 'secondary.main',
+                              color: 'white',
+                              fontWeight: 600,
+                              fontSize: '0.7rem',
+                              height: 24,
+                            }}
+                          />
+                        </Box>
+
+                        <CardActionArea
+                          component={Link}
+                          to={`/trips/${trip._id || trip.id}`}
+                          sx={{
+                            height: '100%',
+                            display: 'flex',
+                            flexDirection:
+                              viewMode === 'list' ? 'row' : 'column',
+                            alignItems: 'stretch',
+                          }}
+                        >
+                          <CardContent
+                            sx={{
+                              p: viewMode === 'compact' ? 2 : 3,
+                              height: '100%',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              flex: 1,
+                            }}
+                          >
+                            {/* Header with Icon */}
+                            <Stack
+                              direction="row"
+                              spacing={viewMode === 'compact' ? 1.5 : 2}
+                              alignItems="flex-start"
+                              mb={viewMode === 'compact' ? 1.5 : 2}
+                            >
+                              {viewMode !== 'compact' && (
+                                <Box
+                                  sx={{
+                                    p: 1.5,
+                                    borderRadius: 2,
+                                    bgcolor: 'secondary.main',
+                                    color: 'white',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}
+                                >
+                                  <Luggage sx={{ fontSize: 24 }} />
+                                </Box>
+                              )}
+                              <Box flex={1}>
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  alignItems="center"
+                                  mb={0.5}
+                                >
+                                  {viewMode === 'compact' && (
+                                    <Luggage
+                                      sx={{
+                                        fontSize: 20,
+                                        color: 'secondary.main',
+                                      }}
+                                    />
+                                  )}
+                                  <Typography
+                                    variant={
+                                      viewMode === 'compact'
+                                        ? 'subtitle1'
+                                        : 'h6'
+                                    }
+                                    fontWeight={600}
+                                    sx={{
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      display: '-webkit-box',
+                                      WebkitLineClamp:
+                                        viewMode === 'compact' ? 1 : 2,
+                                      WebkitBoxOrient: 'vertical',
+                                      flex: 1,
+                                    }}
+                                  >
+                                    {trip.title || trip.name || t('untitledTrip')}
+                                  </Typography>
+                                  {viewMode !== 'list' && (
+                                    <Chip
+                                      label={
+                                        getTripStatus(trip) === 'upcoming'
+                                          ? t('upcoming')
+                                          : getTripStatus(trip) === 'ongoing'
+                                            ? t('ongoing')
+                                            : t('past')
+                                      }
+                                      size="small"
+                                      color={
+                                        getTripStatus(trip) === 'upcoming'
+                                          ? 'primary'
+                                          : getTripStatus(trip) === 'ongoing'
+                                            ? 'success'
+                                            : 'default'
+                                      }
+                                      sx={{
+                                        height: 24,
+                                        fontSize: '0.75rem',
+                                        fontWeight: 600,
+                                      }}
+                                    />
+                                  )}
+                                </Stack>
+                              </Box>
+                            </Stack>
+
+                            {/* Date Range */}
+                            {trip.startDate && trip.endDate && (
+                              <Box
+                                sx={{
+                                  mb: viewMode === 'compact' ? 1.5 : 3,
+                                  p: viewMode === 'compact' ? 1 : 1.5,
+                                  borderRadius: 1.5,
+                                  bgcolor: 'rgba(66, 165, 245, 0.05)',
+                                  border: '1px solid',
+                                  borderColor: 'rgba(66, 165, 245, 0.1)',
+                                }}
+                              >
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  alignItems="center"
+                                >
+                                  <CalendarToday
+                                    sx={{
+                                      fontSize:
+                                        viewMode === 'compact' ? 16 : 18,
+                                      color: 'secondary.main',
+                                    }}
+                                  />
+                                  <Typography
+                                    variant={
+                                      viewMode === 'compact'
+                                        ? 'caption'
+                                        : 'body2'
+                                    }
+                                    fontWeight={500}
+                                    color="text.primary"
+                                  >
+                                    {new Date(
+                                      trip.startDate
+                                    ).toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric',
+                                    })}
+                                    {' → '}
+                                    {new Date(trip.endDate).toLocaleDateString(
+                                      'en-US',
+                                      {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        year: 'numeric',
+                                      }
+                                    )}
+                                  </Typography>
+                                </Stack>
+                              </Box>
+                            )}
+
+                            {/* Stats Chips - Full Mode */}
+                            {viewMode !== 'compact' && (
+                              <Box sx={{ mt: 'auto' }}>
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  flexWrap="wrap"
+                                  gap={1}
+                                >
+                                  {trip.flights?.length > 0 && (
+                                    <Chip
+                                      size="small"
+                                      icon={<FlightTakeoff sx={{ fontSize: 16 }} />}
+                                      label={trip.flights.length}
+                                      sx={{
+                                        bgcolor: 'rgba(25, 118, 210, 0.1)',
+                                        color: 'primary.main',
+                                        fontWeight: 600,
+                                        border: '1px solid',
+                                        borderColor: 'rgba(25, 118, 210, 0.2)',
+                                        '& .MuiChip-icon': {
+                                          color: 'primary.main',
+                                        },
+                                      }}
+                                    />
+                                  )}
+                                  {trip.hotels?.length > 0 && (
+                                    <Chip
+                                      size="small"
+                                      icon={<Hotel sx={{ fontSize: 16 }} />}
+                                      label={trip.hotels.length}
+                                      sx={{
+                                        bgcolor: 'rgba(66, 165, 245, 0.1)',
+                                        color: 'secondary.main',
+                                        fontWeight: 600,
+                                        border: '1px solid',
+                                        borderColor: 'rgba(66, 165, 245, 0.2)',
+                                        '& .MuiChip-icon': {
+                                          color: 'secondary.main',
+                                        },
+                                      }}
+                                    />
+                                  )}
+                                  {trip.attractions?.length > 0 && (
+                                    <Chip
+                                      size="small"
+                                      icon={
+                                        <Attractions sx={{ fontSize: 16 }} />
+                                      }
+                                      label={trip.attractions.length}
+                                      sx={{
+                                        bgcolor: 'rgba(16, 185, 129, 0.1)',
+                                        color: 'success.main',
+                                        fontWeight: 600,
+                                        border: '1px solid',
+                                        borderColor: 'rgba(16, 185, 129, 0.2)',
+                                        '& .MuiChip-icon': {
+                                          color: 'success.main',
+                                        },
+                                      }}
+                                    />
+                                  )}
+                                </Stack>
+                              </Box>
+                            )}
+
+                            {/* Stats Compact Mode */}
+                            {viewMode === 'compact' && (
+                              <Stack
+                                direction="row"
+                                spacing={1.5}
+                                sx={{ mt: 'auto' }}
+                              >
+                                    {trip.flights?.length > 0 && (
+                                      <Stack
+                                        direction="row"
+                                        spacing={0.5}
+                                        alignItems="center"
+                                      >
+                                        <FlightTakeoff
+                                          sx={{
+                                            fontSize: 14,
+                                            color: 'primary.main',
+                                          }}
+                                        />
+                                    <Typography
+                                      variant="caption"
+                                      fontWeight={600}
+                                      color="text.secondary"
+                                    >
+                                      {trip.flights.length}
+                                    </Typography>
+                                  </Stack>
+                                )}
+                                {trip.hotels?.length > 0 && (
+                                  <Stack
+                                    direction="row"
+                                    spacing={0.5}
+                                    alignItems="center"
+                                  >
+                                    <Hotel
+                                      sx={{
+                                        fontSize: 14,
+                                        color: 'secondary.main',
+                                      }}
+                                    />
+                                    <Typography
+                                      variant="caption"
+                                      fontWeight={600}
+                                      color="text.secondary"
+                                    >
+                                      {trip.hotels.length}
+                                    </Typography>
+                                  </Stack>
+                                )}
+                                {trip.attractions?.length > 0 && (
+                                  <Stack
+                                    direction="row"
+                                    spacing={0.5}
+                                    alignItems="center"
+                                  >
+                                    <Attractions
+                                      sx={{
+                                        fontSize: 14,
+                                        color: 'success.main',
+                                      }}
+                                    />
+                                    <Typography
+                                      variant="caption"
+                                      fontWeight={600}
+                                      color="text.secondary"
+                                    >
+                                      {trip.attractions.length}
+                                    </Typography>
+                                  </Stack>
+                                )}
+                              </Stack>
+                            )}
+                          </CardContent>
+                        </CardActionArea>
+                      </Card>
+                    </Fade>
+                  </Grid>
+                ))}
+              </Grid>
+            </Box>
+          )}
+         </Box>
+       )}
+     </Container>
+   );
+ }

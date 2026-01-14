@@ -1101,7 +1101,24 @@ CURRENT USER TRIPS: ${JSON.stringify(
       }))
     )}
 
-IMPORTANT: When suggesting itineraries, CHECK existingAttractions first!
+IMPORTANT TRIP SELECTION RULES:
+- If user has MULTIPLE trips, ALWAYS ask which trip they want to work on
+- When user asks "הוסף מסעדה" / "add restaurant" without specifying trip:
+  1. Show list of their trips with dates
+  2. Ask "לאיזה טיול?" / "Which trip?"
+  3. Wait for user to choose before calling functions
+- When user says trip name or dates → Use select_trip function
+- Never assume which trip - ALWAYS confirm first
+- After selecting trip, remember it for the conversation context
+
+TRIP SELECTION EXAMPLES:
+User: "הוסף מסעדה Nobu"
+You: "נהדר! לאיזה טיול?\n\n🌍 **Dubai Honeymoon** (Jan 2-5)\n🌍 **Paris Weekend** (Feb 10-12)"
+
+User: "לדובאי"
+You: [Call select_trip, then proceed to add restaurant]
+
+IMPORTANT: When adding activities, CHECK existingAttractions first!
 - Don't suggest places that are already added
 - Acknowledge what's already there: "Burj Khalifa is in your plan ✓"
 - Suggest NEW places that complement what they have
@@ -1436,6 +1453,29 @@ Make users feel taken care of, not interrogated.
                 notes: { type: "string" },
               },
               required: ["tripId", "type", "name"],
+            },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "select_trip",
+            description:
+              "Select which trip to work on. Use when user wants to switch between trips or specify which trip to add items to. Show user their trips and let them choose.",
+            parameters: {
+              type: "object",
+              properties: {
+                tripId: {
+                  type: "string",
+                  description:
+                    "The ID of the trip to select. If not provided, show list of available trips.",
+                },
+                reason: {
+                  type: "string",
+                  description:
+                    "Why selecting this trip (e.g., 'User wants to add activities to Paris trip')",
+                },
+              },
             },
           },
         },
@@ -2071,6 +2111,126 @@ Make users feel taken care of, not interrogated.
         } catch (err) {
           console.error("Error adding ride:", err);
           responseText = "I couldn't add the ride due to an error.";
+        }
+      } else if (functionName === "select_trip") {
+        try {
+          const tripId = functionArgs.tripId;
+
+          if (tripId) {
+            // User selected a specific trip
+            const trip = await db
+              .collection("trips")
+              .findOne({ _id: new ObjectId(tripId) });
+
+            if (!trip) {
+              responseText = "לא מצאתי את הטיול הזה. בוא נבחר מחדש.";
+            } else {
+              const startDate = new Date(trip.startDate).toLocaleDateString(
+                "en-US",
+                { month: "short", day: "numeric" }
+              );
+              const endDate = new Date(trip.endDate).toLocaleDateString(
+                "en-US",
+                { month: "short", day: "numeric", year: "numeric" }
+              );
+
+              responseText = `✅ נהדר! אנחנו עובדים על:\n\n🌍 **${trip.name}**\n📅 ${startDate} - ${endDate}\n\n`;
+
+              // Show what's already in the trip
+              const hasItems =
+                (trip.flights?.length || 0) +
+                (trip.hotels?.length || 0) +
+                (trip.attractions?.length || 0) +
+                (trip.rides?.length || 0);
+
+              if (hasItems > 0) {
+                responseText += "**בטיול כבר יש:**\n";
+                if (trip.flights?.length)
+                  responseText += `✈️ ${trip.flights.length} טיסות\n`;
+                if (trip.hotels?.length)
+                  responseText += `🏨 ${trip.hotels.length} מלונות\n`;
+                if (trip.attractions?.length)
+                  responseText += `🎯 ${trip.attractions.length} אטרקציות\n`;
+                if (trip.rides?.length)
+                  responseText += `🚗 ${trip.rides.length} נסיעות\n`;
+                responseText += "\n";
+              }
+
+              responseText += "מה תרצה להוסיף?";
+
+              action = {
+                type: "TRIP_SELECTED",
+                tripId: tripId,
+                data: {
+                  name: trip.name,
+                  dates: `${startDate} - ${endDate}`,
+                },
+              };
+            }
+          } else {
+            // Show list of trips for user to choose
+            if (trips.length === 0) {
+              responseText =
+                "אין לך טיולים פעילים כרגע. בוא ניצור טיול חדש! לאן אתה רוצה לנסוע?";
+            } else if (trips.length === 1) {
+              // Only one trip, select it automatically
+              const trip = trips[0];
+              const startDate = new Date(trip.startDate).toLocaleDateString(
+                "en-US",
+                { month: "short", day: "numeric" }
+              );
+              const endDate = new Date(trip.endDate).toLocaleDateString(
+                "en-US",
+                { month: "short", day: "numeric", year: "numeric" }
+              );
+
+              responseText = `נעבוד על הטיול שלך:\n\n🌍 **${trip.name}**\n📅 ${startDate} - ${endDate}\n\nמה תרצה להוסיף?`;
+
+              action = {
+                type: "TRIP_SELECTED",
+                tripId: trip._id,
+                data: {
+                  name: trip.name,
+                  dates: `${startDate} - ${endDate}`,
+                },
+              };
+            } else {
+              // Multiple trips - ask user to choose
+              responseText = "יש לך כמה טיולים. לאיזה טיול תרצה להוסיף?\n\n";
+
+              trips.forEach((trip, index) => {
+                const startDate = new Date(
+                  trip.startDate
+                ).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                });
+                const endDate = new Date(trip.endDate).toLocaleDateString(
+                  "en-US",
+                  { month: "short", day: "numeric", year: "numeric" }
+                );
+
+                const isPast = new Date(trip.endDate) < new Date();
+                const status = isPast ? " (עבר)" : "";
+
+                responseText += `${index + 1}. 🌍 **${trip.name}**${status}\n   📅 ${startDate} - ${endDate}\n\n`;
+              });
+
+              responseText +=
+                'ענה עם המספר או שם הטיול (למשל: "1" או "דובאי")';
+
+              action = {
+                type: "SHOW_TRIP_LIST",
+                data: trips.map((t) => ({
+                  id: t._id,
+                  name: t.name,
+                })),
+              };
+            }
+          }
+        } catch (err) {
+          console.error("Error selecting trip:", err);
+          responseText = "אירעה שגיאה בבחירת הטיול. נסה שוב.";
         }
       } else if (functionName === "validate_trip") {
         try {
