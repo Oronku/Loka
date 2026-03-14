@@ -211,7 +211,7 @@ router.post("/", async (req, res) => {
 
     // Check if user creating the chat is included
     const userInParticipants = participants.some(
-      (p) => p.userId === req.user.id
+      (p) => p.userId === req.user.id,
     );
     if (!userInParticipants) {
       return res
@@ -269,7 +269,7 @@ router.post("/", async (req, res) => {
       // Verify all participants are trip members
       const tripMemberIds = [trip.userId, ...(trip.sharedWith || [])];
       const invalidParticipants = participants.filter(
-        (p) => !tripMemberIds.includes(p.userId)
+        (p) => !tripMemberIds.includes(p.userId),
       );
 
       if (invalidParticipants.length > 0) {
@@ -420,7 +420,7 @@ router.get("/:chatId", async (req, res) => {
 
     // Verify user is a participant
     const isParticipant = chat.participants.some(
-      (p) => p.userId === req.user.id
+      (p) => p.userId === req.user.id,
     );
 
     if (!isParticipant) {
@@ -463,7 +463,7 @@ router.get("/:chatId/messages", async (req, res) => {
 
     // Verify user is a participant
     const isParticipant = chat.participants.some(
-      (p) => p.userId === req.user.id
+      (p) => p.userId === req.user.id,
     );
 
     if (!isParticipant) {
@@ -569,7 +569,7 @@ router.post("/:chatId/messages", async (req, res) => {
           lastMessage: text.substring(0, 100), // Preview of message
           ...unreadUpdates,
         },
-      }
+      },
     );
 
     // If AI chat, trigger AI response
@@ -616,7 +616,7 @@ router.put("/:chatId/read", async (req, res) => {
 
     // Verify user is a participant
     const isParticipant = chat.participants.some(
-      (p) => p.userId === req.user.id
+      (p) => p.userId === req.user.id,
     );
 
     if (!isParticipant) {
@@ -645,7 +645,7 @@ router.put("/:chatId/read", async (req, res) => {
         $set: {
           [`unreadCount.${req.user.id}`]: 0,
         },
-      }
+      },
     );
 
     res.json({
@@ -707,7 +707,7 @@ router.put("/:chatId/status", async (req, res) => {
           status,
           updatedAt: new Date(),
         },
-      }
+      },
     );
 
     res.json({
@@ -752,7 +752,7 @@ router.post("/:chatId/participants", async (req, res) => {
 
     // Check if user is already a participant
     const existingParticipant = chat.participants.find(
-      (p) => p.userId === userId
+      (p) => p.userId === userId,
     );
     if (existingParticipant) {
       return res.status(400).json({ error: "User is already a participant" });
@@ -788,7 +788,7 @@ router.post("/:chatId/participants", async (req, res) => {
       {
         $push: { participants: newParticipant },
         $set: { updatedAt: new Date() },
-      }
+      },
     );
 
     res.json({
@@ -834,7 +834,7 @@ router.delete("/:chatId/participants/:userId", async (req, res) => {
       {
         $pull: { participants: { userId: userId } },
         $set: { updatedAt: new Date() },
-      }
+      },
     );
 
     res.json({
@@ -896,7 +896,7 @@ router.post("/:chatId/mark-sold", async (req, res) => {
           lockedBy: userId,
           updatedAt: new Date(),
         },
-      }
+      },
     );
 
     // Send system message to buyer
@@ -923,7 +923,7 @@ router.post("/:chatId/mark-sold", async (req, res) => {
             lastMessage: systemMessage.text,
             lastMessageAt: new Date(),
           },
-        }
+        },
       );
     }
 
@@ -938,7 +938,7 @@ router.post("/:chatId/mark-sold", async (req, res) => {
             soldTo: buyer ? buyer.userId : null,
             updatedAt: new Date(),
           },
-        }
+        },
       );
     }
 
@@ -1034,7 +1034,7 @@ async function processAiResponse(db, chatId, userId, userMessage) {
             "rides.type": 1,
             "attractions.name": 1,
           },
-        }
+        },
       )
       .limit(10) // Only get recent trips
       .toArray();
@@ -1065,7 +1065,7 @@ async function processAiResponse(db, chatId, userId, userMessage) {
 
     console.log(
       "Sending messages to OpenAI:",
-      JSON.stringify(previousMessages, null, 2)
+      JSON.stringify(previousMessages, null, 2),
     );
 
     const systemPrompt = `
@@ -1098,7 +1098,7 @@ CURRENT USER TRIPS: ${JSON.stringify(
           checkOut: h.checkOut,
         })),
         isPast: new Date(t.endDate) < new Date(),
-      }))
+      })),
     )}
 
 IMPORTANT TRIP SELECTION RULES:
@@ -1646,7 +1646,7 @@ Make users feel taken care of, not interrogated.
 
     console.log(
       "AI response type:",
-      responseMessage.tool_calls ? "FUNCTION_CALL" : "TEXT_ONLY"
+      responseMessage.tool_calls ? "FUNCTION_CALL" : "TEXT_ONLY",
     );
     console.log("AI content:", responseText);
 
@@ -1691,11 +1691,11 @@ Make users feel taken care of, not interrogated.
 
           const startDate = new Date(functionArgs.startDate).toLocaleDateString(
             "en-US",
-            { month: "short", day: "numeric" }
+            { month: "short", day: "numeric" },
           );
           const endDate = new Date(functionArgs.endDate).toLocaleDateString(
             "en-US",
-            { month: "short", day: "numeric", year: "numeric" }
+            { month: "short", day: "numeric", year: "numeric" },
           );
 
           responseText = `✈️ **${functionArgs.name}**\n📍 ${functionArgs.destination}\n📅 ${startDate} - ${endDate}\n\nYour trip is ready! What would you like to add first?`;
@@ -1722,7 +1722,7 @@ Make users feel taken care of, not interrogated.
             .collection("trips")
             .updateOne(
               { _id: new ObjectId(tripId) },
-              { $push: { flights: flight } }
+              { $push: { flights: flight } },
             );
 
           action = {
@@ -1732,7 +1732,7 @@ Make users feel taken care of, not interrogated.
 
           const flightDate = new Date(functionArgs.date).toLocaleDateString(
             "en-US",
-            { month: "short", day: "numeric", year: "numeric" }
+            { month: "short", day: "numeric", year: "numeric" },
           );
           responseText = `✈️ **${functionArgs.airline} ${functionArgs.flightNumber}**\n🛫 ${functionArgs.departure} → 🛬 ${functionArgs.arrival}\n📅 ${flightDate} at ${functionArgs.time}\n\nFlight added! Need a ride to the airport?`;
         } catch (err) {
@@ -1774,7 +1774,7 @@ Make users feel taken care of, not interrogated.
                 if (placeDetails) {
                   cachePlace(searchQuery, placeDetails);
                   console.log(
-                    `✅ Found & cached: ${placeDetails.name} at ${placeDetails.address}`
+                    `✅ Found & cached: ${placeDetails.name} at ${placeDetails.address}`,
                   );
                 }
               }
@@ -1797,7 +1797,7 @@ Make users feel taken care of, not interrogated.
             (attr) =>
               attr.name === functionArgs.name &&
               attr.scheduledDate === functionArgs.date &&
-              attr.scheduledTime === functionArgs.time
+              attr.scheduledTime === functionArgs.time,
           );
 
           if (isDuplicate) {
@@ -1824,7 +1824,7 @@ Make users feel taken care of, not interrogated.
               .collection("trips")
               .updateOne(
                 { _id: new ObjectId(tripId) },
-                { $push: { attractions: activity } }
+                { $push: { attractions: activity } },
               );
 
             action = {
@@ -1874,11 +1874,11 @@ Make users feel taken care of, not interrogated.
           const activitiesToAdd = functionArgs.activities || [];
 
           console.log(
-            `🔄 Adding ${activitiesToAdd.length} activities in batch...`
+            `🔄 Adding ${activitiesToAdd.length} activities in batch...`,
           );
           console.log(
             "📋 Activities received from AI:",
-            JSON.stringify(activitiesToAdd, null, 2)
+            JSON.stringify(activitiesToAdd, null, 2),
           );
 
           const addedItems = [];
@@ -1899,7 +1899,7 @@ Make users feel taken care of, not interrogated.
               const isDuplicate = existingTrip?.attractions?.some(
                 (attr) =>
                   attr.name === activityData.name &&
-                  attr.scheduledDate === activityData.date
+                  attr.scheduledDate === activityData.date,
               );
 
               if (isDuplicate) {
@@ -1924,13 +1924,13 @@ Make users feel taken care of, not interrogated.
                   console.log(`💾 Cache hit for: ${searchQuery}`);
                 } else {
                   console.log(
-                    `🌐 Calling Google Places API for: ${searchQuery}`
+                    `🌐 Calling Google Places API for: ${searchQuery}`,
                   );
                   placeDetails = await googleApi.searchPlaceByText(searchQuery);
                   if (placeDetails) {
                     cachePlace(searchQuery, placeDetails);
                     console.log(
-                      `✅ Found: ${placeDetails.name} at ${placeDetails.address}`
+                      `✅ Found: ${placeDetails.name} at ${placeDetails.address}`,
                     );
                   } else {
                     console.log(`❌ Not found: ${searchQuery}`);
@@ -1941,7 +1941,7 @@ Make users feel taken care of, not interrogated.
                   enrichedLocation = placeDetails.address;
                   rating = placeDetails.rating;
                   console.log(
-                    `📍 Enriched location: ${enrichedLocation}, Rating: ${rating}`
+                    `📍 Enriched location: ${enrichedLocation}, Rating: ${rating}`,
                   );
                 } else {
                   console.log(`⚠️ No place details for: ${activityData.name}`);
@@ -1969,7 +1969,7 @@ Make users feel taken care of, not interrogated.
                 .collection("trips")
                 .updateOne(
                   { _id: new ObjectId(tripId) },
-                  { $push: { attractions: activity } }
+                  { $push: { attractions: activity } },
                 );
 
               addedItems.push({
@@ -1982,7 +1982,7 @@ Make users feel taken care of, not interrogated.
               });
 
               console.log(
-                `✅ Added: ${activity.name} | Location: ${enrichedLocation || "N/A"} | Rating: ${rating || "N/A"}`
+                `✅ Added: ${activity.name} | Location: ${enrichedLocation || "N/A"} | Rating: ${rating || "N/A"}`,
               );
             } catch (itemErr) {
               console.error(`Error adding ${activityData.name}:`, itemErr);
@@ -2028,7 +2028,7 @@ Make users feel taken care of, not interrogated.
           const checkInDate = new Date(functionArgs.checkIn);
           const checkOutDate = new Date(functionArgs.checkOut);
           const nights = Math.ceil(
-            (checkOutDate - checkInDate) / (1000 * 60 * 60 * 24)
+            (checkOutDate - checkInDate) / (1000 * 60 * 60 * 24),
           );
 
           const hotel = {
@@ -2049,7 +2049,7 @@ Make users feel taken care of, not interrogated.
             .collection("trips")
             .updateOne(
               { _id: new ObjectId(tripId) },
-              { $push: { hotels: hotel } }
+              { $push: { hotels: hotel } },
             );
 
           action = {
@@ -2058,10 +2058,10 @@ Make users feel taken care of, not interrogated.
           };
 
           const checkInFormatted = new Date(
-            functionArgs.checkIn
+            functionArgs.checkIn,
           ).toLocaleDateString("en-US", { month: "short", day: "numeric" });
           const checkOutFormatted = new Date(
-            functionArgs.checkOut
+            functionArgs.checkOut,
           ).toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
@@ -2091,7 +2091,7 @@ Make users feel taken care of, not interrogated.
             .collection("trips")
             .updateOne(
               { _id: new ObjectId(tripId) },
-              { $push: { rides: ride } }
+              { $push: { rides: ride } },
             );
 
           action = {
@@ -2101,7 +2101,7 @@ Make users feel taken care of, not interrogated.
 
           const rideDate = new Date(functionArgs.date).toLocaleDateString(
             "en-US",
-            { month: "short", day: "numeric", year: "numeric" }
+            { month: "short", day: "numeric", year: "numeric" },
           );
           const duration = functionArgs.duration
             ? ` (~${functionArgs.duration})`
@@ -2127,11 +2127,11 @@ Make users feel taken care of, not interrogated.
             } else {
               const startDate = new Date(trip.startDate).toLocaleDateString(
                 "en-US",
-                { month: "short", day: "numeric" }
+                { month: "short", day: "numeric" },
               );
               const endDate = new Date(trip.endDate).toLocaleDateString(
                 "en-US",
-                { month: "short", day: "numeric", year: "numeric" }
+                { month: "short", day: "numeric", year: "numeric" },
               );
 
               responseText = `✅ נהדר! אנחנו עובדים על:\n\n🌍 **${trip.name}**\n📅 ${startDate} - ${endDate}\n\n`;
@@ -2177,11 +2177,11 @@ Make users feel taken care of, not interrogated.
               const trip = trips[0];
               const startDate = new Date(trip.startDate).toLocaleDateString(
                 "en-US",
-                { month: "short", day: "numeric" }
+                { month: "short", day: "numeric" },
               );
               const endDate = new Date(trip.endDate).toLocaleDateString(
                 "en-US",
-                { month: "short", day: "numeric", year: "numeric" }
+                { month: "short", day: "numeric", year: "numeric" },
               );
 
               responseText = `נעבוד על הטיול שלך:\n\n🌍 **${trip.name}**\n📅 ${startDate} - ${endDate}\n\nמה תרצה להוסיף?`;
@@ -2199,15 +2199,16 @@ Make users feel taken care of, not interrogated.
               responseText = "יש לך כמה טיולים. לאיזה טיול תרצה להוסיף?\n\n";
 
               trips.forEach((trip, index) => {
-                const startDate = new Date(
-                  trip.startDate
-                ).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                });
+                const startDate = new Date(trip.startDate).toLocaleDateString(
+                  "en-US",
+                  {
+                    month: "short",
+                    day: "numeric",
+                  },
+                );
                 const endDate = new Date(trip.endDate).toLocaleDateString(
                   "en-US",
-                  { month: "short", day: "numeric", year: "numeric" }
+                  { month: "short", day: "numeric", year: "numeric" },
                 );
 
                 const isPast = new Date(trip.endDate) < new Date();
@@ -2216,8 +2217,7 @@ Make users feel taken care of, not interrogated.
                 responseText += `${index + 1}. 🌍 **${trip.name}**${status}\n   📅 ${startDate} - ${endDate}\n\n`;
               });
 
-              responseText +=
-                'ענה עם המספר או שם הטיול (למשל: "1" או "דובאי")';
+              responseText += 'ענה עם המספר או שם הטיול (למשל: "1" או "דובאי")';
 
               action = {
                 type: "SHOW_TRIP_LIST",
@@ -2253,7 +2253,7 @@ Make users feel taken care of, not interrogated.
               const hasArrivalRide = (trip.rides || []).some(
                 (r) =>
                   r.pickup.toLowerCase().includes("airport") &&
-                  r.dropoff.toLowerCase().includes("hotel")
+                  r.dropoff.toLowerCase().includes("hotel"),
               );
               if (!hasArrivalRide) {
                 issues.push("⚠️ Missing airport → hotel ride");
@@ -2262,7 +2262,7 @@ Make users feel taken care of, not interrogated.
               const hasDepartureRide = (trip.rides || []).some(
                 (r) =>
                   r.pickup.toLowerCase().includes("hotel") &&
-                  r.dropoff.toLowerCase().includes("airport")
+                  r.dropoff.toLowerCase().includes("airport"),
               );
               if (!hasDepartureRide) {
                 issues.push("⚠️ Missing hotel → airport ride");
@@ -2273,7 +2273,7 @@ Make users feel taken care of, not interrogated.
             (trip.hotels || []).forEach((hotel, idx) => {
               if (!hotel.arrivalTime) {
                 issues.push(
-                  `⚠️ Hotel "${hotel.name}" has no check-in time (default should be 15:00)`
+                  `⚠️ Hotel "${hotel.name}" has no check-in time (default should be 15:00)`,
                 );
               }
             });
@@ -2289,7 +2289,7 @@ Make users feel taken care of, not interrogated.
 
               if (!inHotelRange && (trip.hotels || []).length > 0) {
                 issues.push(
-                  `⚠️ Activity "${attr.name}" on ${attr.scheduledDate} is outside hotel stay dates`
+                  `⚠️ Activity "${attr.name}" on ${attr.scheduledDate} is outside hotel stay dates`,
                 );
               }
             });
@@ -2338,7 +2338,7 @@ Make users feel taken care of, not interrogated.
             updatedAt: new Date(),
           },
           $inc: { [`unreadCount.${userId}`]: 1 },
-        }
+        },
       );
 
       const totalTime = Date.now() - startTime;

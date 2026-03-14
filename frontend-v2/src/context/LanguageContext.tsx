@@ -546,7 +546,8 @@ const translations: Record<Language, Record<string, string>> = {
     paidInFull: 'שולם במלואו',
     makePayment: 'בצע תשלום',
     errorLoadingTrips: 'שגיאה בטעינת הטיולים',
-    noTripsCreated: 'עדיין לא יצרת טיולים. התחל על ידי לחיצה על "צור טיול מאורגן"',
+    noTripsCreated:
+      'עדיין לא יצרת טיולים. התחל על ידי לחיצה על "צור טיול מאורגן"',
     searchTrips: 'חיפוש טיולים...',
     thailand: 'תאילנד',
     greece: 'יוון',
