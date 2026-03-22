@@ -130,7 +130,11 @@ export function SearchAutocomplete<T>(props: SearchAutocompleteProps<T>) {
             component="li"
             key={key}
             {...rest}
-            sx={{ display: 'flex', flexDirection: 'column' }}
+             sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              justifySelf: 'flex-start',
+            }}
           >
             <Typography variant="body2">{getLabel(option as T)}</Typography>
             {renderOptionExtra && (
