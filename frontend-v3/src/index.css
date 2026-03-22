@@ -6,6 +6,18 @@
   * {
     @apply border-gray-200;
   }
+  
+  html {
+    overflow-y: scroll;
+  }
+  
+  html, body, #root {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    overflow-x: hidden;
+  }
+  
   body {
     @apply bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 text-gray-900;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;

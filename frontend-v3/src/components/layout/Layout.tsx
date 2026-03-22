@@ -1,13 +1,13 @@
 import { Box, Container } from '@mui/material';
-import { ChatProvider } from '../context/ChatContext';
-import { useAuth } from '../context/AuthContext';
+import { ChatProvider } from '../../context/ChatContext';
+import { useAuth } from '../../context/AuthContext';
 import { useState, useEffect } from 'react';
-import ChatFab from './ChatFab';
-import ChatSidebar from './ChatSidebar';
-import ChatWindowModern from './ChatWindowModern';
-import ChatContextSelector from './ChatContextSelector';
-import { Header } from '';
-import { chatApi } from '../services/chatApi';
+import ChatFab from '../ChatFab';
+import ChatSidebar from '../ChatSidebar';
+import ChatWindowModern from '../ChatWindowModern';
+import ChatContextSelector from '../ChatContextSelector';
+import { Header } from './header';
+import { chatApi } from '../../services/chatApi';
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -63,7 +63,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <ChatProvider>
-      <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', width: '100%', overflow: 'hidden' }}>
         <Header totalUnreadCount={totalUnreadCount} />
 
         {/* Main Content */}
