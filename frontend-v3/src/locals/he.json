@@ -228,7 +228,7 @@
   "reviewAndCreate": "סקור וצור",
   "tripSummary": "סיכום הטיול",
   "reviewDetails": "סקור את הפרטים ולחץ על צור טיול",
-  "tripDetails": "פרטי הטיול",
+  "tripDetailsLabel": "פרטי הטיול",
   "travelDates": "תאריכי הנסיעה",
   "tripCreationSuccess": "הטיול נוצר בהצלחה!",
   "goToTrip": "עבור לטיול",
@@ -615,5 +615,11 @@
   "searchButton": "חפש",
   "oopsSomethingWrong": "אופס! משהו השתבש",
   "unexpectedErrorMessage": "אירעה שגיאה בלתי צפויה. אנחנו עובדים על זה.",
-  "nameOptional": "שם (אופציונלי)"
+  "nameOptional": "שם (אופציונלי)",
+  "tripDetails": {
+    "addFlight": "הוספת טיסה",
+    "addHotel": "הוספת מלון",
+    "searchHotel": "חפש מלון אחר (אופציונלי)",
+    "searchHotelPlaceholder": "חיפוש מלון..."
+  }
 }

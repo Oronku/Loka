@@ -46,7 +46,7 @@ import {
   AddHotelForm,
   AddRideForm,
   AddAttractionForm,
-} from '../components/AddItemForms';
+} from '../components/forms/AddItemForms';
 import GenerateRide from '../components/GenerateRide';
 import TripMapSplitView from '../components/TripMapSplitView';
 import EmptyTripState from '../components/EmptyTripState';
@@ -582,7 +582,7 @@ export default function TripDetails() {
 
       // Check if chat already exists for this trip
       const response = await fetch(
-        `http://localhost:3001/api/chats?contextType=trip&contextId=${trip._id}`,
+        `http://localhost:3001/api/chats?contextType=trip&contextId=${trip.id}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -627,10 +627,10 @@ export default function TripDetails() {
         },
         body: JSON.stringify({
           contextType: 'trip',
-          contextId: trip._id,
+          contextId: trip.id,
           participants,
           metadata: {
-            tripId: trip._id,
+            tripId: trip.id,
             tripName: trip.name,
           },
         }),
@@ -5284,224 +5284,24 @@ export default function TripDetails() {
             maxWidth="md"
             fullWidth
           >
-            <DialogTitle>Edit Flight</DialogTitle>
-            <DialogContent>
-              <Stack spacing={2} sx={{ mt: 1 }}>
-                <TextField
-                  fullWidth
-                  label="Airline"
-                  value={editItem.data.airline || ''}
-                  onChange={(e) =>
-                    setEditItem({
-                      ...editItem,
-                      data: { ...editItem.data, airline: e.target.value },
-                    })
-                  }
-                />
-                <TextField
-                  fullWidth
-                  label="Flight Number"
-                  value={editItem.data.flightNumber || ''}
-                  onChange={(e) =>
-                    setEditItem({
-                      ...editItem,
-                      data: { ...editItem.data, flightNumber: e.target.value },
-                    })
-                  }
-                />
-                <Box display="flex" gap={2}>
-                  <TextField
-                    fullWidth
-                    label="Departure Airport Code"
-                    value={editItem.data.departureAirportCode || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          departureAirportCode: e.target.value,
-                        },
-                      })
-                    }
-                  />
-                  <TextField
-                    fullWidth
-                    label="Arrival Airport Code"
-                    value={editItem.data.arrivalAirportCode || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          arrivalAirportCode: e.target.value,
-                        },
-                      })
-                    }
-                  />
-                </Box>
-                <Box display="flex" gap={2}>
-                  <TextField
-                    fullWidth
-                    type="datetime-local"
-                    label="Departure Date & Time"
-                    value={formatDateTimeForInput(
-                      editItem.data.departureDateTime || ''
-                    )}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          departureDateTime: e.target.value,
-                        },
-                      })
-                    }
-                    InputLabelProps={{ shrink: true }}
-                  />
-                  <TextField
-                    fullWidth
-                    type="datetime-local"
-                    label="Arrival Date & Time"
-                    value={formatDateTimeForInput(
-                      editItem.data.arrivalDateTime || ''
-                    )}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          arrivalDateTime: e.target.value,
-                        },
-                      })
-                    }
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Box>
-                <Box display="flex" gap={2}>
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Number of Tickets"
-                    value={editItem.data.numberOfTickets || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          numberOfTickets: Number(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1 }}
-                  />
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Cost"
-                    value={editItem.data.cost || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          cost: Number(e.target.value),
-                        },
-                      })
-                    }
-                  />
-                  <FormControl fullWidth>
-                    <InputLabel>Cost Type</InputLabel>
-                    <Select
-                      value={editItem.data.costType || 'total'}
-                      label="Cost Type"
-                      onChange={(e) =>
-                        setEditItem({
-                          ...editItem,
-                          data: { ...editItem.data, costType: e.target.value },
-                        })
-                      }
-                    >
-                      <MenuItem value="per-ticket">Per Ticket</MenuItem>
-                      <MenuItem value="total">Total</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Box>
-                <Box display="flex" gap={2}>
-                  <TextField
-                    fullWidth
-                    label="Booking Number"
-                    value={editItem.data.bookingNumber || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          bookingNumber: e.target.value,
-                        },
-                      })
-                    }
-                  />
-                  <TextField
-                    fullWidth
-                    label="Booking Agency"
-                    value={editItem.data.bookingAgency || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          bookingAgency: e.target.value,
-                        },
-                      })
-                    }
-                  />
-                </Box>
-                <Box display="flex" gap={2}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={editItem.data.carryOn || false}
-                        onChange={(e) =>
-                          setEditItem({
-                            ...editItem,
-                            data: {
-                              ...editItem.data,
-                              carryOn: e.target.checked,
-                            },
-                          })
-                        }
-                      />
-                    }
-                    label="Carry-on Included"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={editItem.data.checkedBag || false}
-                        onChange={(e) =>
-                          setEditItem({
-                            ...editItem,
-                            data: {
-                              ...editItem.data,
-                              checkedBag: e.target.checked,
-                            },
-                          })
-                        }
-                      />
-                    }
-                    label="Checked Bag Included"
-                  />
-                </Box>
-              </Stack>
+            <DialogTitle   
+              sx={{
+                pb: 1,
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: 'white',
+          }}>{t('tripDetails.addFlight')}</DialogTitle>
+            <DialogContent sx={{ mt: 2 }}>
+              <AddFlightForm
+                tripId={id!}
+                initialData={editItem.data}
+                editIndex={editItem.index}
+                onUpdated={(updatedTrip) => {
+                  setTrip(updatedTrip);
+                  setEditItem({ open: false, type: null, index: -1, data: null });
+                }}
+                onDone={() => setEditItem({ ...editItem, open: false })}
+              />
             </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setEditItem({ ...editItem, open: false })}>
-                Cancel
-              </Button>
-              <Button variant="contained" onClick={handleEditItemSave}>
-                Save Changes
-              </Button>
-            </DialogActions>
           </Dialog>
         )}
 
@@ -5513,259 +5313,22 @@ export default function TripDetails() {
             maxWidth="md"
             fullWidth
           >
-            <DialogTitle>Edit Hotel</DialogTitle>
-            <DialogContent>
-              <Stack spacing={2} sx={{ mt: 1 }}>
-                <Box>
-                  <TextField
-                    fullWidth
-                    label="Search for a different hotel (optional)"
-                    placeholder="Search hotels..."
-                    value={editSearchQuery}
-                    onChange={(e) => setEditSearchQuery(e.target.value)}
-                    autoComplete="off"
-                  />
-                  {editSearchResults.length > 0 && (
-                    <Paper
-                      elevation={3}
-                      sx={{ mt: 1, maxHeight: 300, overflow: 'auto' }}
-                    >
-                      <Stack divider={<Divider />}>
-                        {editSearchResults.map((hotel: any) => (
-                          <Box
-                            key={hotel.placeId}
-                            onClick={() => handleEditSearchSelect(hotel)}
-                            sx={{
-                              p: 2,
-                              cursor: 'pointer',
-                              '&:hover': { bgcolor: 'action.hover' },
-                            }}
-                          >
-                            <Typography variant="subtitle2" fontWeight="bold">
-                              {hotel.name}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {hotel.formattedAddress}
-                            </Typography>
-                          </Box>
-                        ))}
-                      </Stack>
-                    </Paper>
-                  )}
-                </Box>
-                <TextField
-                  fullWidth
-                  label="Hotel Name"
-                  value={editItem.data.name || ''}
-                  onChange={(e) =>
-                    setEditItem({
-                      ...editItem,
-                      data: { ...editItem.data, name: e.target.value },
-                    })
-                  }
-                />
-                <TextField
-                  fullWidth
-                  label="Address"
-                  value={editItem.data.address || ''}
-                  onChange={(e) =>
-                    setEditItem({
-                      ...editItem,
-                      data: { ...editItem.data, address: e.target.value },
-                    })
-                  }
-                />
-                <Box display="flex" gap={2} sx={{ width: '100%' }}>
-                  <TextField
-                    fullWidth
-                    type="date"
-                    label="Check-in Date"
-                    value={extractDatePart(editItem.data.checkIn)}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: { ...editItem.data, checkIn: e.target.value },
-                      })
-                    }
-                    InputLabelProps={{ shrink: true }}
-                    sx={{ flex: 1 }}
-                  />
-                  <TextField
-                    fullWidth
-                    type="date"
-                    label="Check-out Date"
-                    value={extractDatePart(editItem.data.checkOut)}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: { ...editItem.data, checkOut: e.target.value },
-                      })
-                    }
-                    InputLabelProps={{ shrink: true }}
-                    sx={{ flex: 1 }}
-                  />
-                </Box>
-                <TextField
-                  fullWidth
-                  type="time"
-                  label="Arrival Time at Hotel (optional)"
-                  value={editItem.data.arrivalTime || ''}
-                  onChange={(e) =>
-                    setEditItem({
-                      ...editItem,
-                      data: {
-                        ...editItem.data,
-                        arrivalTime: e.target.value || undefined,
-                      },
-                    })
-                  }
-                  InputLabelProps={{ shrink: true }}
-                  helperText="If not specified, defaults to 15:00 (standard check-in time)"
-                />
-                <Box display="flex" gap={2}>
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Nights"
-                    value={editItem.data.nights || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          nights: Number(e.target.value),
-                        },
-                      })
-                    }
-                  />
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Cost"
-                    value={editItem.data.cost || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          cost: Number(e.target.value),
-                        },
-                      })
-                    }
-                  />
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Rating"
-                    value={editItem.data.rating || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          rating: Number(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 0, max: 5, step: 0.1 }}
-                  />
-                </Box>
-                <Box display="flex" gap={2}>
-                  <FormControl fullWidth>
-                    <InputLabel>Meal Plan</InputLabel>
-                    <Select
-                      value={editItem.data.mealPlan || ''}
-                      label="Meal Plan"
-                      onChange={(e) =>
-                        setEditItem({
-                          ...editItem,
-                          data: {
-                            ...editItem.data,
-                            mealPlan: e.target.value || undefined,
-                          },
-                        })
-                      }
-                    >
-                      <MenuItem value="">None</MenuItem>
-                      <MenuItem value="breakfast">Breakfast Only</MenuItem>
-                      <MenuItem value="half-board">
-                        Half Board (Breakfast + Dinner)
-                      </MenuItem>
-                      <MenuItem value="all-inclusive">All Inclusive</MenuItem>
-                    </Select>
-                  </FormControl>
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Number of Rooms"
-                    value={editItem.data.numberOfRooms || ''}
-                    onChange={(e) =>
-                      setEditItem({
-                        ...editItem,
-                        data: {
-                          ...editItem.data,
-                          numberOfRooms: Number(e.target.value) || undefined,
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1 }}
-                  />
-                </Box>
-                {editItem.data.numberOfRooms > 0 && (
-                  <Box>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      display="block"
-                      sx={{ mb: 1 }}
-                    >
-                      Reservation Names (one per room):
-                    </Typography>
-                    {[...Array(editItem.data.numberOfRooms)].map((_, idx) => (
-                      <TextField
-                        key={idx}
-                        fullWidth
-                        label={`Room ${idx + 1} Reservation Name`}
-                        value={editItem.data.reservationNames?.[idx] || ''}
-                        onChange={(e) => {
-                          const names = [
-                            ...(editItem.data.reservationNames || []),
-                          ];
-                          names[idx] = e.target.value;
-                          setEditItem({
-                            ...editItem,
-                            data: { ...editItem.data, reservationNames: names },
-                          });
-                        }}
-                        sx={{ mb: 1 }}
-                      />
-                    ))}
-                  </Box>
-                )}
-                <TextField
-                  fullWidth
-                  label="Booked From (e.g., Booking.com, Expedia)"
-                  value={editItem.data.bookedFrom || ''}
-                  onChange={(e) =>
-                    setEditItem({
-                      ...editItem,
-                      data: { ...editItem.data, bookedFrom: e.target.value },
-                    })
-                  }
-                />
-              </Stack>
+            <DialogTitle   
+              sx={{
+                pb: 1,
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: 'white',
+          }}>{t('tripDetails.addHotel')}</DialogTitle>
+            <DialogContent sx={{ mt: 2 }}>
+              <AddHotelForm
+                tripId={id!}
+                onUpdated={(updatedTrip) => {
+                  setTrip(updatedTrip);
+                  setEditItem({ open: false, type: null, index: -1, data: null });
+                }}
+                onDone={() => setEditItem({ ...editItem, open: false })}
+              />
             </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setEditItem({ ...editItem, open: false })}>
-                Cancel
-              </Button>
-              <Button variant="contained" onClick={handleEditItemSave}>
-                Save Changes
-              </Button>
-            </DialogActions>
           </Dialog>
         )}
 

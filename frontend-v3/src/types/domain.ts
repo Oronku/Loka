@@ -74,6 +74,7 @@ export interface AttractionVisit {
   scheduledTime?: string;
   rating?: number | null;
   website?: string;
+  photoReference?: string; // Google Places photo reference
   cost?: number;
   numberOfTickets?: number;
   costType?: 'per-ticket' | 'total';

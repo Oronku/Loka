@@ -453,7 +453,7 @@ export default function ManageOrganizedTrip() {
         {/* Tabs */}
         <Paper>
           <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
-            <Tab label={t('tripDetails')} />
+            <Tab label={t('tripDetailsLabel')} />
             <Tab label={`${t('participants')} (${trip.participants.length})`} />
             <Tab label={t('itinerary')} />
             <Tab icon={<Settings />} label={t('management')} iconPosition="start" />

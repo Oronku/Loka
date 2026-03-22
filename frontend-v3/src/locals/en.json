@@ -228,7 +228,7 @@
   "reviewAndCreate": "Review & Create",
   "tripSummary": "Trip Summary",
   "reviewDetails": "Review the details and click Create Trip",
-  "tripDetails": "Trip Details",
+  "tripDetailsLabel": "Trip Details",
   "travelDates": "Travel Dates",
   "tripCreationSuccess": "Trip created successfully!",
   "goToTrip": "Go to Trip",
@@ -615,5 +615,12 @@
   "searchButton": "Search",
   "oopsSomethingWrong": "Oops! Something went wrong",
   "unexpectedErrorMessage": "An unexpected error occurred. We are working on it.",
-  "nameOptional": "Name (Optional)"
+  "nameOptional": "Name (Optional)",
+  "tripDetails": {
+    "addFlight": "Add Flight",
+    "addHotel": "Add Hotel",
+    "searchHotel": "Search for a different hotel (optional)",
+    "searchHotelPlaceholder": "Search hotels..."
+
+  }
 }

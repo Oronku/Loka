@@ -16,7 +16,7 @@ const LanguageContext = createContext<LanguageContextType | undefined>(
 );
 
 // Translation dictionary loaded from JSON files
-const translations: Record<Language, Record<string, string>> = {
+const translations: Record<Language, Record<string, any>> = {
   he: heTranslations,
   en: enTranslations,
 };
@@ -40,7 +40,19 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   };
 
   const t = (key: string): string => {
-    return translations[language][key] || key;
+    // Support nested keys with dot notation (e.g., 'tripDetails.editFlight')
+    const keys = key.split('.');
+    let value: any = translations[language];
+    
+    for (const k of keys) {
+      if (value && typeof value === 'object' && k in value) {
+        value = value[k];
+      } else {
+        return key; // Return key if not found
+      }
+    }
+    
+    return typeof value === 'string' ? value : key;
   };
 
   const isRTL = language === 'he';

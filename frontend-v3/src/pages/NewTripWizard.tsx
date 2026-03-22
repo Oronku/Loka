@@ -7,7 +7,7 @@ import {
   AddHotelForm,
   AddRideForm,
   AddAttractionForm,
-} from '../components/AddItemForms';
+} from '../components/forms/AddItemForms';
 import {
   Box,
   Stepper,
