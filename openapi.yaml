@@ -1,0 +1,1132 @@
+openapi: 3.0.0
+info:
+  title: Loka Travel Platform API
+  description: Complete API specification for Loka - A collaborative travel planning and booking platform
+  version: 1.0.0
+  contact:
+    name: Loka Support
+    url: https://loka.travel
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3001/api
+    description: Development server
+  - url: https://api.loka.travel
+    description: Production server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/login endpoint
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+
+    User:
+      type: object
+      properties:
+        _id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        preferredCurrency:
+          type: string
+          example: USD
+        isAdmin:
+          type: boolean
+        isAgent:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    Trip:
+      type: object
+      properties:
+        _id:
+          type: string
+        name:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        destination:
+          type: string
+        color:
+          type: string
+        ownerId:
+          type: string
+        sharedWith:
+          type: array
+          items:
+            type: string
+        checklist:
+          type: array
+          items:
+            type: object
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Hotel:
+      type: object
+      properties:
+        name:
+          type: string
+        address:
+          type: string
+        rating:
+          type: number
+          format: float
+        reviews:
+          type: integer
+        photos:
+          type: array
+          items:
+            type: string
+        phoneNumber:
+          type: string
+        website:
+          type: string
+
+    Flight:
+      type: object
+      properties:
+        flightNumber:
+          type: string
+        airline:
+          type: string
+        aircraft:
+          type: string
+        departure:
+          type: string
+          format: date-time
+        arrival:
+          type: string
+          format: date-time
+        duration:
+          type: string
+
+    Message:
+      type: object
+      properties:
+        _id:
+          type: string
+        chatId:
+          type: string
+        senderId:
+          type: string
+        text:
+          type: string
+        attachments:
+          type: array
+          items:
+            type: object
+        createdAt:
+          type: string
+          format: date-time
+
+    Budget:
+      type: object
+      properties:
+        tripId:
+          type: string
+        totalBudget:
+          type: number
+        currency:
+          type: string
+        categories:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              budget:
+                type: number
+              spent:
+                type: number
+
+security:
+  - BearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: API Health Check
+      description: Check if API is running
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: OK
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /auth/register:
+    post:
+      summary: Register New User
+      description: Create a new user account
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                name:
+                  type: string
+              required:
+                - email
+                - password
+                - name
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/login:
+    post:
+      summary: Login User
+      description: Authenticate user and get JWT token
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+              required:
+                - email
+                - password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/User'
+                  - type: object
+                    properties:
+                      token:
+                        type: string
+
+  /auth/profile:
+    get:
+      summary: Get User Profile
+      description: Get authenticated user's profile information
+      tags:
+        - Auth
+      responses:
+        '200':
+          description: Profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update User Profile
+      description: Update user's profile information
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                preferredCurrency:
+                  type: string
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /auth/change-password:
+    put:
+      summary: Change Password
+      description: Change user's password
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentPassword:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+              required:
+                - currentPassword
+                - newPassword
+      responses:
+        '200':
+          description: Password changed successfully
+        '400':
+          description: Invalid current password
+
+  /trips:
+    get:
+      summary: Get All Trips
+      description: Get all trips owned by or shared with user
+      tags:
+        - Trips
+      responses:
+        '200':
+          description: List of trips
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Trip'
+
+    post:
+      summary: Create Trip
+      description: Create a new trip
+      tags:
+        - Trips
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                startDate:
+                  type: string
+                  format: date
+                endDate:
+                  type: string
+                  format: date
+                destination:
+                  type: string
+                color:
+                  type: string
+                  pattern: '^#[0-9A-Fa-f]{6}$'
+              required:
+                - name
+                - startDate
+                - endDate
+                - destination
+      responses:
+        '201':
+          description: Trip created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '400':
+          description: Invalid input
+
+  /trips/{id}:
+    get:
+      summary: Get Trip Details
+      description: Get details of a specific trip
+      tags:
+        - Trips
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trip details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '404':
+          description: Trip not found
+
+    put:
+      summary: Update Trip
+      description: Update trip information
+      tags:
+        - Trips
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                startDate:
+                  type: string
+                  format: date
+                endDate:
+                  type: string
+                  format: date
+      responses:
+        '200':
+          description: Trip updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+
+    delete:
+      summary: Delete Trip
+      description: Delete a trip (owner only)
+      tags:
+        - Trips
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trip deleted
+        '403':
+          description: Not trip owner
+
+  /hotels/autocomplete:
+    get:
+      summary: Search Hotels
+      description: Get hotel suggestions based on input
+      tags:
+        - Hotels
+      security: []
+      parameters:
+        - name: input
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: Hotel suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    placeId:
+                      type: string
+
+  /hotels/details:
+    get:
+      summary: Get Hotel Details
+      description: Get detailed information about a hotel
+      tags:
+        - Hotels
+      security: []
+      parameters:
+        - name: place_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Hotel details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hotel'
+
+  /flights/search-route:
+    get:
+      summary: Search Flights
+      description: Search flights from origin to destination
+      tags:
+        - Flights
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            example: JFK
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            example: CDG
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: directOnly
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Flight search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Flight'
+
+  /places/nearby:
+    get:
+      summary: Find Nearby Places
+      description: Search for attractions and places nearby
+      tags:
+        - Places
+      security: []
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: radius
+          in: query
+          schema:
+            type: integer
+            default: 1000
+        - name: type
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Nearby places
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /chats:
+    get:
+      summary: Get User Chats
+      description: Get all chats for authenticated user
+      tags:
+        - Chats
+      parameters:
+        - name: contextType
+          in: query
+          schema:
+            type: string
+            enum: [trip, quicket_item, direct]
+      responses:
+        '200':
+          description: List of chats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+    post:
+      summary: Create Chat
+      description: Create a new chat
+      tags:
+        - Chats
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contextType:
+                  type: string
+                  enum: [trip, quicket_item, direct]
+                contextId:
+                  type: string
+                participants:
+                  type: array
+                  items:
+                    type: string
+              required:
+                - contextType
+                - participants
+      responses:
+        '201':
+          description: Chat created
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /chats/{chatId}/messages:
+    get:
+      summary: Get Chat Messages
+      description: Get messages from a chat
+      tags:
+        - Chats
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Chat messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+
+    post:
+      summary: Send Message
+      description: Send a message to a chat
+      tags:
+        - Chats
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                attachments:
+                  type: array
+                  items:
+                    type: object
+              required:
+                - text
+      responses:
+        '201':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+
+  /friends:
+    get:
+      summary: Get Friends List
+      description: Get list of accepted friends
+      tags:
+        - Friends
+      responses:
+        '200':
+          description: List of friends
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+
+  /friends/search:
+    get:
+      summary: Search Users
+      description: Search for users to add as friends
+      tags:
+        - Friends
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+
+  /quicket/items:
+    get:
+      summary: Search Quicket Items
+      description: Search for travel items in marketplace
+      tags:
+        - Quicket
+      security: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: minPrice
+          in: query
+          schema:
+            type: number
+        - name: maxPrice
+          in: query
+          schema:
+            type: number
+        - name: destination
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Quicket items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                  pagination:
+                    type: object
+
+    post:
+      summary: Create Quicket Item
+      description: Create a new item for sale
+      tags:
+        - Quicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                title:
+                  type: string
+                description:
+                  type: string
+                priceSelling:
+                  type: number
+                currency:
+                  type: string
+                destination:
+                  type: string
+              required:
+                - type
+                - title
+                - priceSelling
+                - currency
+      responses:
+        '201':
+          description: Item created
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /budgets/{tripId}:
+    get:
+      summary: Get Trip Budget
+      description: Get budget information for a trip
+      tags:
+        - Budgets
+      parameters:
+        - name: tripId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Budget details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Budget'
+
+    post:
+      summary: Create Trip Budget
+      description: Create a budget for a trip
+      tags:
+        - Budgets
+      parameters:
+        - name: tripId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                totalBudget:
+                  type: number
+                currency:
+                  type: string
+                categories:
+                  type: object
+                  additionalProperties:
+                    type: number
+              required:
+                - totalBudget
+                - currency
+      responses:
+        '201':
+          description: Budget created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Budget'
+
+  /weather:
+    get:
+      summary: Get Weather Forecast
+      description: Get weather forecast for a city and date
+      tags:
+        - Weather
+      security: []
+      parameters:
+        - name: city
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Weather forecast
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  city:
+                    type: string
+                  date:
+                    type: string
+                    format: date
+                  temperature:
+                    type: object
+                  condition:
+                    type: string
+                  humidity:
+                    type: integer
+
+  /ai/get-real-prices:
+    post:
+      summary: Get Real Prices
+      description: Get current prices for hotels and flights
+      tags:
+        - AI
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                destination:
+                  type: string
+                hotelName:
+                  type: string
+                checkIn:
+                  type: string
+                  format: date
+                checkOut:
+                  type: string
+                  format: date
+                origin:
+                  type: string
+              required:
+                - destination
+                - hotelName
+                - checkIn
+                - checkOut
+      responses:
+        '200':
+          description: Price information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hotel:
+                    type: object
+                  flight:
+                    type: object
+
+  /ai/message:
+    post:
+      summary: Chat with AI
+      description: Send a message to AI travel assistant
+      tags:
+        - AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                context:
+                  type: object
+              required:
+                - message
+      responses:
+        '200':
+          description: AI response
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /organized-trips/public:
+    get:
+      summary: Get Public Organized Trips
+      description: Browse public organized trip packages
+      tags:
+        - Organized Trips
+      security: []
+      parameters:
+        - name: destination
+          in: query
+          schema:
+            type: string
+        - name: minPrice
+          in: query
+          schema:
+            type: number
+        - name: maxPrice
+          in: query
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Public trips
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /organized-trips/{id}/register:
+    post:
+      summary: Register for Organized Trip
+      description: Register as participant for an organized trip
+      tags:
+        - Organized Trips
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+              required:
+                - name
+                - email
+      responses:
+        '201':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /agent/trips/create:
+    post:
+      summary: Create Organized Trip Package
+      description: Create a new organized trip package (agent only)
+      tags:
+        - Agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                destination:
+                  type: string
+                startDate:
+                  type: string
+                  format: date
+                endDate:
+                  type: string
+                  format: date
+                price:
+                  type: number
+                currency:
+                  type: string
+              required:
+                - name
+                - destination
+                - startDate
+                - endDate
+                - price
+                - currency
+      responses:
+        '201':
+          description: Trip package created
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /admin/users/statistics:
+    get:
+      summary: Get User Statistics
+      description: Get user statistics (admin only)
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: User statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalUsers:
+                    type: integer
+                  activeThisMonth:
+                    type: integer
+                  newThisMonth:
+                    type: integer
