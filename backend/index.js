@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(
 	cors({
-		origin: ['http://localhost:5190', 'http://localhost:5191', 'http://localhost:5192', 'https://meetloka.com/'],
+		origin: ['http://localhost:5190', 'http://localhost:5191', 'http://localhost:5192', 'https://meetloka.com'],
 		credentials: true,
 	}),
 );
