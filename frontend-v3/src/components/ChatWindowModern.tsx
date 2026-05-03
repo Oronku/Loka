@@ -11,6 +11,7 @@ import {
 import Draggable from 'react-draggable';
 import { useAuth } from '../context/AuthContext';
 import { chatApi, Message, Chat } from '../services/chatApi';
+import { API_BASE_URL } from '../config/api';
 import { format, isToday, isYesterday } from 'date-fns';
 import TripCard from './TripCard';
 
@@ -146,7 +147,7 @@ export default function ChatWindowModern({
 			try {
 				const token = localStorage.getItem('authToken');
 				// Use proxy in development (/api), direct URL in production
-				const apiUrl = import.meta.env.DEV ? '/api/ai/message' : (import.meta.env.VITE_API_URL || 'http://localhost:3001/api') + '/ai/message';
+				const apiUrl = `${API_BASE_URL}/ai/message`;
 
 				const response = await fetch(apiUrl, {
 					method: 'POST',

@@ -27,6 +27,7 @@ import {
 	SmartToy as AiIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
+import { MEDIA_URL } from '../config/api';
 import { format } from 'date-fns';
 import { chatApi } from '../services/chatApi';
 
@@ -267,7 +268,7 @@ export default function ChatSidebar({ open, onClose, onChatSelect, onNewChat }: 
 					}}
 				>
 					<ListItemAvatar>
-						<Avatar src="http://localhost:5190/videos/idle-animation.apng" sx={{ bgcolor: 'primary.main' }}>
+						<Avatar src={`${MEDIA_URL}/videos/idle-animation.apng`} sx={{ bgcolor: 'primary.main' }}>
 							<AiIcon />
 						</Avatar>
 					</ListItemAvatar>
