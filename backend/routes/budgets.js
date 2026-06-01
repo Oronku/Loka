@@ -2,43 +2,32 @@ import express from "express";
 import { ObjectId } from "mongodb";
 import { getDatabase } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
+import * as tripService from "../services/trip.service.js";
 
 const router = express.Router();
 
 // Apply authentication middleware to all routes
 router.use(verifyGoogleToken);
 
-// Helper to get trip and verify ownership
-async function getTripAndVerifyOwnership(tripId, userId) {
+async function getTripWithAccess(tripId, userId, requireEdit = true) {
   const db = getDatabase();
   if (!db) {
     throw new Error("Database not available");
   }
 
-  const tripsCollection = db.collection("trips");
-
-  // Build trip ID query (match by _id OR id field)
-  const tripIdQuery = [];
-  if (ObjectId.isValid(tripId)) {
-    tripIdQuery.push({ _id: new ObjectId(tripId) });
-  }
-  tripIdQuery.push({ id: tripId });
-
-  // Query: (match tripId) AND (owned by user OR shared with edit permission)
-  const query = {
-    $and: [
-      { $or: tripIdQuery },
-      {
-        $or: [
-          { userId: userId },
-          { "sharedWith.userId": userId, "sharedWith.permission": "edit" },
-        ],
-      },
-    ],
-  };
-
-  const trip = await tripsCollection.findOne(query);
+  const trip = await tripService.findById(tripId);
   if (!trip) {
+    throw new Error("Trip not found or access denied");
+  }
+
+  tripService.normalizeDocument(trip);
+  const access = tripService.getAccess(trip, userId);
+
+  if (requireEdit && !access.canEdit) {
+    throw new Error("Trip not found or access denied");
+  }
+
+  if (!requireEdit && !access.canView) {
     throw new Error("Trip not found or access denied");
   }
 
@@ -51,7 +40,7 @@ router.get("/:tripId", async (req, res) => {
     const { tripId } = req.params;
     const userId = req.user.id;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     // Return budget or empty structure
     const budget = trip.budget || {
@@ -83,7 +72,7 @@ router.post("/:tripId", async (req, res) => {
     const userId = req.user.id;
     const budgetData = req.body;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     // Validate budget data
     if (
@@ -152,7 +141,7 @@ router.put("/:tripId", async (req, res) => {
     const userId = req.user.id;
     const updates = req.body;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     if (!trip.budget) {
       return res.status(404).json({ error: "Budget not found for this trip" });
@@ -198,7 +187,7 @@ router.delete("/:tripId", async (req, res) => {
     const { tripId } = req.params;
     const userId = req.user.id;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     // Remove budget from trip
     const db = getDatabase();
@@ -238,7 +227,7 @@ router.post("/:tripId/categories", async (req, res) => {
       return res.status(400).json({ error: "Invalid category name" });
     }
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     if (!trip.budget) {
       return res.status(404).json({ error: "Budget not found for this trip" });
@@ -289,7 +278,7 @@ router.put("/:tripId/categories/:categoryId", async (req, res) => {
     const userId = req.user.id;
     const updates = req.body;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     if (!trip.budget || !trip.budget.categories) {
       return res.status(404).json({ error: "Budget not found for this trip" });
@@ -346,7 +335,7 @@ router.delete("/:tripId/categories/:categoryId", async (req, res) => {
     const { tripId, categoryId } = req.params;
     const userId = req.user.id;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     if (!trip.budget || !trip.budget.categories) {
       return res.status(404).json({ error: "Budget not found for this trip" });
@@ -388,7 +377,7 @@ router.get("/:tripId/expenses", async (req, res) => {
     const { tripId } = req.params;
     const userId = req.user.id;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
     const allExpenses = trip.budget?.expenses || [];
 
     // Filter to only return expenses for THIS trip
@@ -412,7 +401,7 @@ router.post("/:tripId/expenses", async (req, res) => {
     const userId = req.user.id;
     const expense = req.body;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     // Validate expense
     if (!expense.category || typeof expense.category !== "string") {
@@ -486,7 +475,7 @@ router.put("/:tripId/expenses/:expenseId", async (req, res) => {
     const userId = req.user.id;
     const expense = req.body;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     // Find expense index
     const expenses = trip.budget?.expenses || [];
@@ -551,7 +540,7 @@ router.delete("/:tripId/expenses", async (req, res) => {
     const { cleanup } = req.query;
     const userId = req.user.id;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     const db = getDatabase();
     const tripsCollection = db.collection("trips");
@@ -616,7 +605,7 @@ router.delete("/:tripId/expenses/:expenseId", async (req, res) => {
     const { tripId, expenseId } = req.params;
     const userId = req.user.id;
 
-    const trip = await getTripAndVerifyOwnership(tripId, userId);
+    const trip = await getTripWithAccess(tripId, userId);
 
     // Find expense
     const expenses = trip.budget?.expenses || [];

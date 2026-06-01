@@ -1,56 +1,38 @@
 import express from "express";
-import { ObjectId } from "mongodb";
-import { getDatabase } from "../config/database.js";
 import { memoryStore } from "../config/memoryStore.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
+import * as tripService from "../services/trip.service.js";
 
 const router = express.Router();
 
-// Apply authentication middleware to all routes
 router.use(verifyGoogleToken);
 
-// Get trips collection (MongoDB or fallback to memory)
 function getTripsCollection() {
-  const db = getDatabase();
-  return db ? db.collection("trips") : null;
+  return tripService.getTripsCollection();
 }
 
-// Helpers
-async function getTripOr404(req, res) {
-  const collection = getTripsCollection();
-
-  let trip;
-  if (collection) {
-    // Use MongoDB - filter by userId
-    const query = {
-      userId: req.user.id,
-      $or: [{ id: req.params.id }],
-    };
-    if (ObjectId.isValid(req.params.id)) {
-      query.$or.push({ _id: new ObjectId(req.params.id) });
-    }
-    trip = await collection.findOne(query);
-  } else {
-    // Fallback to memory store
-    trip = memoryStore.trips.findById(req.params.id);
-    if (trip && trip.userId !== req.user.id) {
-      trip = null;
-    }
-  }
+async function loadTrip(req, res, { requireEdit = true } = {}) {
+  const trip = await tripService.findById(req.params.id);
 
   if (!trip) {
     res.status(404).json({ error: "Trip not found" });
     return null;
   }
-  // Ensure id exists
-  if (!trip.id) trip.id = trip._id.toString();
 
-  // Ensure arrays exist
-  trip.flights = Array.isArray(trip.flights) ? trip.flights : [];
-  trip.hotels = Array.isArray(trip.hotels) ? trip.hotels : [];
-  trip.rides = Array.isArray(trip.rides) ? trip.rides : [];
-  trip.attractions = Array.isArray(trip.attractions) ? trip.attractions : [];
+  tripService.normalizeDocument(trip);
+  const access = tripService.getAccess(trip, req.user.id);
+
+  if (requireEdit && !access.canEdit) {
+    res.status(403).json({ error: "Access denied" });
+    return null;
+  }
+
+  trip._access = access;
   return trip;
+}
+
+async function getTripOr404(req, res) {
+  return loadTrip(req, res, { requireEdit: true });
 }
 
 // Get all trips for the authenticated user (owned + shared)
@@ -109,47 +91,18 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Get a single trip by ID
+// Get a single trip by ID (any authenticated user with the link can view)
 router.get("/:id", async (req, res) => {
   try {
-    const collection = getTripsCollection();
+    const trip = await loadTrip(req, res, { requireEdit: false });
+    if (!trip) return;
 
-    let trip;
-    if (collection) {
-      // Use MongoDB
-      const query = {
-        $or: [{ id: req.params.id }],
-      };
-      if (ObjectId.isValid(req.params.id)) {
-        query.$or.push({ _id: new ObjectId(req.params.id) });
-      }
-      trip = await collection.findOne(query);
-    } else {
-      // Fallback to memory store
-      trip = memoryStore.trips.findById(req.params.id);
-    }
+    const response = tripService.filterChecklistsForResponse(
+      tripService.attachAccessFlags(trip, req.user.id),
+      req.user.id
+    );
 
-    if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    // Ensure id exists (fallback for AI-created trips)
-    if (!trip.id) trip.id = trip._id.toString();
-
-    // Check if user has access (owner or shared with)
-    const isOwner = trip.userId === req.user.id;
-    const isShared =
-      trip.sharedWith && trip.sharedWith.some((s) => s.userId === req.user.id);
-
-    if (!isOwner && !isShared) {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    // Add flags for frontend
-    trip.isOwner = isOwner;
-    trip.isShared = !isOwner;
-
-    res.json(trip);
+    res.json(response);
   } catch (error) {
     console.error("Error fetching trip:", error);
     res.status(500).json({ error: "Failed to fetch trip" });
@@ -164,20 +117,7 @@ router.post("/", async (req, res) => {
 
     let createdTrip;
     if (collection) {
-      // Use MongoDB
-      const newTrip = {
-        ...tripData,
-        id: tripData.id || `trip-${Date.now()}`,
-        userId: req.user.id,
-        userEmail: req.user.email,
-        flights: tripData.flights || [],
-        hotels: tripData.hotels || [],
-        rides: tripData.rides || [],
-        attractions: tripData.attractions || [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      await collection.insertOne(newTrip);
+      const newTrip = await tripService.createTrip(tripData, req.user);
       createdTrip = newTrip;
       console.log(
         "✓ Trip saved to MongoDB:",
@@ -189,11 +129,7 @@ router.post("/", async (req, res) => {
       );
     } else {
       // Fallback to memory store
-      createdTrip = memoryStore.trips.create({
-        ...tripData,
-        userId: req.user.id,
-        userEmail: req.user.email,
-      });
+      createdTrip = await tripService.createTrip(tripData, req.user);
       console.log(
         "✓ Trip saved to memory:",
         createdTrip.id,
@@ -204,7 +140,10 @@ router.post("/", async (req, res) => {
       );
     }
 
-    res.status(201).json(createdTrip);
+    res.status(201).json({
+      ...createdTrip,
+      shareUrl: tripService.buildShareUrl(createdTrip.id),
+    });
   } catch (error) {
     console.error("Error creating trip:", error);
     res
@@ -217,34 +156,18 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const collection = getTripsCollection();
+    const existingTrip = await loadTrip(req, res, { requireEdit: true });
+    if (!existingTrip) return;
 
-    // Check if trip exists and user is owner
-    let existingTrip;
-    if (collection) {
-      existingTrip = await collection.findOne({ id: req.params.id });
-    } else {
-      existingTrip = memoryStore.trips.findById(req.params.id);
-    }
-
-    if (!existingTrip) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    if (existingTrip.userId !== req.user.id) {
-      return res.status(403).json({ error: "Only trip owner can edit" });
-    }
+    const updateData = tripService.sanitizeUpdatePayload(
+      req.body,
+      existingTrip._access
+    );
 
     let updated;
     if (collection) {
-      // Use MongoDB
-      const updateData = {
-        ...req.body,
-        updatedAt: new Date().toISOString(),
-      };
-      delete updateData._id; // Remove MongoDB _id if present
-
       const result = await collection.findOneAndUpdate(
-        { id: req.params.id },
+        tripService.buildIdQuery(existingTrip.id),
         { $set: updateData },
         { returnDocument: "after" }
       );
@@ -253,17 +176,16 @@ router.put("/:id", async (req, res) => {
         return res.status(404).json({ error: "Trip not found" });
       }
       updated = result;
-      console.log("✓ Trip updated in MongoDB:", req.params.id);
+      console.log("✓ Trip updated in MongoDB:", existingTrip.id);
     } else {
-      // Fallback to memory store
-      updated = memoryStore.trips.update(req.params.id, req.body);
+      updated = memoryStore.trips.update(existingTrip.id, updateData);
       if (!updated) {
         return res.status(404).json({ error: "Trip not found" });
       }
-      console.log("✓ Trip updated in memory:", req.params.id);
+      console.log("✓ Trip updated in memory:", existingTrip.id);
     }
 
-    res.json(updated);
+    res.json(tripService.normalizeDocument(updated));
   } catch (error) {
     console.error("Error updating trip:", error);
     res
@@ -272,43 +194,20 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Update user's personal checklist (available to both owner and shared users)
+// Update user's personal checklist (owner + participants only)
 router.put("/:id/checklist", async (req, res) => {
   try {
     const collection = getTripsCollection();
     const { checklist } = req.body;
 
-    // Check if trip exists and user has access (owner or shared user)
-    let existingTrip;
-    if (collection) {
-      existingTrip = await collection.findOne({ id: req.params.id });
-    } else {
-      existingTrip = memoryStore.trips.findById(req.params.id);
-    }
+    const existingTrip = await loadTrip(req, res, { requireEdit: true });
+    if (!existingTrip) return;
 
-    if (!existingTrip) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    // Check if user is owner or has shared access
-    const isOwner = existingTrip.userId === req.user.id;
-    const isSharedUser = existingTrip.sharedWith?.some(
-      (s) => s.userId === req.user.id
-    );
-
-    if (!isOwner && !isSharedUser) {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    // Get existing userChecklists array or initialize it
     const userChecklists = existingTrip.userChecklists || [];
-
-    // Find current user's checklist index
     const userChecklistIndex = userChecklists.findIndex(
       (uc) => uc.userId === req.user.id
     );
 
-    // Update or add user's checklist
     let updatedUserChecklists;
     if (userChecklistIndex >= 0) {
       updatedUserChecklists = [...userChecklists];
@@ -325,9 +224,8 @@ router.put("/:id/checklist", async (req, res) => {
 
     let updated;
     if (collection) {
-      // Use MongoDB
       const result = await collection.findOneAndUpdate(
-        { id: req.params.id },
+        tripService.buildIdQuery(existingTrip.id),
         {
           $set: {
             userChecklists: updatedUserChecklists,
@@ -341,26 +239,19 @@ router.put("/:id/checklist", async (req, res) => {
         return res.status(404).json({ error: "Trip not found" });
       }
       updated = result;
-      console.log(
-        "✓ User checklist updated in MongoDB:",
-        req.params.id,
-        "for user:",
-        req.user.id
-      );
     } else {
-      // Fallback to memory store
-      existingTrip.userChecklists = updatedUserChecklists;
-      existingTrip.updatedAt = new Date().toISOString();
-      updated = existingTrip;
-      console.log(
-        "✓ User checklist updated in memory:",
-        req.params.id,
-        "for user:",
-        req.user.id
-      );
+      updated = memoryStore.trips.update(existingTrip.id, {
+        userChecklists: updatedUserChecklists,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
-    res.json(updated);
+    res.json(
+      tripService.filterChecklistsForResponse(
+        tripService.attachAccessFlags(tripService.normalizeDocument(updated), req.user.id),
+        req.user.id
+      )
+    );
   } catch (error) {
     console.error("Error updating user checklist:", error);
     res
@@ -374,27 +265,19 @@ router.delete("/:id", async (req, res) => {
   try {
     const collection = getTripsCollection();
 
-    // Check if trip exists and user is owner
-    let existingTrip;
-    if (collection) {
-      existingTrip = await collection.findOne({ id: req.params.id });
-    } else {
-      existingTrip = memoryStore.trips.findById(req.params.id);
-    }
+    const existingTrip = await tripService.findById(req.params.id);
 
     if (!existingTrip) {
       return res.status(404).json({ error: "Trip not found" });
     }
 
-    if (existingTrip.userId !== req.user.id) {
+    if (!tripService.isOwner(existingTrip, req.user.id)) {
       return res.status(403).json({ error: "Only trip owner can delete" });
     }
 
     let deleted;
     if (collection) {
-      // Use MongoDB
-      const result = await collection.deleteOne({ id: req.params.id });
-      deleted = result.deletedCount > 0;
+      deleted = await tripService.deleteById(existingTrip.id);
       if (deleted) {
         console.log("✓ Trip deleted from MongoDB:", req.params.id);
       }
@@ -419,85 +302,91 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// Share trip with users by email
+// Share trip with users by email (registered → sharedWith, unregistered → pendingInvites)
 router.post("/:id/share", async (req, res) => {
   try {
-    const { emails, expensePermissions = {} } = req.body;
+    const { emails } = req.body;
 
     if (!Array.isArray(emails) || emails.length === 0) {
       return res.status(400).json({ error: "emails array is required" });
     }
 
     const collection = getTripsCollection();
-    const trip = await getTripOr404(req, res);
+    const trip = await loadTrip(req, res, { requireEdit: false });
     if (!trip) return;
 
-    // Only owner can share
-    if (trip.userId !== req.user.id) {
+    if (!trip._access.canShare) {
       return res.status(403).json({ error: "Only trip owner can share" });
     }
 
-    // Get user collection to validate emails
     const db = collection ? collection.s.db : null;
     if (!db) {
       return res.status(500).json({ error: "Database not available" });
     }
 
-    const usersCollection = db.collection("users");
-    const users = await usersCollection
-      .find({ email: { $in: emails } })
+    const normalizedEmails = emails
+      .map(tripService.parseParticipantEmail)
+      .filter(Boolean);
+
+    if (normalizedEmails.length === 0) {
+      return res.status(400).json({
+        error: "No valid email addresses provided",
+        skipped: emails.map((email) => ({
+          email: tripService.normalizeEmail(email) || String(email || "").trim(),
+          reason: "invalid_email",
+        })),
+      });
+    }
+
+    const users = await db
+      .collection("users")
+      .find({ email: { $in: normalizedEmails } })
       .toArray();
 
-    if (users.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "No registered users found with provided emails" });
-    }
-
-    // Initialize sharedWith if not exists
-    if (!trip.sharedWith) {
-      trip.sharedWith = [];
-    }
-
-    // Add new users (avoid duplicates)
-    const newShares = users
-      .filter(
-        (user) =>
-          !trip.sharedWith.some((s) => s.userId === user.id) &&
-          user.id !== trip.userId
-      )
-      .map((user) => ({
-        userId: user.id, // Use custom id field, not MongoDB _id
-        email: user.email,
-        name: user.name,
-        sharedAt: new Date().toISOString(),
-        expensePermission: expensePermissions[user.email] || "edit", // Default to edit if not specified
-      }));
-
-    if (newShares.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "All users already have access or are trip owner" });
-    }
-
-    trip.sharedWith.push(...newShares);
-
-    // Update in database
-    await collection.updateOne(
-      { id: trip.id },
-      {
-        $set: {
-          sharedWith: trip.sharedWith,
-          updatedAt: new Date().toISOString(),
-        },
-      }
+    const usersByEmail = new Map(
+      users.map((user) => [tripService.normalizeEmail(user.email), user])
     );
 
-    const updatedTrip = await collection.findOne({ id: trip.id });
+    const { newParticipants, newPendingInvites, skipped } =
+      tripService.processShareInvites(trip, emails, usersByEmail, req.user.id);
+
+    if (newParticipants.length === 0 && newPendingInvites.length === 0) {
+      const allInvalid = skipped.every((s) => s.reason === "invalid_email");
+      return res.status(400).json({
+        error: allInvalid
+          ? "No valid email addresses provided"
+          : "No new invitations created",
+        skipped,
+      });
+    }
+
+    const pushUpdates = {};
+    if (newParticipants.length > 0) {
+      pushUpdates.sharedWith = { $each: newParticipants };
+    }
+    if (newPendingInvites.length > 0) {
+      pushUpdates.pendingInvites = { $each: newPendingInvites };
+    }
+
+    const update = { $set: { updatedAt: new Date().toISOString() } };
+    if (Object.keys(pushUpdates).length > 0) {
+      update.$push = pushUpdates;
+    }
+
+    await collection.updateOne(tripService.buildIdQuery(trip.id), update);
+
+    const updatedTrip = await tripService.findById(trip.id);
+
+    // TODO: send invitation email
 
     res.json({
-      message: `Trip shared with ${newShares.length} user(s)`,
+      message: `Invited ${newParticipants.length + newPendingInvites.length} user(s)`,
       sharedWith: updatedTrip.sharedWith,
+      pendingInvites: updatedTrip.pendingInvites || [],
+      shareUrl: tripService.buildShareUrl(trip.id),
+      addedParticipants: newParticipants.length,
+      addedPendingInvites: newPendingInvites.length,
+      skipped,
     });
   } catch (error) {
     console.error("Error sharing trip:", error);
@@ -507,60 +396,82 @@ router.post("/:id/share", async (req, res) => {
   }
 });
 
-// Revoke trip access from a user
-router.delete("/:id/share/:userId", async (req, res) => {
+// Remove pending invite by email (owner only) — must be before /:userId route
+router.delete("/:id/share/pending/:email", async (req, res) => {
   try {
-    const { id, userId } = req.params;
-
-    const collection = getTripsCollection();
-    if (!collection) {
-      return res.status(500).json({ error: "Database not available" });
-    }
-
-    const trip = await collection.findOne({ id });
+    const trip = await tripService.findById(req.params.id);
 
     if (!trip) {
       return res.status(404).json({ error: "Trip not found" });
     }
 
-    // Only owner can revoke access
-    if (trip.userId !== req.user.id) {
+    if (!tripService.isOwner(trip, req.user.id)) {
       return res
         .status(403)
-        .json({ error: "Only trip owner can revoke access" });
+        .json({ error: "Only trip owner can remove participants" });
     }
 
-    if (!trip.sharedWith) {
-      trip.sharedWith = [];
-    }
-
-    const initialLength = trip.sharedWith.length;
-    trip.sharedWith = trip.sharedWith.filter((s) => s.userId !== userId);
-
-    if (trip.sharedWith.length === initialLength) {
-      return res.status(404).json({ error: "User not found in shared list" });
-    }
-
-    // Update in database
-    await collection.updateOne(
-      { id: trip.id },
-      {
-        $set: {
-          sharedWith: trip.sharedWith,
-          updatedAt: new Date().toISOString(),
-        },
-      }
+    const result = await tripService.removePendingInvite(
+      req.params.id,
+      req.params.email
     );
 
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
     res.json({
-      message: "Access revoked successfully",
-      sharedWith: trip.sharedWith,
+      message: "Pending invite removed successfully",
+      sharedWith: result.sharedWith,
+      pendingInvites: result.pendingInvites,
     });
   } catch (error) {
-    console.error("Error revoking access:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to revoke access", message: error.message });
+    console.error("Error removing pending invite:", error);
+    res.status(500).json({
+      error: "Failed to remove pending invite",
+      message: error.message,
+    });
+  }
+});
+
+// Remove participant by userId (owner only)
+router.delete("/:id/share/:userId", async (req, res) => {
+  try {
+    const { id, userId } = req.params;
+
+    const trip = await tripService.findById(id);
+
+    if (!trip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    if (!tripService.isOwner(trip, req.user.id)) {
+      return res
+        .status(403)
+        .json({ error: "Only trip owner can remove participants" });
+    }
+
+    if (userId === trip.userId) {
+      return res.status(400).json({ error: "Cannot remove trip owner" });
+    }
+
+    const result = await tripService.removeParticipant(id, userId);
+
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
+    res.json({
+      message: "Participant removed successfully",
+      sharedWith: result.sharedWith,
+      pendingInvites: result.pendingInvites,
+    });
+  } catch (error) {
+    console.error("Error removing participant:", error);
+    res.status(500).json({
+      error: "Failed to remove participant",
+      message: error.message,
+    });
   }
 });
 
@@ -725,26 +636,8 @@ router.post("/:id/expenses", async (req, res) => {
     const collection = getTripsCollection();
     const { expense } = req.body;
 
-    // Check if trip exists and user has access
-    let trip;
-    if (collection) {
-      trip = await collection.findOne({ id: req.params.id });
-    } else {
-      trip = memoryStore.trips.findById(req.params.id);
-    }
-
-    if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    // Check permission
-    const isOwner = trip.userId === req.user.id;
-    const sharedUser = trip.sharedWith?.find((s) => s.userId === req.user.id);
-    const permission = sharedUser?.expensePermission || "disable";
-
-    if (!isOwner && permission !== "edit") {
-      return res.status(403).json({ error: "No permission to add expenses" });
-    }
+    const trip = await loadTrip(req, res, { requireEdit: true });
+    if (!trip) return;
 
     // Add expense with metadata
     const newExpense = {
@@ -759,13 +652,12 @@ router.post("/:id/expenses", async (req, res) => {
 
     let updated;
     if (collection) {
-      await collection.updateOne(
-        { id: req.params.id },
-        { $set: { expenses, updatedAt: new Date().toISOString() } }
-      );
-      updated = await collection.findOne({ id: req.params.id });
+      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+        $set: { expenses, updatedAt: new Date().toISOString() },
+      });
+      updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(req.params.id, { expenses });
+      updated = memoryStore.trips.update(trip.id, { expenses });
     }
 
     res.json(updated);
@@ -781,16 +673,8 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
     const collection = getTripsCollection();
     const { expense } = req.body;
 
-    let trip;
-    if (collection) {
-      trip = await collection.findOne({ id: req.params.id });
-    } else {
-      trip = memoryStore.trips.findById(req.params.id);
-    }
-
-    if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
+    const trip = await loadTrip(req, res, { requireEdit: false });
+    if (!trip) return;
 
     // Find the expense
     const expenses = trip.expenses || [];
@@ -802,11 +686,9 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
       return res.status(404).json({ error: "Expense not found" });
     }
 
-    // Check permission: owner or creator of expense
-    const isOwner = trip.userId === req.user.id;
     const isCreator = expenses[expenseIndex].createdBy === req.user.id;
 
-    if (!isOwner && !isCreator) {
+    if (!trip._access.canEdit && !isCreator) {
       return res
         .status(403)
         .json({ error: "No permission to edit this expense" });
@@ -821,13 +703,12 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
 
     let updated;
     if (collection) {
-      await collection.updateOne(
-        { id: req.params.id },
-        { $set: { expenses, updatedAt: new Date().toISOString() } }
-      );
-      updated = await collection.findOne({ id: req.params.id });
+      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+        $set: { expenses, updatedAt: new Date().toISOString() },
+      });
+      updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(req.params.id, { expenses });
+      updated = memoryStore.trips.update(trip.id, { expenses });
     }
 
     res.json(updated);
@@ -854,17 +735,8 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
 
     const collection = getTripsCollection();
 
-    let trip;
-    if (collection) {
-      trip = await collection.findOne({ id: req.params.id });
-    } else {
-      trip = memoryStore.trips.findById(req.params.id);
-    }
-
-    if (!trip) {
-      console.log("Trip not found:", req.params.id);
-      return res.status(404).json({ error: "Trip not found" });
-    }
+    const trip = await loadTrip(req, res, { requireEdit: false });
+    if (!trip) return;
 
     const expenses = trip.expenses || [];
     console.log("Found expenses:", expenses.length);
@@ -881,19 +753,17 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
       return res.status(404).json({ error: "Expense not found" });
     }
 
-    // Check permission
-    const isOwner = trip.userId === req.user.id;
     const isCreator = expenses[expenseIndex].createdBy === req.user.id;
 
     console.log("Permission check:", {
-      isOwner,
+      canEdit: trip._access.canEdit,
       isCreator,
       tripUserId: trip.userId,
       reqUserId: req.user.id,
       expenseCreatedBy: expenses[expenseIndex].createdBy,
     });
 
-    if (!isOwner && !isCreator) {
+    if (!trip._access.canEdit && !isCreator) {
       return res
         .status(403)
         .json({ error: "No permission to delete this expense" });
@@ -903,13 +773,12 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
 
     let updated;
     if (collection) {
-      await collection.updateOne(
-        { id: req.params.id },
-        { $set: { expenses, updatedAt: new Date().toISOString() } }
-      );
-      updated = await collection.findOne({ id: req.params.id });
+      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+        $set: { expenses, updatedAt: new Date().toISOString() },
+      });
+      updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(req.params.id, { expenses });
+      updated = memoryStore.trips.update(trip.id, { expenses });
     }
 
     res.json(updated);
@@ -923,21 +792,12 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
 router.put("/:id/participants/:userId/permission", async (req, res) => {
   try {
     const collection = getTripsCollection();
-    const { permission } = req.body; // 'disable', 'view', or 'edit'
+    const { permission } = req.body;
 
-    let trip;
-    if (collection) {
-      trip = await collection.findOne({ id: req.params.id });
-    } else {
-      trip = memoryStore.trips.findById(req.params.id);
-    }
+    const trip = await loadTrip(req, res, { requireEdit: false });
+    if (!trip) return;
 
-    if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    // Only owner can update permissions
-    if (trip.userId !== req.user.id) {
+    if (!trip._access.canShare) {
       return res
         .status(403)
         .json({ error: "Only trip owner can update permissions" });
@@ -957,13 +817,12 @@ router.put("/:id/participants/:userId/permission", async (req, res) => {
 
     let updated;
     if (collection) {
-      await collection.updateOne(
-        { id: req.params.id },
-        { $set: { sharedWith, updatedAt: new Date().toISOString() } }
-      );
-      updated = await collection.findOne({ id: req.params.id });
+      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+        $set: { sharedWith, updatedAt: new Date().toISOString() },
+      });
+      updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(req.params.id, { sharedWith });
+      updated = memoryStore.trips.update(trip.id, { sharedWith });
     }
 
     res.json(updated);
@@ -976,25 +835,10 @@ router.put("/:id/participants/:userId/permission", async (req, res) => {
 // Calculate balances
 router.get("/:id/expenses/balances", async (req, res) => {
   try {
-    const collection = getTripsCollection();
+    const trip = await loadTrip(req, res, { requireEdit: false });
+    if (!trip) return;
 
-    let trip;
-    if (collection) {
-      trip = await collection.findOne({ id: req.params.id });
-    } else {
-      trip = memoryStore.trips.findById(req.params.id);
-    }
-
-    if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    // Check access
-    const isOwner = trip.userId === req.user.id;
-    const sharedUser = trip.sharedWith?.find((s) => s.userId === req.user.id);
-    const permission = sharedUser?.expensePermission || "disable";
-
-    if (!isOwner && permission === "disable") {
+    if (!trip._access.canEdit) {
       return res.status(403).json({ error: "No access to expenses" });
     }
 

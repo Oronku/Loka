@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { ObjectId } from "mongodb";
 import { getDatabase } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
+import * as tripService from "../services/trip.service.js";
 
 const router = express.Router();
 const JWT_SECRET =
@@ -57,6 +58,8 @@ router.post("/register", async (req, res) => {
 
     await collection.insertOne(newUser);
 
+    const linkedTripsCount = await tripService.linkPendingInvitesForUser(newUser);
+
     // Generate JWT token
     const token = jwt.sign(
       { id: newUser.id, email: newUser.email, name: newUser.name },
@@ -70,6 +73,7 @@ router.post("/register", async (req, res) => {
     res.status(201).json({
       user: userWithoutPassword,
       token,
+      linkedTripsCount,
     });
   } catch (error) {
     console.error("Registration error:", error);
@@ -113,12 +117,15 @@ router.post("/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    const linkedTripsCount = await tripService.linkPendingInvitesForUser(user);
+
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
 
     res.json({
       user: userWithoutPassword,
       token,
+      linkedTripsCount,
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -518,6 +525,23 @@ router.post("/link-trips", verifyGoogleToken, async (req, res) => {
   } catch (error) {
     console.error("Error linking trips:", error);
     res.status(500).json({ error: "Failed to link trips" });
+  }
+});
+
+// Pending personal trip invites for current user
+router.get("/pending-trip-invites", verifyGoogleToken, async (req, res) => {
+  try {
+    const db = getDatabase();
+    if (!db) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const trips = await tripService.getPendingInvites(req.user.email);
+
+    res.json({ count: trips.length, trips });
+  } catch (error) {
+    console.error("Error fetching pending trip invites:", error);
+    res.status(500).json({ error: "Failed to fetch pending trip invites" });
   }
 });
 

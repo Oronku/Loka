@@ -4,6 +4,7 @@ import { getDb } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import OpenAI from "openai";
 import googleApi from "../services/googleApi.js";
+import * as tripService from "../services/trip.service.js";
 
 const router = express.Router();
 
@@ -253,21 +254,21 @@ router.post("/", async (req, res) => {
         }
       }
     } else if (contextType === "trip") {
-      if (!contextId || !ObjectId.isValid(contextId)) {
+      if (!contextId) {
         return res.status(400).json({ error: "Valid trip ID required" });
       }
 
       // Verify trip exists and user is a member
-      const trip = await db
-        .collection("trips")
-        .findOne({ _id: new ObjectId(contextId) });
+      const trip = await tripService.findById(contextId);
 
       if (!trip) {
         return res.status(404).json({ error: "Trip not found" });
       }
 
+      tripService.normalizeDocument(trip);
+
       // Verify all participants are trip members
-      const tripMemberIds = [trip.userId, ...(trip.sharedWith || [])];
+      const tripMemberIds = tripService.getMemberIds(trip);
       const invalidParticipants = participants.filter(
         (p) => !tripMemberIds.includes(p.userId),
       );
@@ -761,15 +762,15 @@ router.post("/:chatId/participants", async (req, res) => {
     // Context-specific validation
     if (chat.contextType === "trip") {
       // Verify user is a trip member
-      const trip = await db
-        .collection("trips")
-        .findOne({ _id: new ObjectId(chat.contextId) });
+      const trip = await tripService.findById(chat.contextId);
 
       if (!trip) {
         return res.status(404).json({ error: "Trip not found" });
       }
 
-      const tripMemberIds = [trip.userId, ...(trip.sharedWith || [])];
+      tripService.normalizeDocument(trip);
+
+      const tripMemberIds = tripService.getMemberIds(trip);
       if (!tripMemberIds.includes(userId)) {
         return res.status(403).json({ error: "User must be a trip member" });
       }

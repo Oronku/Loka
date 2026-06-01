@@ -23,10 +23,32 @@ import organizedTripsRoutes from './routes/organizedTrips.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const PRODUCTION_ORIGINS = ['https://meetloka.com'];
+const DEV_ORIGINS = [
+	'http://localhost:5190',
+	'http://localhost:5191',
+	'http://localhost:5192',
+	'http://localhost:8081', // Expo web (Metro)
+	'http://127.0.0.1:8081',
+	'http://localhost:19006', // legacy Expo web port
+];
+
+const isDev = process.env.NODE_ENV !== 'production';
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const LAN_ORIGIN = /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/;
+
+function corsOrigin(origin, callback) {
+	if (!origin) return callback(null, true);
+	if (PRODUCTION_ORIGINS.includes(origin)) return callback(null, true);
+	if (DEV_ORIGINS.includes(origin)) return callback(null, true);
+	if (isDev && (LOCAL_ORIGIN.test(origin) || LAN_ORIGIN.test(origin))) return callback(null, true);
+	callback(new Error(`CORS blocked origin: ${origin}`));
+}
+
 // Middleware
 app.use(
 	cors({
-		origin: ['http://localhost:5190', 'http://localhost:5191', 'http://localhost:5192', 'https://meetloka.com'],
+		origin: corsOrigin,
 		credentials: true,
 	}),
 );

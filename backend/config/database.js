@@ -34,6 +34,7 @@ export async function connectToDatabase() {
     console.log(`✓ Using database: ${DB_NAME}`);
 
     // Create indexes for trips collection
+    await db.collection("trips").createIndex({ id: 1 }, { unique: true, sparse: true });
     await db.collection("trips").createIndex({ createdAt: -1 });
     await db.collection("trips").createIndex({ startDate: 1 });
 
