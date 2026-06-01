@@ -3,6 +3,36 @@ import googleApi from '../services/googleApi.js'
 
 const router = express.Router()
 
+// Search hotels near a trip destination (Google Places Text Search)
+router.get('/search', async (req, res) => {
+  try {
+    const destination = (req.query.destination || '').trim()
+    const query = (req.query.query || '').trim()
+
+    if (!destination) {
+      return res.status(400).json({ error: 'destination query parameter is required' })
+    }
+
+    // Bias results to the trip destination coordinates when possible.
+    const geo = await googleApi.searchPlaceByText(destination)
+    const location = geo?.location || null
+
+    const searchQuery = query
+      ? `${query} hotel ${destination}`
+      : `hotels in ${destination}`
+
+    const hotels = await googleApi.textSearch(searchQuery, location, 20)
+
+    res.json({ hotels })
+  } catch (error) {
+    console.error('Hotel search error:', error.message)
+    res.status(500).json({
+      error: 'Failed to search hotels',
+      message: error.message,
+    })
+  }
+})
+
 // Hotel autocomplete
 router.get('/autocomplete', async (req, res) => {
   try {

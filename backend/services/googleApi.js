@@ -175,7 +175,7 @@ class GoogleAPIService {
     }
   }
 
-  // Text Search for places (for AI integration)
+  // Text Search for places (returns first match — used for geocoding)
   async searchPlaceByText(query, location = null) {
     if (!this.apiKey) {
       throw new Error("Google API key not configured");
@@ -232,6 +232,60 @@ class GoogleAPIService {
     } catch (error) {
       console.error("Google Text Search API error:", error.message);
       return null;
+    }
+  }
+
+  /**
+   * Text Search — returns multiple lodging results, optionally biased to a location.
+   */
+  async textSearch(query, location = null, limit = 20) {
+    if (!this.apiKey) {
+      throw new Error("Google API key not configured");
+    }
+
+    try {
+      const params = {
+        query,
+        key: this.apiKey,
+        language: "en",
+        type: "lodging",
+      };
+
+      if (location?.lat != null && location?.lng != null) {
+        params.location = `${location.lat},${location.lng}`;
+        params.radius = 50000;
+      }
+
+      const response = await axios.get(
+        `${GOOGLE_PLACES_BASE_URL}/textsearch/json`,
+        { params }
+      );
+
+      if (
+        response.data.status !== "OK" &&
+        response.data.status !== "ZERO_RESULTS"
+      ) {
+        console.error(`Google Text Search API error: ${response.data.status}`);
+        return [];
+      }
+
+      return (response.data.results || []).slice(0, limit).map((place) => ({
+        placeId: place.place_id,
+        name: place.name,
+        formattedAddress: place.formatted_address,
+        rating: place.rating ?? null,
+        userRatingsTotal: place.user_ratings_total ?? 0,
+        lat: place.geometry?.location?.lat ?? null,
+        lng: place.geometry?.location?.lng ?? null,
+        priceLevel: place.price_level ?? null,
+        photoReference: place.photos?.[0]?.photo_reference ?? null,
+        imageUrl: place.photos?.[0]?.photo_reference
+          ? this.getPhotoUrl(place.photos[0].photo_reference, 400)
+          : null,
+      }));
+    } catch (error) {
+      console.error("Google Text Search API error:", error.message);
+      return [];
     }
   }
 
