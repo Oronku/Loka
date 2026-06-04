@@ -2,6 +2,11 @@ import express from "express";
 import { memoryStore } from "../config/memoryStore.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
+import {
+  buildTimeline,
+  rebuildTripTimeline,
+  scheduleTimelineRebuild,
+} from "../services/timelineService/index.js";
 
 const router = express.Router();
 
@@ -9,6 +14,41 @@ router.use(verifyGoogleToken);
 
 function getTripsCollection() {
   return tripService.getTripsCollection();
+}
+
+function tripIdOf(trip) {
+  return trip?.id || trip?._id?.toString() || null;
+}
+
+function timelineSnapshot(trip) {
+  const { events, unscheduled } = buildTimeline(trip);
+  return {
+    version: 0,
+    mode: "driving",
+    events,
+    unscheduled,
+    legs: [],
+    generatedAt: new Date().toISOString(),
+    pending: true,
+  };
+}
+
+
+function withTimelineSnapshot(trip) {
+  if (!trip) return trip;
+  if (trip.timelineSnapshot) return trip;
+  const id = tripIdOf(trip);
+  if (id) scheduleTimelineRebuild(id);
+  return { ...trip, timelineSnapshot: timelineSnapshot(trip) };
+}
+
+
+function respondWithTimeline(res, trip, status = 200) {
+  const id = tripIdOf(trip);
+  if (id) scheduleTimelineRebuild(id);
+  return res
+    .status(status)
+    .json({ ...trip, timelineSnapshot: timelineSnapshot(trip) });
 }
 
 async function loadTrip(req, res, { requireEdit = true } = {}) {
@@ -102,10 +142,47 @@ router.get("/:id", async (req, res) => {
       req.user.id
     );
 
-    res.json(response);
+    // Opening a trip returns the stored snapshot (no travel recompute).
+    res.json(withTimelineSnapshot(response));
   } catch (error) {
     console.error("Error fetching trip:", error);
     res.status(500).json({ error: "Failed to fetch trip" });
+  }
+});
+
+// Return the trip's timeline snapshot (events + cached travel legs).
+// Returns the stored snapshot as-is; rebuilds synchronously only when missing,
+// stale (cheap placeholder), a different travel mode is requested, or
+// ?refresh=true is passed.
+router.get("/:id/timeline", async (req, res) => {
+  try {
+    const trip = await loadTrip(req, res, { requireEdit: false });
+    if (!trip) return;
+
+    const allowedModes = ["driving", "walking", "transit", "bicycling"];
+    const mode = allowedModes.includes(req.query.mode)
+      ? req.query.mode
+      : "driving";
+
+    const refresh = req.query.refresh === "true";
+    const snapshot = trip.timelineSnapshot;
+    const needsRebuild =
+      refresh ||
+      !snapshot ||
+      snapshot.pending ||
+      snapshot.version === 0 ||
+      snapshot.mode !== mode;
+
+    const timeline = needsRebuild
+      ? await rebuildTripTimeline(trip.id, { mode })
+      : snapshot;
+
+    res.json(timeline);
+  } catch (error) {
+    console.error("Error building trip timeline:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to build timeline", message: error.message });
   }
 });
 
@@ -185,6 +262,7 @@ router.put("/:id", async (req, res) => {
       console.log("✓ Trip updated in memory:", existingTrip.id);
     }
 
+    scheduleTimelineRebuild(existingTrip.id);
     res.json(tripService.normalizeDocument(updated));
   } catch (error) {
     console.error("Error updating trip:", error);
@@ -501,6 +579,8 @@ router.post("/:id/flights", async (req, res) => {
       error: "flightNumber, departureDateTime and arrivalDateTime are required",
     });
   }
+  // Optional departureAirport/arrivalAirport (IATA code or name, stored as-is)
+  // let the timeline route travel to/from the correct airports.
   trip.flights.push(flight);
 
   const collection = getTripsCollection();
@@ -515,7 +595,7 @@ router.post("/:id/flights", async (req, res) => {
     updated = memoryStore.trips.update(trip.id, { flights: trip.flights });
   }
 
-  res.status(201).json(updated);
+  respondWithTimeline(res, updated, 201);
 });
 
 router.post("/:id/hotels", async (req, res) => {
@@ -541,7 +621,7 @@ router.post("/:id/hotels", async (req, res) => {
     updated = memoryStore.trips.update(trip.id, { hotels: trip.hotels });
   }
 
-  res.status(201).json(updated);
+  respondWithTimeline(res, updated, 201);
 });
 
 router.post("/:id/rides", async (req, res) => {
@@ -551,6 +631,8 @@ router.post("/:id/rides", async (req, res) => {
   if (!ride.pickup || !ride.dropoff) {
     return res.status(400).json({ error: "pickup and dropoff are required" });
   }
+  // Optional pickupDateTime/dropoffDateTime (stored as-is) let the ride be
+  // ordered in the timeline; without them it falls into the unscheduled bucket.
   trip.rides.push(ride);
 
   const collection = getTripsCollection();
@@ -565,7 +647,7 @@ router.post("/:id/rides", async (req, res) => {
     updated = memoryStore.trips.update(trip.id, { rides: trip.rides });
   }
 
-  res.status(201).json(updated);
+  respondWithTimeline(res, updated, 201);
 });
 
 router.post("/:id/attractions", async (req, res) => {
@@ -598,7 +680,7 @@ router.post("/:id/attractions", async (req, res) => {
     });
   }
 
-  res.status(201).json(updated);
+  respondWithTimeline(res, updated, 201);
 });
 
 router.delete("/:id/:type/:idx", async (req, res) => {
@@ -625,7 +707,7 @@ router.delete("/:id/:type/:idx", async (req, res) => {
     updated = memoryStore.trips.update(trip.id, { [type]: trip[type] });
   }
 
-  res.json(updated);
+  respondWithTimeline(res, updated, 200);
 });
 
 // ============= EXPENSE MANAGEMENT ENDPOINTS =============
