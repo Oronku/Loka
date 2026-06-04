@@ -4,6 +4,7 @@ import { memoryStore } from "../config/memoryStore.js";
 import {
   COLLECTION_NAME,
   PROTECTED_UPDATE_FIELDS,
+  SERVER_MANAGED_FIELDS,
   buildParticipant,
   buildPendingInvite,
   buildTripDocument,
@@ -95,7 +96,7 @@ export function sanitizeUpdatePayload(body, access) {
   delete updateData._id;
 
   const fieldsToStrip = access.isOwner
-    ? ["_id", "userId", "userEmail", "createdAt"]
+    ? ["_id", "userId", "userEmail", "createdAt", ...SERVER_MANAGED_FIELDS]
     : PROTECTED_UPDATE_FIELDS;
 
   for (const field of fieldsToStrip) {
