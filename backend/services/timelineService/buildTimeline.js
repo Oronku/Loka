@@ -43,12 +43,48 @@ export function airportQuery(value) {
   return trimmed;
 }
 
+/**
+ * Combine a date with a separate time-of-day into one datetime string.
+ * Many items store a date ("2026-06-07") and a time ("15:00") separately;
+ * timelining needs them merged so the event has a real sort key.
+ */
+export function combineDateAndTime(dateValue, timeValue) {
+  if (!dateValue) return timeValue || null;
+  const dateStr = String(dateValue).trim();
+
+  // Already a full datetime — use as-is.
+  if (/T\d{1,2}:\d{2}/.test(dateStr) || /\d{1,2}:\d{2}/.test(dateStr.slice(10))) {
+    return dateStr;
+  }
+
+  if (timeValue && /^\d{1,2}:\d{2}/.test(String(timeValue).trim())) {
+    const datePart = dateStr.slice(0, 10);
+    const [h, m] = String(timeValue).trim().split(":");
+    const hh = h.padStart(2, "0");
+    const mm = (m || "00").slice(0, 2).padStart(2, "0");
+    return `${datePart}T${hh}:${mm}`;
+  }
+
+  return dateStr;
+}
+
 function pushEvent(target, event) {
   if (Number.isNaN(event.sortKey)) {
     target.unscheduled.push({ ...event, sortKey: null });
   } else {
     target.events.push(event);
   }
+}
+
+/** Collapse events that are effectively identical (e.g. a duplicated booking). */
+function dedupeEvents(events) {
+  const seen = new Set();
+  return events.filter((e) => {
+    const sig = [e.type, e.title, e.start, e.end, e.location].join("|");
+    if (seen.has(sig)) return false;
+    seen.add(sig);
+    return true;
+  });
 }
 
 /**
@@ -61,10 +97,27 @@ export function buildTimeline(trip) {
   if (!trip || typeof trip !== "object") return result;
 
   (trip.flights || []).forEach((flight, sourceIndex) => {
-    const departureAirport = flight.departureAirport || flight.from || null;
-    const arrivalAirport = flight.arrivalAirport || flight.to || null;
-    const departQuery = airportQuery(departureAirport);
-    const arriveQuery = airportQuery(arrivalAirport);
+    // Flights store airports under several possible field names depending on
+    // the source (flight search uses departureAirportCode/arrivalAirportCode).
+    const departureAirport =
+      flight.departureAirportCode ||
+      flight.departureAirport ||
+      flight.from ||
+      null;
+    const arrivalAirport =
+      flight.arrivalAirportCode || flight.arrivalAirport || flight.to || null;
+
+    // Fall back to the city name when no airport code is present.
+    const departQuery =
+      airportQuery(departureAirport) ||
+      (flight.departureCity ? `${flight.departureCity} airport` : null);
+    const arriveQuery =
+      airportQuery(arrivalAirport) ||
+      (flight.arrivalCity ? `${flight.arrivalCity} airport` : null);
+
+    const departLabel = departureAirport || flight.departureCity || null;
+    const arriveLabel = arrivalAirport || flight.arrivalCity || null;
+
     pushEvent(result, {
       type: "flight",
       sourceIndex,
@@ -72,8 +125,8 @@ export function buildTimeline(trip) {
       subtitle:
         [
           flight.airline,
-          departureAirport && arrivalAirport
-            ? `${departureAirport} \u2192 ${arrivalAirport}`
+          departLabel && arriveLabel
+            ? `${departLabel} \u2192 ${arriveLabel}`
             : null,
         ]
           .filter(Boolean)
@@ -81,30 +134,39 @@ export function buildTimeline(trip) {
       start: flight.departureDateTime || null,
       end: flight.arrivalDateTime || null,
       arrival: flight.arrivalDateTime || null,
-      departureAirport,
-      arrivalAirport,
+      departureAirport: departLabel,
+      arrivalAirport: arriveLabel,
       // You travel TO the departure airport, and continue FROM the arrival airport.
       arriveLocation: departQuery || extractLocation(flight),
       departLocation: arriveQuery || extractLocation(flight),
-      location: departQuery || extractLocation(flight),
+      location: arriveQuery || departQuery || extractLocation(flight),
       sortKey: toTime(flight.departureDateTime),
       raw: flight,
     });
   });
 
   (trip.hotels || []).forEach((hotel, sourceIndex) => {
-    const arrival = hotel.arrivalTime || hotel.checkIn || null;
+    // checkIn is a date ("2026-06-07"); arrivalTime is a time of day ("15:00").
+    // Combine them so the check-in has a real timestamp and is not "unscheduled".
+    const checkInTime = hotel.arrivalTime || hotel.checkInTime || null;
+    const checkInAt = combineDateAndTime(hotel.checkIn, checkInTime);
+    const checkOutAt = combineDateAndTime(
+      hotel.checkOut,
+      hotel.checkOutTime || hotel.departureTime
+    );
+    const hotelLocation = extractLocation(hotel) || hotel.name || null;
+
     pushEvent(result, {
       type: "hotel-checkin",
       sourceIndex,
       title: hotel.name ? `Check in: ${hotel.name}` : "Hotel check-in",
       subtitle: hotel.name || null,
-      start: arrival,
-      end: arrival,
-      arrival,
-      checkInTime: hotel.checkIn || null,
-      location: extractLocation(hotel) || hotel.name || null,
-      sortKey: toTime(arrival),
+      start: checkInAt,
+      end: checkInAt,
+      arrival: checkInAt,
+      checkInTime,
+      location: hotelLocation,
+      sortKey: toTime(checkInAt),
       raw: hotel,
     });
 
@@ -113,11 +175,11 @@ export function buildTimeline(trip) {
       sourceIndex,
       title: hotel.name ? `Check out: ${hotel.name}` : "Hotel check-out",
       subtitle: hotel.name || null,
-      start: hotel.checkOut || null,
-      end: hotel.checkOut || null,
-      arrival: hotel.checkOut || null,
-      location: extractLocation(hotel) || hotel.name || null,
-      sortKey: toTime(hotel.checkOut),
+      start: checkOutAt,
+      end: checkOutAt,
+      arrival: checkOutAt,
+      location: hotelLocation,
+      sortKey: toTime(checkOutAt),
       raw: hotel,
     });
   });
@@ -158,6 +220,8 @@ export function buildTimeline(trip) {
     });
   });
 
+  result.events = dedupeEvents(result.events);
+  result.unscheduled = dedupeEvents(result.unscheduled);
   result.events.sort((a, b) => a.sortKey - b.sortKey);
   return result;
 }

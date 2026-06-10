@@ -5,6 +5,11 @@ import { toTime } from "./buildTimeline.js";
 const memoryGeocodeCache = new Map();
 const memoryTravelCache = new Map();
 
+// Buffer added after a flight lands before any onward drive can begin
+// (deplaning, baggage, walking to ground transport). Applied to the leg/transfer
+// that immediately follows a flight.
+const POST_FLIGHT_BUFFER_SECONDS = 30 * 60;
+
 function destinationName(trip) {
   const dest = (trip?.destinations || [])[0];
   if (!dest) return "";
@@ -162,6 +167,10 @@ export async function calculateTravelLegs(trip, events, opts = {}) {
       const origin = departLocations[i];
       const destination = arriveLocations[i + 1];
 
+      // After a flight, add a fixed buffer before the onward drive can start.
+      const bufferSeconds =
+        from.type === "flight" ? POST_FLIGHT_BUFFER_SECONDS : 0;
+
       const leg = {
         fromIndex: i,
         toIndex: i + 1,
@@ -172,9 +181,11 @@ export async function calculateTravelLegs(trip, events, opts = {}) {
         durationSeconds: null,
         durationText: null,
         distanceText: null,
+        bufferSeconds,
         gapSeconds: null,
         tight: false,
         leaveBy: null,
+        estimatedArrival: null,
       };
 
       const prevEnd = toTime(from.end || from.start);
@@ -198,15 +209,28 @@ export async function calculateTravelLegs(trip, events, opts = {}) {
       leg.durationText = travel.durationText;
       leg.distanceText = travel.distanceText;
 
+      // When you reach the next place: end of previous event + post-flight
+      // buffer (if any) + travel duration. E.g. land at 20:10, +30 min to exit
+      // the airport, ~40 min drive -> reach the hotel ~21:20.
+      if (!Number.isNaN(prevEnd) && travel.durationSeconds != null) {
+        leg.estimatedArrival = new Date(
+          prevEnd + (bufferSeconds + travel.durationSeconds) * 1000
+        ).toISOString();
+      }
+
+      const effectiveTravel =
+        travel.durationSeconds != null
+          ? travel.durationSeconds + bufferSeconds
+          : null;
       if (
         leg.gapSeconds != null &&
-        travel.durationSeconds != null &&
-        travel.durationSeconds > leg.gapSeconds
+        effectiveTravel != null &&
+        effectiveTravel > leg.gapSeconds
       ) {
         leg.tight = true;
         if (!Number.isNaN(nextStart)) {
           leg.leaveBy = new Date(
-            nextStart - travel.durationSeconds * 1000
+            nextStart - effectiveTravel * 1000
           ).toISOString();
         }
       }
@@ -214,4 +238,106 @@ export async function calculateTravelLegs(trip, events, opts = {}) {
       return leg;
     })
   );
+}
+
+/** Day index (UTC) for matching events that fall on the same calendar day. */
+function dayIndex(value) {
+  const t = toTime(value);
+  return Number.isNaN(t) ? null : Math.floor(t / 86400000);
+}
+
+/**
+ * For each hotel check-in, find the relevant inbound flight and compute the
+ * airport -> hotel transfer (drive time + estimated hotel arrival).
+ *
+ * This is independent of timeline ordering: a same-day flight that lands at
+ * 20:10 is still matched to a 15:00 policy check-in. Returns "info card" style
+ * objects so the static check-in time is left untouched.
+ *
+ * @param {object} trip
+ * @param {object[]} events ordered events from buildTimeline
+ * @param {{ mode?: string }} [opts]
+ * @returns {Promise<object[]>} transfers
+ */
+export async function calculateArrivalTransfers(trip, events, opts = {}) {
+  const mode = opts.mode || "driving";
+  const flights = events.filter(
+    (e) => e.type === "flight" && e.departLocation && !Number.isNaN(toTime(e.end))
+  );
+  const checkins = events.filter((e) => e.type === "hotel-checkin");
+  if (flights.length === 0 || checkins.length === 0) return [];
+
+  return Promise.all(
+    checkins.map(async (checkin) => {
+      const checkinDay = dayIndex(checkin.start);
+
+      // Prefer the latest flight arriving on/before the check-in day; otherwise
+      // the flight whose arrival day is closest to the check-in.
+      const candidates = flights
+        .map((f) => ({ f, day: dayIndex(f.end), at: toTime(f.end) }))
+        .filter((c) => c.day != null);
+      const onOrBefore = candidates.filter(
+        (c) => checkinDay == null || c.day <= checkinDay
+      );
+      const pool = onOrBefore.length > 0 ? onOrBefore : candidates;
+      pool.sort((a, b) =>
+        checkinDay == null
+          ? b.at - a.at
+          : Math.abs(a.day - checkinDay) - Math.abs(b.day - checkinDay) ||
+            b.at - a.at
+      );
+      const flight = pool[0]?.f;
+      if (!flight) return null;
+
+      const transfer = {
+        type: "arrival-transfer",
+        hotelTitle: checkin.subtitle || checkin.title,
+        hotelSourceIndex: checkin.sourceIndex,
+        flightTitle: flight.title,
+        fromAirport: flight.arrivalAirport || null,
+        mode,
+        flightArrival: flight.end || null,
+        policyCheckInTime: checkin.checkInTime || null,
+        bufferSeconds: POST_FLIGHT_BUFFER_SECONDS,
+        durationSeconds: null,
+        durationText: null,
+        distanceText: null,
+        estimatedArrival: null,
+        unresolved: false,
+      };
+
+      const origin = await resolveLocationString(
+        flight.departLocation ?? flight.location,
+        trip
+      );
+      const destination = await resolveLocationString(
+        checkin.arriveLocation ?? checkin.location,
+        trip
+      );
+      if (!origin || !destination) {
+        transfer.unresolved = true;
+        return transfer;
+      }
+
+      const travel = await getTravelTime(origin, destination, mode);
+      if (!travel) {
+        transfer.unresolved = true;
+        return transfer;
+      }
+
+      transfer.durationSeconds = travel.durationSeconds;
+      transfer.durationText = travel.durationText;
+      transfer.distanceText = travel.distanceText;
+
+      // Land + 30 min to clear the airport + drive time -> reach the hotel.
+      const arr = toTime(flight.end);
+      if (!Number.isNaN(arr) && travel.durationSeconds != null) {
+        transfer.estimatedArrival = new Date(
+          arr + (POST_FLIGHT_BUFFER_SECONDS + travel.durationSeconds) * 1000
+        ).toISOString();
+      }
+
+      return transfer;
+    })
+  ).then((list) => list.filter(Boolean));
 }

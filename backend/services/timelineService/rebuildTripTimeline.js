@@ -1,7 +1,10 @@
 import { memoryStore } from "../../config/memoryStore.js";
 import { findById, getTripsCollection } from "../trip.service.js";
 import { buildTimeline } from "./buildTimeline.js";
-import { calculateTravelLegs } from "./calculateTravelLegs.js";
+import {
+  calculateTravelLegs,
+  calculateArrivalTransfers,
+} from "./calculateTravelLegs.js";
 
 export const TIMELINE_SNAPSHOT_VERSION = 1;
 const DEFAULT_MODE = "driving";
@@ -15,7 +18,10 @@ const DEFAULT_MODE = "driving";
 export async function buildTripTimeline(trip, opts = {}) {
   const mode = opts.mode || DEFAULT_MODE;
   const { events, unscheduled } = buildTimeline(trip);
-  const legs = await calculateTravelLegs(trip, events, { mode });
+  const [legs, transfers] = await Promise.all([
+    calculateTravelLegs(trip, events, { mode }),
+    calculateArrivalTransfers(trip, events, { mode }),
+  ]);
 
   return {
     version: TIMELINE_SNAPSHOT_VERSION,
@@ -23,8 +29,51 @@ export async function buildTripTimeline(trip, opts = {}) {
     events,
     unscheduled,
     legs,
+    transfers,
     generatedAt: new Date().toISOString(),
+    pending: false,
   };
+}
+
+/**
+ * Cheap, instant snapshot: correct event ordering but no travel times yet.
+ * Marked `pending: true` so clients know travel legs/transfers are still being
+ * computed in the background. Does NOT perform any external calls.
+ * @param {object} trip
+ * @param {{ mode?: string }} [opts]
+ */
+export function buildPendingSnapshot(trip, opts = {}) {
+  const mode = opts.mode || DEFAULT_MODE;
+  const { events, unscheduled } = buildTimeline(trip);
+  return {
+    version: 0,
+    mode,
+    events,
+    unscheduled,
+    legs: [],
+    transfers: [],
+    generatedAt: new Date().toISOString(),
+    pending: true,
+  };
+}
+
+function snapshotTripId(trip) {
+  return trip?.id || trip?._id?.toString() || null;
+}
+
+/**
+ * Immediately persist a `pending` snapshot reflecting the trip's current items,
+ * so reads during the background rebuild window are fresh (never stale) and
+ * clearly flagged as still calculating. Returns the snapshot (or null).
+ * @param {object} trip
+ * @param {{ mode?: string }} [opts]
+ */
+export async function markTripTimelinePending(trip, opts = {}) {
+  const tripId = snapshotTripId(trip);
+  if (!tripId) return null;
+  const snapshot = buildPendingSnapshot(trip, opts);
+  await persistSnapshot(tripId, snapshot);
+  return snapshot;
 }
 
 async function persistSnapshot(tripId, snapshot) {
@@ -90,4 +139,20 @@ export function scheduleTimelineRebuild(tripId, opts = {}) {
     return;
   }
   runRebuild(tripId, opts);
+}
+
+/**
+ * Ensure a fresh full snapshot exists, blocking until it does. If a background
+ * rebuild is already in flight for this trip, await it instead of starting a
+ * second one (so we never double-call the travel APIs). Returns the snapshot.
+ * @param {string} tripId
+ * @param {{ mode?: string }} [opts]
+ * @returns {Promise<object|null>}
+ */
+export async function ensureTripTimeline(tripId, opts = {}) {
+  if (!tripId) return null;
+  if (inFlight.has(tripId)) {
+    return (await inFlight.get(tripId)) || null;
+  }
+  return (await runRebuild(tripId, opts)) || null;
 }

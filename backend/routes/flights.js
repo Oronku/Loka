@@ -7,6 +7,23 @@ const router = express.Router()
 const AERODATABOX_BASE_URL = 'https://aerodatabox.p.rapidapi.com'
 const RAPIDAPI_HOST = 'aerodatabox.p.rapidapi.com'
 
+/**
+ * Normalize a datetime to strict ISO 8601, preserving the local offset.
+ * AeroDataBox returns values like "2026-06-07 17:30+03:00" (space instead of
+ * "T", no seconds); this converts them to "2026-06-07T17:30:00+03:00" so
+ * downstream parsing (timeline, new Date()) is unambiguous.
+ */
+function toIsoDateTime(value) {
+  if (!value) return value
+  const m = String(value)
+    .trim()
+    .match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(:\d{2})?\s*(Z|[+-]\d{2}:?\d{2})?$/)
+  if (!m) return value
+  const [, date, hm, sec, tz] = m
+  const offset = tz ? tz.replace(/^([+-]\d{2})(\d{2})$/, '$1:$2') : ''
+  return `${date}T${hm}${sec || ':00'}${offset}`
+}
+
 // Search flight by flight number and date
 router.get('/search/:flightNumber', async (req, res) => {
   try {
@@ -52,19 +69,44 @@ router.get('/search/:flightNumber', async (req, res) => {
       })
     }
 
-    // Get the first flight from results (usually most relevant)
-    const flight = response.data[0]
-    
-    // Extract datetime info
-    const departureTime = flight.departure?.scheduledTime?.local || 
-                          flight.departure?.scheduledTime?.utc || 
-                          flight.departure?.scheduledTimeLocal || 
-                          flight.departure?.scheduledTimeUtc
-    
-    const arrivalTime = flight.arrival?.scheduledTime?.local || 
-                        flight.arrival?.scheduledTime?.utc || 
-                        flight.arrival?.scheduledTimeLocal || 
-                        flight.arrival?.scheduledTimeUtc
+    // AeroDataBox can return multiple instances for a flight number (adjacent
+    // days, multi-leg, codeshares). Pick the one that actually operates on the
+    // requested date instead of blindly taking the first result.
+    const localDate = (f) => {
+      const dep =
+        f.departure?.scheduledTime?.local ||
+        f.departure?.scheduledTime?.utc ||
+        f.departure?.scheduledTimeLocal ||
+        f.departure?.scheduledTimeUtc
+      return dep ? String(dep).slice(0, 10) : null
+    }
+
+    const flight =
+      response.data.find((f) => localDate(f) === date) || null
+
+    if (!flight) {
+      const availableDates = [...new Set(response.data.map(localDate).filter(Boolean))]
+      return res.status(404).json({
+        error: 'Flight not found on requested date',
+        message: `No ${flightNumber} flight operates on ${date}.`,
+        availableDates,
+      })
+    }
+
+    // Extract datetime info (normalized to strict ISO 8601)
+    const departureTime = toIsoDateTime(
+      flight.departure?.scheduledTime?.local ||
+        flight.departure?.scheduledTime?.utc ||
+        flight.departure?.scheduledTimeLocal ||
+        flight.departure?.scheduledTimeUtc
+    )
+
+    const arrivalTime = toIsoDateTime(
+      flight.arrival?.scheduledTime?.local ||
+        flight.arrival?.scheduledTime?.utc ||
+        flight.arrival?.scheduledTimeLocal ||
+        flight.arrival?.scheduledTimeUtc
+    )
     
     // Calculate duration if both times are available
     let durationMinutes = 0

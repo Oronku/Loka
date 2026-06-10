@@ -3,8 +3,10 @@ import { memoryStore } from "../config/memoryStore.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
 import {
-  buildTimeline,
+  buildPendingSnapshot,
+  markTripTimelinePending,
   rebuildTripTimeline,
+  ensureTripTimeline,
   scheduleTimelineRebuild,
 } from "../services/timelineService/index.js";
 
@@ -20,35 +22,85 @@ function tripIdOf(trip) {
   return trip?.id || trip?._id?.toString() || null;
 }
 
-function timelineSnapshot(trip) {
-  const { events, unscheduled } = buildTimeline(trip);
-  return {
-    version: 0,
-    mode: "driving",
-    events,
-    unscheduled,
-    legs: [],
-    generatedAt: new Date().toISOString(),
-    pending: true,
-  };
-}
-
-
-function withTimelineSnapshot(trip) {
+/**
+ * Attach a complete timeline snapshot for a trip read. When the stored snapshot
+ * is already full (pending:false) it's returned instantly with no recompute.
+ * When it's missing or still a cheap `pending` placeholder, compute the travel
+ * times on the spot (coalescing with any in-flight background rebuild) so the
+ * caller always gets legs + transfers — clients only ever hit GET /:id.
+ */
+async function withTimelineSnapshot(trip) {
   if (!trip) return trip;
-  if (trip.timelineSnapshot) return trip;
+  const snapshot = trip.timelineSnapshot;
+  const needsRebuild = !snapshot || snapshot.pending || snapshot.version === 0;
+  if (!needsRebuild) return trip;
+
   const id = tripIdOf(trip);
-  if (id) scheduleTimelineRebuild(id);
-  return { ...trip, timelineSnapshot: timelineSnapshot(trip) };
+  if (!id) return { ...trip, timelineSnapshot: buildPendingSnapshot(trip) };
+
+  const rebuilt = await ensureTripTimeline(id);
+  return { ...trip, timelineSnapshot: rebuilt || buildPendingSnapshot(trip) };
 }
 
-
+/**
+ * Respond to a mutating request immediately, while travel times compute in the
+ * background. We persist a fresh `pending` snapshot first so any read during
+ * the rebuild window reflects the latest items (never stale) and is clearly
+ * flagged as still calculating; clients re-fetch until `pending` is false.
+ */
 function respondWithTimeline(res, trip, status = 200) {
   const id = tripIdOf(trip);
-  if (id) scheduleTimelineRebuild(id);
-  return res
-    .status(status)
-    .json({ ...trip, timelineSnapshot: timelineSnapshot(trip) });
+  const snapshot = buildPendingSnapshot(trip);
+  if (id) {
+    markTripTimelinePending(trip)
+      .catch(() => {})
+      .finally(() => scheduleTimelineRebuild(id));
+  }
+  return res.status(status).json({ ...trip, timelineSnapshot: snapshot });
+}
+
+const MS_PER_DAY = 86400000;
+
+/**
+ * Return the first date value that falls outside the trip's date range
+ * (with a one-day tolerance for red-eyes / travel days), or null if all are
+ * within range. Validation is skipped when the trip has no start/end dates.
+ */
+function dateOutsideTripRange(trip, dateValues, toleranceDays = 1) {
+  if (!trip?.startDate || !trip?.endDate) return null;
+  const dayIndex = (v) => {
+    const t = new Date(v).getTime();
+    return Number.isNaN(t) ? null : Math.floor(t / MS_PER_DAY);
+  };
+  const startDay = dayIndex(trip.startDate);
+  const endDay = dayIndex(trip.endDate);
+  if (startDay == null || endDay == null) return null;
+
+  for (const value of dateValues) {
+    if (!value) continue;
+    const day = dayIndex(value);
+    if (day == null) continue;
+    if (day < startDay - toleranceDays || day > endDay + toleranceDays) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/** Reject an item whose date(s) fall outside the trip range. Returns true if rejected. */
+function rejectIfOutsideTripRange(res, trip, dateValues, label) {
+  const offending = dateOutsideTripRange(trip, dateValues);
+  if (!offending) return false;
+  res.status(400).json({
+    error: `${label} date is outside the trip dates`,
+    message: `This ${label.toLowerCase()} is dated ${String(offending).slice(
+      0,
+      10
+    )}, but the trip runs ${String(trip.startDate).slice(0, 10)} to ${String(
+      trip.endDate
+    ).slice(0, 10)}.`,
+  });
+  return true;
 }
 
 async function loadTrip(req, res, { requireEdit = true } = {}) {
@@ -142,8 +194,9 @@ router.get("/:id", async (req, res) => {
       req.user.id
     );
 
-    // Opening a trip returns the stored snapshot (no travel recompute).
-    res.json(withTimelineSnapshot(response));
+    // Opening a trip returns the full snapshot; recomputes only when missing
+    // or still pending, otherwise it's instant.
+    res.json(await withTimelineSnapshot(response));
   } catch (error) {
     console.error("Error fetching trip:", error);
     res.status(500).json({ error: "Failed to fetch trip" });
@@ -579,6 +632,15 @@ router.post("/:id/flights", async (req, res) => {
       error: "flightNumber, departureDateTime and arrivalDateTime are required",
     });
   }
+  if (
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [flight.departureDateTime, flight.arrivalDateTime],
+      "Flight"
+    )
+  )
+    return;
   // Optional departureAirport/arrivalAirport (IATA code or name, stored as-is)
   // let the timeline route travel to/from the correct airports.
   trip.flights.push(flight);
@@ -607,6 +669,15 @@ router.post("/:id/hotels", async (req, res) => {
       .status(400)
       .json({ error: "name, checkIn and checkOut are required" });
   }
+  if (
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [hotel.checkIn, hotel.checkOut],
+      "Hotel"
+    )
+  )
+    return;
   trip.hotels.push(hotel);
 
   const collection = getTripsCollection();
@@ -631,6 +702,15 @@ router.post("/:id/rides", async (req, res) => {
   if (!ride.pickup || !ride.dropoff) {
     return res.status(400).json({ error: "pickup and dropoff are required" });
   }
+  if (
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [ride.pickupDateTime, ride.dropoffDateTime],
+      "Ride"
+    )
+  )
+    return;
   // Optional pickupDateTime/dropoffDateTime (stored as-is) let the ride be
   // ordered in the timeline; without them it falls into the unscheduled bucket.
   trip.rides.push(ride);
@@ -659,6 +739,15 @@ router.post("/:id/attractions", async (req, res) => {
       .status(400)
       .json({ error: "name and scheduledDate are required" });
   }
+  if (
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [attraction.scheduledDateTime, attraction.scheduledDate],
+      "Attraction"
+    )
+  )
+    return;
   trip.attractions.push(attraction);
 
   const collection = getTripsCollection();
