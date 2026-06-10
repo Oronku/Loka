@@ -12,7 +12,11 @@ export const PROTECTED_UPDATE_FIELDS = [
   "sharedWith",
   "pendingInvites",
   "userChecklists",
+  "timelineSnapshot",
 ];
+
+/** Server-managed fields no client (even the owner) may set directly */
+export const SERVER_MANAGED_FIELDS = ["timelineSnapshot"];
 
 /**
  * @typedef {Object} TripParticipant
@@ -102,6 +106,7 @@ export function buildTripDocument(tripData, owner) {
     sharedWith: tripData.sharedWith || [],
     pendingInvites: tripData.pendingInvites || [],
     userChecklists: tripData.userChecklists || [],
+    timelineSnapshot: null,
     createdAt: now,
     updatedAt: now,
   };
