@@ -65,7 +65,8 @@ class GoogleAPIService {
       "opening_hours",
       "photos",
       "reviews",
-    ]
+    ],
+    language = "en"
   ) {
     if (!this.apiKey) {
       throw new Error("Google API key not configured");
@@ -79,7 +80,7 @@ class GoogleAPIService {
             place_id: placeId,
             fields: fields.join(","),
             key: this.apiKey,
-            language: "en",
+            language,
           },
         }
       );
@@ -236,9 +237,9 @@ class GoogleAPIService {
   }
 
   /**
-   * Text Search — returns multiple lodging results, optionally biased to a location.
+   * Text Search — returns multiple place results, optionally biased to a location.
    */
-  async textSearch(query, location = null, limit = 20) {
+  async searchPlacesByText(query, location = null, { type = null, limit = 20 } = {}) {
     if (!this.apiKey) {
       throw new Error("Google API key not configured");
     }
@@ -248,8 +249,11 @@ class GoogleAPIService {
         query,
         key: this.apiKey,
         language: "en",
-        type: "lodging",
       };
+
+      if (type) {
+        params.type = type;
+      }
 
       if (location?.lat != null && location?.lng != null) {
         params.location = `${location.lat},${location.lng}`;
@@ -277,6 +281,7 @@ class GoogleAPIService {
         userRatingsTotal: place.user_ratings_total ?? 0,
         lat: place.geometry?.location?.lat ?? null,
         lng: place.geometry?.location?.lng ?? null,
+        types: place.types || [],
         priceLevel: place.price_level ?? null,
         photoReference: place.photos?.[0]?.photo_reference ?? null,
         imageUrl: place.photos?.[0]?.photo_reference
@@ -287,6 +292,17 @@ class GoogleAPIService {
       console.error("Google Text Search API error:", error.message);
       return [];
     }
+  }
+
+  /**
+   * Text Search — returns multiple lodging results, optionally biased to a location.
+   */
+  async textSearch(query, location = null, limit = 20) {
+    if (!this.apiKey) {
+      throw new Error("Google API key not configured");
+    }
+
+    return this.searchPlacesByText(query, location, { type: "lodging", limit });
   }
 
   // Get photo URL from photo reference

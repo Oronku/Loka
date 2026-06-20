@@ -3,6 +3,88 @@ import googleApi from "../services/googleApi.js";
 
 const router = express.Router();
 
+const ATTRACTION_CATEGORY_TYPES = {
+  all: "tourist_attraction",
+  restaurant: "restaurant",
+  park: "park",
+  show: "tourist_attraction",
+  museum: "museum",
+  event: "tourist_attraction",
+  themePark: "amusement_park",
+  waterPark: "amusement_park",
+};
+
+function mapNearbyPlace(place, googleApi) {
+  return {
+    placeId: place.place_id,
+    name: place.name,
+    formattedAddress: place.vicinity || place.formatted_address || "",
+    rating: place.rating ?? null,
+    userRatingsTotal: place.user_ratings_total ?? 0,
+    priceLevel: place.price_level ?? null,
+    types: place.types || [],
+    lat: place.geometry?.location?.lat ?? null,
+    lng: place.geometry?.location?.lng ?? null,
+    photoReference: place.photos?.[0]?.photo_reference ?? null,
+    imageUrl: place.photos?.[0]?.photo_reference
+      ? googleApi.getPhotoUrl(place.photos[0].photo_reference, 400)
+      : null,
+  };
+}
+
+// Search attractions near a trip destination (geocoded via Google Places)
+router.get("/attractions", async (req, res) => {
+  try {
+    const destination = (req.query.destination || "").trim();
+    const category = (req.query.category || "all").trim();
+    const query = (req.query.query || "").trim();
+    const radius = parseInt(req.query.radius || "10000", 10);
+
+    if (!destination) {
+      return res
+        .status(400)
+        .json({ error: "destination query parameter is required" });
+    }
+
+    const geo = await googleApi.searchPlaceByText(destination);
+    const location = geo?.location || null;
+
+    if (!location) {
+      return res
+        .status(400)
+        .json({ error: "Could not resolve trip destination" });
+    }
+
+    const googleType = ATTRACTION_CATEGORY_TYPES[category] || category;
+    let attractions;
+
+    if (query) {
+      const searchQuery = `${query} ${googleType.replace(/_/g, " ")} in ${destination}`;
+      attractions = await googleApi.searchPlacesByText(searchQuery, location, {
+        type: googleType === "tourist_attraction" ? null : googleType,
+        limit: 20,
+      });
+    } else {
+      const places = await googleApi.nearbySearch(location, radius, googleType);
+      attractions = places.map((place) => mapNearbyPlace(place, googleApi));
+    }
+
+    res.json({
+      attractions,
+      destination,
+      category,
+      location,
+      radius,
+    });
+  } catch (error) {
+    console.error("Attractions search error:", error.message);
+    res.status(500).json({
+      error: "Failed to search attractions",
+      message: error.message,
+    });
+  }
+});
+
 // Places autocomplete for attractions, restaurants, etc.
 router.get("/autocomplete", async (req, res) => {
   try {
@@ -40,40 +122,56 @@ router.get("/autocomplete", async (req, res) => {
 router.get("/details", async (req, res) => {
   try {
     const { place_id } = req.query;
+    const language = (req.query.language || "en").toString();
 
     if (!place_id) {
       return res.status(400).json({ error: "place_id parameter is required" });
     }
 
-    const details = await googleApi.getPlaceDetails(place_id, [
-      "place_id",
-      "name",
-      "formatted_address",
-      "rating",
-      "geometry",
-      "formatted_phone_number",
-      "website",
-      "opening_hours",
-      "photos",
-      "reviews",
-      "price_level",
-      "types",
-    ]);
+    const details = await googleApi.getPlaceDetails(
+      place_id,
+      [
+        "place_id",
+        "name",
+        "formatted_address",
+        "rating",
+        "geometry",
+        "formatted_phone_number",
+        "website",
+        "opening_hours",
+        "photos",
+        "reviews",
+        "price_level",
+        "types",
+        "editorial_summary",
+        "user_ratings_total",
+        "business_status",
+        "url",
+        "current_opening_hours",
+      ],
+      language
+    );
+
+    const hours = details.current_opening_hours || details.opening_hours;
 
     const placeDetails = {
       placeId: details.place_id,
       name: details.name,
       formattedAddress: details.formatted_address,
       rating: details.rating,
+      userRatingsTotal: details.user_ratings_total || 0,
       priceLevel: details.price_level,
       geometry: details.geometry,
+      description: details.editorial_summary?.overview || null,
       formattedPhoneNumber: details.formatted_phone_number,
       website: details.website,
+      googleMapsUrl: details.url || null,
+      businessStatus: details.business_status || null,
       types: details.types || [],
-      openingHours: details.opening_hours
+      openingHours: hours
         ? {
-            openNow: details.opening_hours.open_now,
-            weekdayText: details.opening_hours.weekday_text || [],
+            openNow: hours.open_now,
+            weekdayText: hours.weekday_text || [],
           }
         : null,
       photos:
