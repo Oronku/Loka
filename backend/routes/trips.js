@@ -2,6 +2,11 @@ import express from "express";
 import { memoryStore } from "../config/memoryStore.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
+import {
+  buildTimelineSnapshot,
+  detectAttractionConflicts,
+  findAttractionIndex,
+} from "../services/timeline.service.js";
 
 const router = express.Router();
 
@@ -502,17 +507,27 @@ router.post("/:id/flights", async (req, res) => {
     });
   }
   trip.flights.push(flight);
+  const timelineSnapshot = buildTimelineSnapshot(trip);
 
   const collection = getTripsCollection();
   let updated;
   if (collection) {
     await collection.updateOne(
       { id: trip.id },
-      { $set: { flights: trip.flights, updatedAt: new Date().toISOString() } }
+      {
+        $set: {
+          flights: trip.flights,
+          timelineSnapshot,
+          updatedAt: new Date().toISOString(),
+        },
+      }
     );
     updated = await collection.findOne({ id: trip.id });
   } else {
-    updated = memoryStore.trips.update(trip.id, { flights: trip.flights });
+    updated = memoryStore.trips.update(trip.id, {
+      flights: trip.flights,
+      timelineSnapshot,
+    });
   }
 
   res.status(201).json(updated);
@@ -528,17 +543,27 @@ router.post("/:id/hotels", async (req, res) => {
       .json({ error: "name, checkIn and checkOut are required" });
   }
   trip.hotels.push(hotel);
+  const timelineSnapshot = buildTimelineSnapshot(trip);
 
   const collection = getTripsCollection();
   let updated;
   if (collection) {
     await collection.updateOne(
       { id: trip.id },
-      { $set: { hotels: trip.hotels, updatedAt: new Date().toISOString() } }
+      {
+        $set: {
+          hotels: trip.hotels,
+          timelineSnapshot,
+          updatedAt: new Date().toISOString(),
+        },
+      }
     );
     updated = await collection.findOne({ id: trip.id });
   } else {
-    updated = memoryStore.trips.update(trip.id, { hotels: trip.hotels });
+    updated = memoryStore.trips.update(trip.id, {
+      hotels: trip.hotels,
+      timelineSnapshot,
+    });
   }
 
   res.status(201).json(updated);
@@ -572,12 +597,43 @@ router.post("/:id/attractions", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
   const attraction = req.body || {};
-  if (!attraction.name || !attraction.scheduledDate) {
-    return res
-      .status(400)
-      .json({ error: "name and scheduledDate are required" });
+  if (!attraction.name) {
+    return res.status(400).json({ error: "name is required" });
   }
-  trip.attractions.push(attraction);
+
+  // When scheduled, block overlaps with flights / other attractions unless the
+  // client explicitly forces the save (?force=true or body.force).
+  const force = req.query.force === "true" || attraction.force === true;
+  delete attraction.force;
+
+  // Upsert: if the same place (or name) is already on the trip, update it in
+  // place instead of creating a duplicate.
+  const existingIndex = findAttractionIndex(trip, attraction);
+
+  if (!force) {
+    const conflicts = detectAttractionConflicts(trip, attraction, {
+      excludeIndex: existingIndex,
+    });
+    if (conflicts.length > 0) {
+      return res.status(409).json({
+        error: "Schedule conflict",
+        code: "SCHEDULE_CONFLICT",
+        conflicts,
+      });
+    }
+  }
+
+  if (existingIndex >= 0) {
+    const prev = trip.attractions[existingIndex];
+    trip.attractions[existingIndex] = {
+      ...prev,
+      ...attraction,
+      id: prev.id || attraction.id,
+    };
+  } else {
+    trip.attractions.push(attraction);
+  }
+  const timelineSnapshot = buildTimelineSnapshot(trip);
 
   const collection = getTripsCollection();
   let updated;
@@ -587,6 +643,7 @@ router.post("/:id/attractions", async (req, res) => {
       {
         $set: {
           attractions: trip.attractions,
+          timelineSnapshot,
           updatedAt: new Date().toISOString(),
         },
       }
@@ -595,6 +652,7 @@ router.post("/:id/attractions", async (req, res) => {
   } else {
     updated = memoryStore.trips.update(trip.id, {
       attractions: trip.attractions,
+      timelineSnapshot,
     });
   }
 
@@ -612,17 +670,27 @@ router.delete("/:id/:type/:idx", async (req, res) => {
   if (Number.isNaN(i) || i < 0 || i >= trip[type].length)
     return res.status(400).json({ error: "Invalid index" });
   trip[type].splice(i, 1);
+  const timelineSnapshot = buildTimelineSnapshot(trip);
 
   const collection = getTripsCollection();
   let updated;
   if (collection) {
     await collection.updateOne(
       { id: trip.id },
-      { $set: { [type]: trip[type], updatedAt: new Date().toISOString() } }
+      {
+        $set: {
+          [type]: trip[type],
+          timelineSnapshot,
+          updatedAt: new Date().toISOString(),
+        },
+      }
     );
     updated = await collection.findOne({ id: trip.id });
   } else {
-    updated = memoryStore.trips.update(trip.id, { [type]: trip[type] });
+    updated = memoryStore.trips.update(trip.id, {
+      [type]: trip[type],
+      timelineSnapshot,
+    });
   }
 
   res.json(updated);
