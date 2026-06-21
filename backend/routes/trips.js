@@ -8,6 +8,7 @@ import {
   rebuildTripTimeline,
   ensureTripTimeline,
   scheduleTimelineRebuild,
+  buildTimelineSnapshot
 } from "../services/timelineService/index.js";
 
 const router = express.Router();
