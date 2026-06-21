@@ -8,8 +8,11 @@ import {
   rebuildTripTimeline,
   ensureTripTimeline,
   scheduleTimelineRebuild,
-  buildTimelineSnapshot
 } from "../services/timelineService/index.js";
+import {
+  detectAttractionConflicts,
+  findAttractionIndex,
+} from "../services/timeline.service.js";
 
 const router = express.Router();
 
@@ -645,7 +648,6 @@ router.post("/:id/flights", async (req, res) => {
   // Optional departureAirport/arrivalAirport (IATA code or name, stored as-is)
   // let the timeline route travel to/from the correct airports.
   trip.flights.push(flight);
-  const timelineSnapshot = buildTimelineSnapshot(trip);
 
   const collection = getTripsCollection();
   let updated;
@@ -655,7 +657,6 @@ router.post("/:id/flights", async (req, res) => {
       {
         $set: {
           flights: trip.flights,
-          timelineSnapshot,
           updatedAt: new Date().toISOString(),
         },
       }
@@ -664,7 +665,6 @@ router.post("/:id/flights", async (req, res) => {
   } else {
     updated = memoryStore.trips.update(trip.id, {
       flights: trip.flights,
-      timelineSnapshot,
     });
   }
 
@@ -690,7 +690,6 @@ router.post("/:id/hotels", async (req, res) => {
   )
     return;
   trip.hotels.push(hotel);
-  const timelineSnapshot = buildTimelineSnapshot(trip);
 
   const collection = getTripsCollection();
   let updated;
@@ -700,7 +699,6 @@ router.post("/:id/hotels", async (req, res) => {
       {
         $set: {
           hotels: trip.hotels,
-          timelineSnapshot,
           updatedAt: new Date().toISOString(),
         },
       }
@@ -709,7 +707,6 @@ router.post("/:id/hotels", async (req, res) => {
   } else {
     updated = memoryStore.trips.update(trip.id, {
       hotels: trip.hotels,
-      timelineSnapshot,
     });
   }
 
@@ -781,6 +778,16 @@ router.post("/:id/attractions", async (req, res) => {
     }
   }
 
+  if (
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [attraction.scheduledDateTime, attraction.scheduledDate],
+      "Attraction"
+    )
+  )
+    return;
+
   if (existingIndex >= 0) {
     const prev = trip.attractions[existingIndex];
     trip.attractions[existingIndex] = {
@@ -791,17 +798,6 @@ router.post("/:id/attractions", async (req, res) => {
   } else {
     trip.attractions.push(attraction);
   }
-  const timelineSnapshot = buildTimelineSnapshot(trip);
-  if (
-    rejectIfOutsideTripRange(
-      res,
-      trip,
-      [attraction.scheduledDateTime, attraction.scheduledDate],
-      "Attraction"
-    )
-  )
-    return;
-  trip.attractions.push(attraction);
 
   const collection = getTripsCollection();
   let updated;
@@ -811,7 +807,6 @@ router.post("/:id/attractions", async (req, res) => {
       {
         $set: {
           attractions: trip.attractions,
-          timelineSnapshot,
           updatedAt: new Date().toISOString(),
         },
       }
@@ -820,7 +815,6 @@ router.post("/:id/attractions", async (req, res) => {
   } else {
     updated = memoryStore.trips.update(trip.id, {
       attractions: trip.attractions,
-      timelineSnapshot,
     });
   }
 
@@ -838,7 +832,6 @@ router.delete("/:id/:type/:idx", async (req, res) => {
   if (Number.isNaN(i) || i < 0 || i >= trip[type].length)
     return res.status(400).json({ error: "Invalid index" });
   trip[type].splice(i, 1);
-  const timelineSnapshot = buildTimelineSnapshot(trip);
 
   const collection = getTripsCollection();
   let updated;
@@ -848,7 +841,6 @@ router.delete("/:id/:type/:idx", async (req, res) => {
       {
         $set: {
           [type]: trip[type],
-          timelineSnapshot,
           updatedAt: new Date().toISOString(),
         },
       }
@@ -857,7 +849,6 @@ router.delete("/:id/:type/:idx", async (req, res) => {
   } else {
     updated = memoryStore.trips.update(trip.id, {
       [type]: trip[type],
-      timelineSnapshot,
     });
   }
 
