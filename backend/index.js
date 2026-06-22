@@ -23,7 +23,14 @@ import organizedTripsRoutes from './routes/organizedTrips.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-const PRODUCTION_ORIGINS = ['https://meetloka.com'];
+const PRODUCTION_ORIGINS = [
+	'https://meetloka.com',
+	'https://www.meetloka.com',
+	'https://meetloka-front.vercel.app',
+	...(process.env.CORS_ORIGINS?.split(',')
+		.map((o) => o.trim())
+		.filter(Boolean) ?? []),
+];
 const DEV_ORIGINS = [
 	'http://localhost:5190',
 	'http://localhost:5191',
@@ -36,10 +43,12 @@ const DEV_ORIGINS = [
 const isDev = process.env.NODE_ENV !== 'production';
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 const LAN_ORIGIN = /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/;
+const VERCEL_PREVIEW_ORIGIN = /^https:\/\/meetloka-front(-[a-zA-Z0-9-]+)?\.vercel\.app$/;
 
 function corsOrigin(origin, callback) {
 	if (!origin) return callback(null, true);
 	if (PRODUCTION_ORIGINS.includes(origin)) return callback(null, true);
+	if (VERCEL_PREVIEW_ORIGIN.test(origin)) return callback(null, true);
 	if (DEV_ORIGINS.includes(origin)) return callback(null, true);
 	if (isDev && (LOCAL_ORIGIN.test(origin) || LAN_ORIGIN.test(origin))) return callback(null, true);
 	callback(new Error(`CORS blocked origin: ${origin}`));
