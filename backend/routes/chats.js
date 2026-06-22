@@ -193,31 +193,13 @@ function getUserRole(chat, userId) {
 router.post("/", async (req, res) => {
   try {
     const db = getDb();
-    const { contextType, contextId, participants, metadata } = req.body;
+    const { contextType, contextId, metadata } = req.body;
+    let participants = req.body.participants;
 
     // Validate context type
     const validContextTypes = ["quicket_item", "trip", "direct"];
     if (!validContextTypes.includes(contextType)) {
       return res.status(400).json({ error: "Invalid context type" });
-    }
-
-    // Validate participants
-    if (
-      !participants ||
-      !Array.isArray(participants) ||
-      participants.length === 0
-    ) {
-      return res.status(400).json({ error: "Participants are required" });
-    }
-
-    // Check if user creating the chat is included
-    const userInParticipants = participants.some(
-      (p) => p.userId === req.user.id,
-    );
-    if (!userInParticipants) {
-      return res
-        .status(400)
-        .json({ error: "Chat creator must be a participant" });
     }
 
     // Context-specific validation
@@ -267,6 +249,85 @@ router.post("/", async (req, res) => {
 
       tripService.normalizeDocument(trip);
 
+      // Auto-build participants for trip chat when frontend sends only
+      // contextType/contextId (no participants array).
+      if (!Array.isArray(participants) || participants.length === 0) {
+        const ownerId =
+          trip.userId ||
+          trip.ownerId ||
+          trip.createdBy ||
+          trip.owner?.userId ||
+          trip.owner?.id;
+
+        const ownerEmail =
+          trip.userEmail || trip.ownerEmail || trip.owner?.email || null;
+
+        const ownerName =
+          trip.userName || trip.ownerName || trip.owner?.name || ownerEmail || "Trip Owner";
+
+        const sharedMembers = Array.isArray(trip.sharedWith)
+          ? trip.sharedWith.map((member) => ({
+              userId: member.userId,
+              email:
+                member.email ||
+                `user${String(member.userId || "").slice(-4)}@example.com`,
+              name:
+                member.name ||
+                member.email?.split("@")[0] ||
+                `User ${String(member.userId || "").slice(-4)}`,
+              role: "member",
+            }))
+          : [];
+
+        participants = [];
+        if (ownerId) {
+          participants.push({
+            userId: ownerId,
+            email: ownerEmail,
+            name: ownerName,
+            role: "owner",
+          });
+        }
+        participants.push(...sharedMembers);
+
+        const requesterInParticipants = participants.some(
+          (p) => p.userId === req.user.id,
+        );
+        if (!requesterInParticipants) {
+          participants.push({
+            userId: req.user.id,
+            email: req.user.email,
+            name: req.user.name || req.user.email || "User",
+            role: "member",
+          });
+        }
+      }
+
+      if (!Array.isArray(participants) || participants.length === 0) {
+        return res.status(400).json({ error: "Participants are required" });
+      }
+
+      // Remove duplicates by userId
+      const seen = new Set();
+      participants = participants.filter((p) => {
+        if (!p?.userId || seen.has(p.userId)) return false;
+        seen.add(p.userId);
+        return true;
+      });
+
+      // Ensure requester is included
+      const userInParticipants = participants.some(
+        (p) => p.userId === req.user.id,
+      );
+      if (!userInParticipants) {
+        participants.push({
+          userId: req.user.id,
+          email: req.user.email,
+          name: req.user.name || req.user.email || "User",
+          role: "member",
+        });
+      }
+
       // Verify all participants are trip members
       const tripMemberIds = tripService.getMemberIds(trip);
       const invalidParticipants = participants.filter(
@@ -277,6 +338,23 @@ router.post("/", async (req, res) => {
         return res
           .status(403)
           .json({ error: "All participants must be trip members" });
+      }
+    } else {
+      if (
+        !participants ||
+        !Array.isArray(participants) ||
+        participants.length === 0
+      ) {
+        return res.status(400).json({ error: "Participants are required" });
+      }
+
+      const userInParticipants = participants.some(
+        (p) => p.userId === req.user.id,
+      );
+      if (!userInParticipants) {
+        return res
+          .status(400)
+          .json({ error: "Chat creator must be a participant" });
       }
     }
 
@@ -573,10 +651,9 @@ router.post("/:chatId/messages", async (req, res) => {
       },
     );
 
-    // If AI chat, trigger AI response
-    if (isAiChat) {
-      // Run in background, don't await
-      processAiResponse(db, chatId, req.user.id, text);
+    // If AI chat (or trip chat), trigger AI response
+    if (isAiChat || chat.contextType === "trip") {
+      processAiResponse(db, chatId, req.user.id, text, chat);
     }
 
     res.status(201).json({
@@ -1006,7 +1083,7 @@ router.post("/find-existing", async (req, res) => {
 });
 
 // Process AI response
-async function processAiResponse(db, chatId, userId, userMessage) {
+async function processAiResponse(db, chatId, userId, userMessage, chatContext = null) {
   const startTime = Date.now();
   console.log("Processing AI response for chat:", chatId);
   if (!openai) {
@@ -1015,7 +1092,9 @@ async function processAiResponse(db, chatId, userId, userMessage) {
   }
 
   try {
-    // 1. Get user's trips for context (optimized: only fetch necessary fields)
+    const isTripScopedChat = chatContext?.contextType === "trip" && !!chatContext?.contextId;
+
+    // 1. Get user's trips for context (with detailed fields)
     const trips = await db
       .collection("trips")
       .find(
@@ -1025,20 +1104,46 @@ async function processAiResponse(db, chatId, userId, userMessage) {
         {
           projection: {
             _id: 1,
+            id: 1,
             name: 1,
             startDate: 1,
             endDate: 1,
             destinations: 1,
+            flights: 1,
+            hotels: 1,
+            rides: 1,
+            attractions: 1,
             "flights.airline": 1,
             "flights.flightNumber": 1,
+            "flights.departureDateTime": 1,
+            "flights.arrivalDateTime": 1,
+            "flights.departureAirport": 1,
+            "flights.arrivalAirport": 1,
             "hotels.name": 1,
+            "hotels.checkIn": 1,
+            "hotels.checkOut": 1,
             "rides.type": 1,
+            "rides.pickupDateTime": 1,
+            "rides.dropoffDateTime": 1,
             "attractions.name": 1,
+            "attractions.scheduledDate": 1,
+            "attractions.scheduledTime": 1,
+            "attractions.attractionType": 1,
           },
         },
       )
       .limit(10) // Only get recent trips
       .toArray();
+
+    let activeTrip = null;
+    if (isTripScopedChat) {
+      activeTrip =
+        trips.find(
+          (t) =>
+            t.id === chatContext.contextId ||
+            t._id?.toString() === chatContext.contextId,
+        ) || null;
+    }
 
     console.log("Found trips for context:", trips.length);
 
@@ -1069,6 +1174,134 @@ async function processAiResponse(db, chatId, userId, userMessage) {
       JSON.stringify(previousMessages, null, 2),
     );
 
+    const normalizeText = (value = "") =>
+      String(value)
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim();
+
+    const userMessageNormalized = normalizeText(userMessage);
+    const asksFlightTime =
+      /(מתי|שעה|what\s*time|when|flight\s*time|departure|arrival|take\s?off|land)/i.test(
+        userMessage,
+      ) &&
+      /(טיסה|flight|flights|depart|arrival|נוחת|ממריא)/i.test(userMessage);
+
+    if (asksFlightTime && activeTrip) {
+      const flights = activeTrip.flights || [];
+      if (flights.length > 0) {
+        const destinationMap = {
+          דובאי: ["dubai", "dxb", "דובאי"],
+          rome: ["rome", "fco", "cia", "רומא"],
+          paris: ["paris", "cdg", "ory", "פריז"],
+          london: ["london", "lhr", "lgw", "ltn", "לונדון"],
+          milan: ["milan", "mxp", "lin", "ברגמו", "milan", "מילאנו"],
+        };
+
+        let matchedFlight = null;
+        for (const flight of flights) {
+          const arrivalText = normalizeText(
+            `${flight.arrivalAirport || ""} ${flight.arrival || ""} ${flight.arrivalAirportCode || ""}`,
+          );
+          const departureText = normalizeText(
+            `${flight.departureAirport || ""} ${flight.departure || ""} ${flight.departureAirportCode || ""}`,
+          );
+
+          const hasDestinationMention = Object.values(destinationMap)
+            .flat()
+            .some((token) => userMessageNormalized.includes(normalizeText(token)));
+
+          if (!hasDestinationMention) {
+            matchedFlight = flight;
+            break;
+          }
+
+          const destinationTokens = Object.values(destinationMap)
+            .flat()
+            .filter((token) => userMessageNormalized.includes(normalizeText(token)));
+
+          if (
+            destinationTokens.some(
+              (token) =>
+                arrivalText.includes(normalizeText(token)) ||
+                departureText.includes(normalizeText(token)),
+            )
+          ) {
+            matchedFlight = flight;
+            break;
+          }
+        }
+
+        if (!matchedFlight) {
+          matchedFlight = flights[0];
+        }
+
+        const dep = matchedFlight.departureDateTime
+          ? new Date(matchedFlight.departureDateTime)
+          : null;
+        const arr = matchedFlight.arrivalDateTime
+          ? new Date(matchedFlight.arrivalDateTime)
+          : null;
+
+        const depText = dep
+          ? dep.toLocaleString("he-IL", {
+              weekday: "short",
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : `${matchedFlight.date || ""} ${matchedFlight.time || ""}`.trim() || "לא צוין";
+
+        const arrText = arr
+          ? arr.toLocaleString("he-IL", {
+              weekday: "short",
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "לא צוין";
+
+        const responseText =
+          `✈️ הטיסה שלך ${matchedFlight.flightNumber ? `(${matchedFlight.flightNumber}) ` : ""}` +
+          `מ${matchedFlight.departureAirport || matchedFlight.departure || "שדה לא ידוע"} ` +
+          `ל${matchedFlight.arrivalAirport || matchedFlight.arrival || "יעד לא ידוע"}\n` +
+          `🛫 המראה: ${depText}\n` +
+          `🛬 נחיתה: ${arrText}`;
+
+        const aiMessage = {
+          chatId: chatId,
+          senderId: "loka-bot",
+          senderName: "Loka",
+          text: responseText,
+          action: null,
+          timestamp: new Date(),
+          readBy: [],
+        };
+
+        await db.collection("messages").insertOne(aiMessage);
+        await db.collection("chats").updateOne(
+          { _id: new ObjectId(chatId) },
+          {
+            $set: {
+              lastMessage: responseText,
+              lastMessageAt: new Date(),
+              updatedAt: new Date(),
+            },
+            $inc: { [`unreadCount.${userId}`]: 1 },
+          },
+        );
+
+        const totalTime = Date.now() - startTime;
+        console.log(`✅ Deterministic flight-time response completed in ${totalTime}ms total`);
+        return;
+      }
+    }
+
     const systemPrompt = `
 You are Loka, a PREMIUM TRAVEL ASSISTANT for MeetLoka.
 
@@ -1078,9 +1311,35 @@ You feel like a real human travel agent, not a technical bot.
 CURRENT USER TRIPS: ${JSON.stringify(
       trips.map((t) => ({
         id: t._id,
+        legacyId: t.id,
         name: t.name,
         dates: t.startDate + " to " + t.endDate,
         destinations: t.destinations,
+        flightsDetailed: (t.flights || []).map((f) => ({
+          airline: f.airline,
+          flightNumber: f.flightNumber,
+          departureAirport: f.departureAirport || f.departure,
+          arrivalAirport: f.arrivalAirport || f.arrival,
+          departureDateTime: f.departureDateTime || null,
+          arrivalDateTime: f.arrivalDateTime || null,
+          date: f.date || null,
+          time: f.time || null,
+        })),
+        hotelsDetailed: (t.hotels || []).map((h) => ({
+          name: h.name,
+          checkIn: h.checkIn,
+          checkOut: h.checkOut,
+          address: h.address,
+        })),
+        ridesDetailed: (t.rides || []).map((r) => ({
+          type: r.type,
+          pickup: r.pickup,
+          dropoff: r.dropoff,
+          pickupDateTime: r.pickupDateTime || null,
+          dropoffDateTime: r.dropoffDateTime || null,
+          date: r.date || null,
+          time: r.time || null,
+        })),
         itemCounts: {
           flights: (t.flights || []).length,
           hotels: (t.hotels || []).length,
@@ -1102,7 +1361,23 @@ CURRENT USER TRIPS: ${JSON.stringify(
       })),
     )}
 
+ACTIVE CHAT CONTEXT: ${JSON.stringify(
+      isTripScopedChat
+        ? {
+            chatType: "trip",
+            chatContextId: chatContext.contextId,
+            activeTripId: activeTrip?._id || null,
+            activeTripLegacyId: activeTrip?.id || null,
+            activeTripName: activeTrip?.name || null,
+            activeTripDates: activeTrip
+              ? `${activeTrip.startDate} to ${activeTrip.endDate}`
+              : null,
+          }
+        : { chatType: "ai_assistant" },
+    )}
+
 IMPORTANT TRIP SELECTION RULES:
+- If chatType is "trip", ALWAYS use that active trip by default and do not ask "which trip" unless user explicitly asks to switch.
 - If user has MULTIPLE trips, ALWAYS ask which trip they want to work on
 - When user asks "הוסף מסעדה" / "add restaurant" without specifying trip:
   1. Show list of their trips with dates
@@ -1656,6 +1931,11 @@ Make users feel taken care of, not interrogated.
       const toolCall = responseMessage.tool_calls[0];
       const functionName = toolCall.function.name;
       const functionArgs = JSON.parse(toolCall.function.arguments);
+      const resolvedTripId =
+        functionArgs.tripId ||
+        (isTripScopedChat && activeTrip
+          ? activeTrip._id?.toString() || activeTrip.id
+          : null);
 
       if (functionName === "create_trip") {
         try {
@@ -1707,42 +1987,67 @@ Make users feel taken care of, not interrogated.
         }
       } else if (functionName === "add_flight") {
         try {
-          const tripId = functionArgs.tripId;
+          const tripId = resolvedTripId;
+          if (!tripId) {
+            responseText =
+              "I couldn't determine which trip to update. Please specify the trip.";
+          } else {
           const flight = {
             id: new ObjectId().toString(),
             airline: functionArgs.airline,
             flightNumber: functionArgs.flightNumber,
+            departureAirport: functionArgs.departure,
+            arrivalAirport: functionArgs.arrival,
             departure: functionArgs.departure,
             arrival: functionArgs.arrival,
             date: functionArgs.date,
             time: functionArgs.time,
+            departureDateTime:
+              functionArgs.date && functionArgs.time
+                ? `${functionArgs.date}T${functionArgs.time}:00`
+                : undefined,
+            arrivalDateTime:
+              functionArgs.date && functionArgs.time
+                ? `${functionArgs.date}T${functionArgs.time}:00`
+                : undefined,
             createdAt: new Date(),
           };
 
-          await db
-            .collection("trips")
-            .updateOne(
-              { _id: new ObjectId(tripId) },
-              { $push: { flights: flight } },
+            await db
+              .collection("trips")
+              .updateOne(
+                {
+                  $or: [
+                    { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                    { id: tripId },
+                  ],
+                },
+                { $push: { flights: flight } },
+              );
+
+            action = {
+              type: "ADD_FLIGHT",
+              data: { ...functionArgs, tripId },
+            };
+
+            const flightDate = new Date(functionArgs.date).toLocaleDateString(
+              "en-US",
+              { month: "short", day: "numeric", year: "numeric" },
             );
-
-          action = {
-            type: "ADD_FLIGHT",
-            data: functionArgs,
-          };
-
-          const flightDate = new Date(functionArgs.date).toLocaleDateString(
-            "en-US",
-            { month: "short", day: "numeric", year: "numeric" },
-          );
-          responseText = `✈️ **${functionArgs.airline} ${functionArgs.flightNumber}**\n🛫 ${functionArgs.departure} → 🛬 ${functionArgs.arrival}\n📅 ${flightDate} at ${functionArgs.time}\n\nFlight added! Need a ride to the airport?`;
+            responseText = `✈️ **${functionArgs.airline} ${functionArgs.flightNumber}**\n🛫 ${functionArgs.departure} → 🛬 ${functionArgs.arrival}\n📅 ${flightDate} at ${functionArgs.time}\n\nFlight added! Need a ride to the airport?`;
+          }
         } catch (err) {
           console.error("Error adding flight:", err);
           responseText = "I couldn't add the flight due to an error.";
         }
       } else if (functionName === "add_activity") {
         try {
-          const tripId = functionArgs.tripId;
+          const tripId = resolvedTripId;
+          if (!tripId) {
+            responseText =
+              "I couldn't determine which trip to update. Please specify the trip.";
+            throw new Error("Missing tripId");
+          }
 
           // Try to fetch place details from Google Places API
           let placeDetails = null;
@@ -1755,7 +2060,12 @@ Make users feel taken care of, not interrogated.
               // Get trip to find location context
               const trip = await db
                 .collection("trips")
-                .findOne({ _id: new ObjectId(tripId) });
+                .findOne({
+                  $or: [
+                    { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                    { id: tripId },
+                  ],
+                });
               const cityContext = trip?.destinations?.[0]?.name || null;
 
               // Search with city context if available
@@ -1793,7 +2103,12 @@ Make users feel taken care of, not interrogated.
           // Check if activity already exists to prevent duplicates
           const existingTrip = await db
             .collection("trips")
-            .findOne({ _id: new ObjectId(tripId) });
+            .findOne({
+              $or: [
+                { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                { id: tripId },
+              ],
+            });
           const isDuplicate = existingTrip?.attractions?.some(
             (attr) =>
               attr.name === functionArgs.name &&
@@ -1824,7 +2139,12 @@ Make users feel taken care of, not interrogated.
             await db
               .collection("trips")
               .updateOne(
-                { _id: new ObjectId(tripId) },
+                {
+                  $or: [
+                    { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                    { id: tripId },
+                  ],
+                },
                 { $push: { attractions: activity } },
               );
 
@@ -1832,6 +2152,7 @@ Make users feel taken care of, not interrogated.
               type: "ADD_ACTIVITY",
               data: {
                 ...functionArgs,
+                tripId,
                 icon:
                   functionArgs.type === "restaurant"
                     ? "🍽️"
@@ -1871,7 +2192,12 @@ Make users feel taken care of, not interrogated.
         }
       } else if (functionName === "add_multiple_activities") {
         try {
-          const tripId = functionArgs.tripId;
+          const tripId = resolvedTripId;
+          if (!tripId) {
+            responseText =
+              "I couldn't determine which trip to update. Please specify the trip.";
+            throw new Error("Missing tripId");
+          }
           const activitiesToAdd = functionArgs.activities || [];
 
           console.log(
@@ -1888,7 +2214,12 @@ Make users feel taken care of, not interrogated.
           // Get trip for context
           const trip = await db
             .collection("trips")
-            .findOne({ _id: new ObjectId(tripId) });
+            .findOne({
+              $or: [
+                { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                { id: tripId },
+              ],
+            });
           const cityContext = trip?.destinations?.[0]?.name || null;
 
           for (const activityData of activitiesToAdd) {
@@ -1896,7 +2227,12 @@ Make users feel taken care of, not interrogated.
               // Check if already exists
               const existingTrip = await db
                 .collection("trips")
-                .findOne({ _id: new ObjectId(tripId) });
+                .findOne({
+                  $or: [
+                    { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                    { id: tripId },
+                  ],
+                });
               const isDuplicate = existingTrip?.attractions?.some(
                 (attr) =>
                   attr.name === activityData.name &&
@@ -1969,7 +2305,12 @@ Make users feel taken care of, not interrogated.
               await db
                 .collection("trips")
                 .updateOne(
-                  { _id: new ObjectId(tripId) },
+                  {
+                    $or: [
+                      { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                      { id: tripId },
+                    ],
+                  },
                   { $push: { attractions: activity } },
                 );
 
@@ -2023,7 +2364,12 @@ Make users feel taken care of, not interrogated.
         }
       } else if (functionName === "add_hotel") {
         try {
-          const tripId = functionArgs.tripId;
+          const tripId = resolvedTripId;
+          if (!tripId) {
+            responseText =
+              "I couldn't determine which trip to update. Please specify the trip.";
+            throw new Error("Missing tripId");
+          }
 
           // Calculate nights
           const checkInDate = new Date(functionArgs.checkIn);
@@ -2049,13 +2395,18 @@ Make users feel taken care of, not interrogated.
           await db
             .collection("trips")
             .updateOne(
-              { _id: new ObjectId(tripId) },
+              {
+                $or: [
+                  { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                  { id: tripId },
+                ],
+              },
               { $push: { hotels: hotel } },
             );
 
           action = {
             type: "ADD_HOTEL",
-            data: functionArgs,
+            data: { ...functionArgs, tripId },
           };
 
           const checkInFormatted = new Date(
@@ -2076,7 +2427,12 @@ Make users feel taken care of, not interrogated.
         }
       } else if (functionName === "add_ride") {
         try {
-          const tripId = functionArgs.tripId;
+          const tripId = resolvedTripId;
+          if (!tripId) {
+            responseText =
+              "I couldn't determine which trip to update. Please specify the trip.";
+            throw new Error("Missing tripId");
+          }
           const ride = {
             id: new ObjectId().toString(),
             type: functionArgs.type || "taxi",
@@ -2091,13 +2447,18 @@ Make users feel taken care of, not interrogated.
           await db
             .collection("trips")
             .updateOne(
-              { _id: new ObjectId(tripId) },
+              {
+                $or: [
+                  { _id: ObjectId.isValid(tripId) ? new ObjectId(tripId) : null },
+                  { id: tripId },
+                ],
+              },
               { $push: { rides: ride } },
             );
 
           action = {
             type: "ADD_RIDE",
-            data: functionArgs,
+            data: { ...functionArgs, tripId },
           };
 
           const rideDate = new Date(functionArgs.date).toLocaleDateString(
@@ -2352,5 +2713,6 @@ Make users feel taken care of, not interrogated.
     }
   }
 }
+
 
 export default router;

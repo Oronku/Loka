@@ -124,6 +124,13 @@ router.post("/message", async (req, res) => {
     const db = getDb();
     const userId = req.user.id;
 
+    const normalizeText = (value = "") =>
+      String(value)
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim();
+
     // 1. Get user's trips for context
     const allTrips = await db
       .collection("trips")
@@ -223,8 +230,147 @@ router.post("/message", async (req, res) => {
         hasFlights: (t.flights || []).length > 0,
         hasHotels: (t.hotels || []).length > 0,
         hasAttractions: (t.attractions || []).length > 0,
+        flightsDetailed: (t.flights || []).map((f) => ({
+          airline: f.airline || null,
+          flightNumber: f.flightNumber || null,
+          departureAirport:
+            f.departureAirport || f.departureAirportCode || f.departure || null,
+          arrivalAirport:
+            f.arrivalAirport || f.arrivalAirportCode || f.arrival || null,
+          departureDateTime: f.departureDateTime || null,
+          arrivalDateTime: f.arrivalDateTime || null,
+          date: f.date || null,
+          time: f.time || null,
+        })),
       };
     });
+
+    // Fast deterministic answer for flight-time questions
+    const lowerMsgNorm = normalizeText(message);
+    const asksFlightTime =
+      /(מתי|שעה|when|what\s*time|departure|arrival|take\s?off|land)/i.test(
+        message,
+      ) &&
+      /(טיסה|flight|flights|ממריא|נוחת|depart|arrival)/i.test(message);
+
+    if (asksFlightTime) {
+      const destinationAliases = {
+        dubai: ["dubai", "dxb", "דובאי", "דומא"],
+        lasvegas: ["las vegas", "vegas", "las-vegas", "לאס וגאס", "וגאס"],
+        rome: ["rome", "fco", "cia", "רומא"],
+        paris: ["paris", "cdg", "ory", "פריז"],
+        london: ["london", "lhr", "lgw", "ltn", "לונדון"],
+      };
+
+      const mentionedTokens = Object.values(destinationAliases)
+        .flat()
+        .filter((token) => lowerMsgNorm.includes(normalizeText(token)));
+
+      let matchedTrip = null;
+      let matchedFlight = null;
+      let foundRequestedDestination = mentionedTokens.length === 0;
+
+      for (const trip of allTrips) {
+        const flights = trip.flights || [];
+        for (const flight of flights) {
+          const arrivalText = normalizeText(
+            `${flight.arrivalAirport || ""} ${flight.arrivalAirportCode || ""} ${flight.arrival || ""}`,
+          );
+          const departureText = normalizeText(
+            `${flight.departureAirport || ""} ${flight.departureAirportCode || ""} ${flight.departure || ""}`,
+          );
+
+          if (mentionedTokens.length === 0) {
+            matchedTrip = trip;
+            matchedFlight = flight;
+            break;
+          }
+
+          const tokenMatched = mentionedTokens.some(
+            (token) =>
+              arrivalText.includes(normalizeText(token)) ||
+              departureText.includes(normalizeText(token)),
+          );
+
+          if (tokenMatched) {
+            matchedTrip = trip;
+            matchedFlight = flight;
+            foundRequestedDestination = true;
+            break;
+          }
+        }
+        if (matchedFlight) break;
+      }
+
+      if (!matchedFlight) {
+        const tripWithFlights = allTrips.find((t) => (t.flights || []).length > 0);
+        if (tripWithFlights) {
+          matchedTrip = tripWithFlights;
+          matchedFlight = tripWithFlights.flights[0];
+        }
+      }
+
+      if (matchedFlight) {
+        const dep = matchedFlight.departureDateTime
+          ? new Date(matchedFlight.departureDateTime)
+          : null;
+        const arr = matchedFlight.arrivalDateTime
+          ? new Date(matchedFlight.arrivalDateTime)
+          : null;
+
+        const depText = dep
+          ? dep.toLocaleString("he-IL", {
+              weekday: "short",
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : `${matchedFlight.date || ""} ${matchedFlight.time || ""}`.trim() ||
+            "לא צוין";
+
+        const arrText = arr
+          ? arr.toLocaleString("he-IL", {
+              weekday: "short",
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "לא צוין";
+
+        const depLabel =
+          matchedFlight.departureAirportCode ||
+          matchedFlight.departureAirport ||
+          matchedFlight.departureCity ||
+          matchedFlight.departure ||
+          "מוצא לא ידוע";
+        const arrLabel =
+          matchedFlight.arrivalAirportCode ||
+          matchedFlight.arrivalAirport ||
+          matchedFlight.arrivalCity ||
+          matchedFlight.arrival ||
+          "יעד לא ידוע";
+
+        const mismatchNote =
+          mentionedTokens.length > 0 && !foundRequestedDestination
+            ? "לא מצאתי בטיול טיסה ליעד שביקשת, אבל זו הטיסה שקיימת כרגע:\n"
+            : "מצאתי את הטיסה שלך:\n";
+
+        return res.json({
+          text:
+            `✈️ בטיול ${matchedTrip?.name ? `"${matchedTrip.name}"` : "שלך"}\n` +
+            mismatchNote +
+            `🛫 ${depLabel} → ${arrLabel}\n` +
+            `🕒 המראה: ${depText}\n` +
+            `🕒 נחיתה: ${arrText}`,
+          action: null,
+          timestamp: new Date(),
+        });
+      }
+    }
 
     // 2. Use OpenAI if available
     if (openai) {
@@ -242,12 +388,18 @@ IMPORTANT: When displaying trips:
 - For upcoming trips, mention how many days until the trip starts (daysUntil field)
 - Group trips by status when showing multiple trips
 
+When a user asks to add items (flights, hotels, attractions, rides) to a trip:
+- Use the add_flight, add_hotel, add_attraction, or add_ride tools
+- Always include the trip ID from the trips list above
+- Extract dates and times from the user's request
+- If the user mentions a specific trip by name, use its ID from the trips list
+
 When a user asks to create a trip or add items, you should use the available tools.
 Always be helpful, concise, and friendly.
         `;
 
         const completion = await openai.chat.completions.create({
-          model: "gpt-4-turbo-preview",
+          model: "gpt-4o-mini",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: message },
@@ -286,6 +438,7 @@ Always be helpful, concise, and friendly.
                 parameters: {
                   type: "object",
                   properties: {
+                    tripId: { type: "string", description: "The trip ID to add the flight to" },
                     airline: { type: "string" },
                     flightNumber: { type: "string" },
                     departure: { type: "string", description: "Airport code" },
@@ -294,6 +447,7 @@ Always be helpful, concise, and friendly.
                     time: { type: "string", format: "time" },
                   },
                   required: [
+                    "tripId",
                     "airline",
                     "flightNumber",
                     "departure",
@@ -301,6 +455,59 @@ Always be helpful, concise, and friendly.
                     "date",
                     "time",
                   ],
+                },
+              },
+            },
+            {
+              type: "function",
+              function: {
+                name: "add_hotel",
+                description: "Add a hotel to a trip",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    tripId: { type: "string", description: "The trip ID to add the hotel to" },
+                    name: { type: "string" },
+                    location: { type: "string" },
+                    checkIn: { type: "string", format: "date" },
+                    checkOut: { type: "string", format: "date" },
+                  },
+                  required: ["tripId", "name", "checkIn", "checkOut"],
+                },
+              },
+            },
+            {
+              type: "function",
+              function: {
+                name: "add_attraction",
+                description: "Add an attraction or activity to a trip",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    tripId: { type: "string", description: "The trip ID to add the attraction to" },
+                    name: { type: "string" },
+                    location: { type: "string" },
+                    scheduledDate: { type: "string", format: "date" },
+                  },
+                  required: ["tripId", "name"],
+                },
+              },
+            },
+            {
+              type: "function",
+              function: {
+                name: "add_ride",
+                description: "Add a ride/transportation to a trip",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    tripId: { type: "string", description: "The trip ID to add the ride to" },
+                    pickup: { type: "string" },
+                    dropoff: { type: "string" },
+                    pickupDateTime: { type: "string", format: "date-time" },
+                    dropoffDateTime: { type: "string", format: "date-time" },
+                  },
+                  required: ["tripId", "pickup", "dropoff"],
                 },
               },
             },
@@ -330,7 +537,25 @@ Always be helpful, concise, and friendly.
               type: "ADD_FLIGHT",
               data: functionArgs,
             };
-            responseText = `I found flight ${functionArgs.flightNumber}. Would you like me to add it?`;
+            responseText = `I found flight ${functionArgs.flightNumber} from ${functionArgs.departure} to ${functionArgs.arrival} on ${functionArgs.date}. Would you like me to add it?`;
+          } else if (functionName === "add_hotel") {
+            action = {
+              type: "ADD_HOTEL",
+              data: functionArgs,
+            };
+            responseText = `I found ${functionArgs.name} with check-in on ${functionArgs.checkIn} and check-out on ${functionArgs.checkOut}. Should I add it?`;
+          } else if (functionName === "add_attraction") {
+            action = {
+              type: "ADD_ATTRACTION",
+              data: functionArgs,
+            };
+            responseText = `I found ${functionArgs.name}${functionArgs.location ? ` at ${functionArgs.location}` : ""}. Would you like me to add it?`;
+          } else if (functionName === "add_ride") {
+            action = {
+              type: "ADD_RIDE",
+              data: functionArgs,
+            };
+            responseText = `I can book a ride from ${functionArgs.pickup} to ${functionArgs.dropoff}. Shall I add it?`;
           }
 
           return res.json({
@@ -604,6 +829,146 @@ router.post("/action", async (req, res) => {
 
       await db.collection("trips").insertOne(newTrip);
       res.json({ success: true, message: "Trip created successfully!" });
+    } else if (actionType === "ADD_FLIGHT") {
+      const { tripId, airline, flightNumber, departure, arrival, date, time } = actionData;
+      
+      if (!tripId || !flightNumber || !departure || !arrival || !date || !time) {
+        return res.status(400).json({ error: "Missing required flight fields: tripId, flightNumber, departure, arrival, date, time" });
+      }
+
+      // Construct full datetime from date and time
+      const departureDateTime = `${date}T${time}:00`;
+      const arrivalDateTime = `${date}T${time}:00`; // Note: using same date, should calculate arrival time
+
+      const trip = await db.collection("trips").findOne({ id: tripId, userId });
+      if (!trip) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+
+      const flight = {
+        airline,
+        flightNumber,
+        departureAirport: departure,
+        arrivalAirport: arrival,
+        departureDateTime,
+        arrivalDateTime,
+      };
+
+      // Add flight to trip
+      trip.flights = trip.flights || [];
+      trip.flights.push(flight);
+
+      await db.collection("trips").updateOne(
+        { id: tripId },
+        {
+          $set: {
+            flights: trip.flights,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      res.json({ success: true, message: "Flight added successfully!", trip });
+    } else if (actionType === "ADD_HOTEL") {
+      const { tripId, name, checkIn, checkOut } = actionData;
+      
+      if (!tripId || !name || !checkIn || !checkOut) {
+        return res.status(400).json({ error: "Missing required hotel fields: tripId, name, checkIn, checkOut" });
+      }
+
+      const trip = await db.collection("trips").findOne({ id: tripId, userId });
+      if (!trip) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+
+      const hotel = {
+        name,
+        checkIn,
+        checkOut,
+      };
+
+      // Add hotel to trip
+      trip.hotels = trip.hotels || [];
+      trip.hotels.push(hotel);
+
+      await db.collection("trips").updateOne(
+        { id: tripId },
+        {
+          $set: {
+            hotels: trip.hotels,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      res.json({ success: true, message: "Hotel added successfully!", trip });
+    } else if (actionType === "ADD_ATTRACTION") {
+      const { tripId, name, location, scheduledDate } = actionData;
+      
+      if (!tripId || !name) {
+        return res.status(400).json({ error: "Missing required attraction fields: tripId, name" });
+      }
+
+      const trip = await db.collection("trips").findOne({ id: tripId, userId });
+      if (!trip) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+
+      const attraction = {
+        name,
+        location,
+        scheduledDate,
+      };
+
+      // Add attraction to trip
+      trip.attractions = trip.attractions || [];
+      trip.attractions.push(attraction);
+
+      await db.collection("trips").updateOne(
+        { id: tripId },
+        {
+          $set: {
+            attractions: trip.attractions,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      res.json({ success: true, message: "Attraction added successfully!", trip });
+    } else if (actionType === "ADD_RIDE") {
+      const { tripId, pickup, dropoff, pickupDateTime, dropoffDateTime } = actionData;
+      
+      if (!tripId || !pickup || !dropoff) {
+        return res.status(400).json({ error: "Missing required ride fields: tripId, pickup, dropoff" });
+      }
+
+      const trip = await db.collection("trips").findOne({ id: tripId, userId });
+      if (!trip) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+
+      const ride = {
+        pickup,
+        dropoff,
+        pickupDateTime,
+        dropoffDateTime,
+      };
+
+      // Add ride to trip
+      trip.rides = trip.rides || [];
+      trip.rides.push(ride);
+
+      await db.collection("trips").updateOne(
+        { id: tripId },
+        {
+          $set: {
+            rides: trip.rides,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      res.json({ success: true, message: "Ride added successfully!", trip });
     } else {
       res.json({ success: true, message: "Action completed" });
     }
@@ -712,7 +1077,7 @@ Do not include any text before or after the JSON array.
 
     try {
       const completion = await openai.chat.completions.create({
-        model: "gpt-4-turbo-preview",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -926,7 +1291,7 @@ Return only valid JSON, no markdown, no explanation.`;
 Return only valid JSON array with day-by-day activities.`;
 
       const completion = await openai.chat.completions.create({
-        model: "gpt-4-turbo-preview",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Create detailed ${tripDays}-day plan` },

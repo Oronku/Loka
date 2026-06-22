@@ -8,11 +8,10 @@ import {
   rebuildTripTimeline,
   ensureTripTimeline,
   scheduleTimelineRebuild,
-} from "../services/timelineService/index.js";
-import {
-  detectAttractionConflicts,
+  buildTimelineSnapshot,
   findAttractionIndex,
-} from "../services/timeline.service.js";
+  detectAttractionConflicts,
+} from "../services/timelineService/index.js";
 
 const router = express.Router();
 

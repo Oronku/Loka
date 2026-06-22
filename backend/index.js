@@ -112,23 +112,32 @@ app.use('*', (req, res) => {
 
 // Start server with MongoDB connection
 async function startServer() {
+	const startListening = (storageModeMessage) => {
+		const server = app.listen(PORT, () => {
+			console.log(`✓ Server running on port ${PORT}`);
+			console.log(storageModeMessage);
+			console.log('✓ All API endpoints ready');
+		});
+
+		server.on('error', (error) => {
+			if (error.code === 'EADDRINUSE') {
+				console.error(`✗ Port ${PORT} is already in use.`);
+				console.error(`  Run: lsof -ti tcp:${PORT} | xargs kill -9`);
+				process.exit(1);
+			}
+			console.error('✗ Failed to start server:', error.message);
+			process.exit(1);
+		});
+	};
+
 	try {
 		// Try to connect to MongoDB
 		await connectToDatabase();
 		console.log('✓ Connected to MongoDB');
-
-		app.listen(PORT, () => {
-			console.log(`✓ Server running on port ${PORT}`);
-			console.log('✓ Using MongoDB for persistent storage');
-			console.log('✓ All API endpoints ready');
-		});
+		startListening('✓ Using MongoDB for persistent storage');
 	} catch (error) {
 		console.error('⚠️  Failed to connect to MongoDB, falling back to in-memory storage');
-		app.listen(PORT, () => {
-			console.log(`✓ Server running on port ${PORT}`);
-			console.log('⚠️  Using in-memory storage (MongoDB connection failed)');
-			console.log('✓ All API endpoints ready');
-		});
+		startListening('⚠️  Using in-memory storage (MongoDB connection failed)');
 	}
 }
 
