@@ -8,6 +8,7 @@ export const PROTECTED_UPDATE_FIELDS = [
   "_id",
   "userId",
   "userEmail",
+  "userName",
   "createdAt",
   "sharedWith",
   "pendingInvites",
@@ -43,6 +44,7 @@ export const SERVER_MANAGED_FIELDS = ["timelineSnapshot"];
  * @property {string} id
  * @property {string} userId
  * @property {string} userEmail
+ * @property {string} userName
  * @property {string} name
  * @property {TripParticipant[]} sharedWith
  * @property {PendingInvite[]} pendingInvites
@@ -90,7 +92,7 @@ export function buildPendingInvite(email, invitedBy, name = null) {
   };
 }
 
-/** @param {object} tripData @param {{ id: string, email: string }} owner */
+/** @param {object} tripData @param {{ id: string, email: string, name?: string }} owner */
 export function buildTripDocument(tripData, owner) {
   const now = new Date().toISOString();
   return {
@@ -98,6 +100,7 @@ export function buildTripDocument(tripData, owner) {
     id: tripData.id || randomUUID(),
     userId: owner.id,
     userEmail: owner.email,
+    userName: owner.name || null,
     destinations: tripData.destinations || [],
     flights: tripData.flights || [],
     hotels: tripData.hotels || [],
@@ -132,6 +135,9 @@ export function normalizeDocument(trip) {
   trip.userChecklists = Array.isArray(trip.userChecklists)
     ? trip.userChecklists
     : [];
+  trip.expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
+
+  trip.userName = trip.userName || null;
 
   trip.sharedWith = trip.sharedWith.map((entry) => ({
     ...entry,

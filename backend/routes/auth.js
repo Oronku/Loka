@@ -58,7 +58,7 @@ router.post("/register", async (req, res) => {
 
     await collection.insertOne(newUser);
 
-    const linkedTripsCount = await tripService.linkPendingInvitesForUser(newUser);
+    const linkedTripsCount = 0;
 
     // Generate JWT token
     const token = jwt.sign(
@@ -117,7 +117,9 @@ router.post("/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    const linkedTripsCount = await tripService.linkPendingInvitesForUser(user);
+    // Trip invites are accepted explicitly via the invitations list, not
+    // auto-linked on login.
+    const linkedTripsCount = 0;
 
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
