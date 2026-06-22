@@ -23,6 +23,16 @@ function tripIdOf(trip) {
   return trip?.id || trip?._id?.toString() || null;
 }
 
+/** Normalize and attach access flags before returning a trip from expense mutations. */
+function formatTripForClient(trip, user) {
+  if (!trip) return trip;
+  tripService.normalizeDocument(trip);
+  return tripService.filterChecklistsForResponse(
+    tripService.attachAccessFlags(trip, user.id, user.email),
+    user.id,
+  );
+}
+
 /**
  * Attach a complete timeline snapshot for a trip read. When the stored snapshot
  * is already full (pending:false) it's returned instantly with no recompute.
@@ -956,15 +966,22 @@ router.post("/:id/expenses", async (req, res) => {
 
     let updated;
     if (collection) {
-      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+      const result = await collection.updateOne(tripService.buildIdQuery(trip.id), {
         $set: { expenses, updatedAt: new Date().toISOString() },
       });
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
       updated = await tripService.findById(trip.id);
     } else {
       updated = memoryStore.trips.update(trip.id, { expenses });
     }
 
-    res.json(updated);
+    if (!updated) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    res.json(formatTripForClient(updated, req.user));
   } catch (error) {
     console.error("Error adding expense:", error);
     res.status(500).json({ error: "Failed to add expense" });
@@ -1015,7 +1032,11 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
       updated = memoryStore.trips.update(trip.id, { expenses });
     }
 
-    res.json(updated);
+    if (!updated) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    res.json(formatTripForClient(updated, req.user));
   } catch (error) {
     console.error("Error updating expense:", error);
     res.status(500).json({ error: "Failed to update expense" });
@@ -1085,7 +1106,11 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
       updated = memoryStore.trips.update(trip.id, { expenses });
     }
 
-    res.json(updated);
+    if (!updated) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    res.json(formatTripForClient(updated, req.user));
   } catch (error) {
     console.error("Error deleting expense:", error);
     res.status(500).json({ error: "Failed to delete expense" });

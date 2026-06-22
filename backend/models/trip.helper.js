@@ -135,6 +135,7 @@ export function normalizeDocument(trip) {
   trip.userChecklists = Array.isArray(trip.userChecklists)
     ? trip.userChecklists
     : [];
+  trip.expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
 
   trip.userName = trip.userName || null;
 
