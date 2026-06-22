@@ -8,8 +8,8 @@ import {
   rebuildTripTimeline,
   ensureTripTimeline,
   scheduleTimelineRebuild,
-  buildTimelineSnapshot
 } from "../services/timelineService/index.js";
+import { buildTimelineSnapshot } from "../services/timeline.service.js";
 
 const router = express.Router();
 
@@ -191,7 +191,7 @@ router.get("/:id", async (req, res) => {
     if (!trip) return;
 
     const response = tripService.filterChecklistsForResponse(
-      tripService.attachAccessFlags(trip, req.user.id),
+      tripService.attachAccessFlags(trip, req.user.id, req.user.email),
       req.user.id
     );
 
@@ -604,6 +604,74 @@ router.delete("/:id/share/:userId", async (req, res) => {
       error: "Failed to remove participant",
       message: error.message,
     });
+  }
+});
+
+// Accept a trip invitation (the invited user promotes themselves to participant)
+router.post("/:id/invitations/accept", async (req, res) => {
+  try {
+    const collection = getTripsCollection();
+    const trip = await tripService.findById(req.params.id);
+
+    if (!trip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    const email = req.user.email;
+    const normalized = tripService.normalizeEmail(email);
+    const hasPending = (trip.pendingInvites || []).some(
+      (p) => tripService.normalizeEmail(p.email) === normalized && p.status === "pending"
+    );
+
+    if (!hasPending) {
+      return res
+        .status(404)
+        .json({ error: "No pending invitation for this trip" });
+    }
+
+    const { sharedWith, pendingInvites, linked } =
+      tripService.promotePendingInvitesForEmail(trip, email, req.user);
+
+    if (!linked) {
+      return res.status(400).json({ error: "Could not accept invitation" });
+    }
+
+    if (collection) {
+      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+        $set: { sharedWith, pendingInvites, updatedAt: new Date().toISOString() },
+      });
+    } else {
+      memoryStore.trips.update(trip.id, { sharedWith, pendingInvites });
+    }
+
+    const updated = await tripService.findById(trip.id);
+    tripService.normalizeDocument(updated);
+    res.json(tripService.attachAccessFlags(updated, req.user.id, req.user.email));
+  } catch (error) {
+    console.error("Error accepting invitation:", error);
+    res.status(500).json({ error: "Failed to accept invitation" });
+  }
+});
+
+// Decline a trip invitation (removes the pending invite for the current user)
+router.post("/:id/invitations/decline", async (req, res) => {
+  try {
+    const trip = await tripService.findById(req.params.id);
+
+    if (!trip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    const result = await tripService.removePendingInvite(trip.id, req.user.email);
+
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error declining invitation:", error);
+    res.status(500).json({ error: "Failed to decline invitation" });
   }
 });
 

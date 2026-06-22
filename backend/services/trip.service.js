@@ -106,13 +106,24 @@ export function sanitizeUpdatePayload(body, access) {
   return updateData;
 }
 
-export function attachAccessFlags(trip, userId) {
+export function hasPendingInvite(trip, email) {
+  if (!email) return false;
+  const normalized = normalizeEmail(email);
+  return (trip.pendingInvites || []).some(
+    (p) => normalizeEmail(p.email) === normalized && p.status === "pending"
+  );
+}
+
+export function attachAccessFlags(trip, userId, userEmail) {
   const access = getAccess(trip, userId);
+  const invited =
+    !access.isOwner && !access.isParticipant && hasPendingInvite(trip, userEmail);
   return {
     ...trip,
     isOwner: access.isOwner,
     isShared: access.isShared,
     isParticipant: access.isParticipant,
+    isInvited: invited,
     canEdit: access.canEdit,
     shareUrl: buildShareUrl(trip.id),
   };
@@ -165,17 +176,13 @@ export function processShareInvites(trip, emails, usersByEmail, invitedBy) {
     }
 
     const user = usersByEmail.get(parsed);
-    if (user) {
-      if (user.id === trip.userId) {
-        skipped.push({ email: parsed, reason: "owner" });
-        continue;
-      }
-      newParticipants.push(buildParticipant(user, invitedBy));
-      existingSharedEmails.add(parsed);
-    } else {
-      newPendingInvites.push(buildPendingInvite(parsed, invitedBy));
-      existingPendingEmails.add(parsed);
+    if (user && user.id === trip.userId) {
+      skipped.push({ email: parsed, reason: "owner" });
+      continue;
     }
+
+    newPendingInvites.push(buildPendingInvite(parsed, invitedBy, user?.name || null));
+    existingPendingEmails.add(parsed);
   }
 
   return { newParticipants, newPendingInvites, skipped };
@@ -272,8 +279,13 @@ export async function getPendingInvites(email) {
     return {
       tripId: trip.id || trip._id?.toString(),
       tripName: trip.name,
+      destination: trip.destination,
       startDate: trip.startDate,
       endDate: trip.endDate,
+      imageUrl: trip.imageUrl,
+      color: trip.color,
+      ownerName: trip.userName || null,
+      ownerEmail: trip.userEmail || null,
       invitedAt: invite?.invitedAt,
       invitedBy: invite?.invitedBy,
     };
