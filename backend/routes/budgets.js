@@ -6,178 +6,174 @@ import * as tripService from "../services/trip.service.js";
 
 const router = express.Router();
 
-// Apply authentication middleware to all routes
+const VALID_CATEGORIES = ['flight', 'hotel', 'food', 'activity', 'ride', 'shopping', 'other'];
+
 router.use(verifyGoogleToken);
 
 async function getTripWithAccess(tripId, userId, requireEdit = true) {
   const db = getDatabase();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
+  if (!db) throw new Error("Database not available");
   const trip = await tripService.findById(tripId);
-  if (!trip) {
-    throw new Error("Trip not found or access denied");
-  }
-
+  if (!trip) throw new Error("Trip not found or access denied");
   tripService.normalizeDocument(trip);
   const access = tripService.getAccess(trip, userId);
-
-  if (requireEdit && !access.canEdit) {
-    throw new Error("Trip not found or access denied");
-  }
-
-  if (!requireEdit && !access.canView) {
-    throw new Error("Trip not found or access denied");
-  }
-
+  if (requireEdit && !access.canEdit) throw new Error("Trip not found or access denied");
+  if (!requireEdit && !access.canView) throw new Error("Trip not found or access denied");
   return trip;
+}
+
+function mapExpenseCategory(expense) {
+  if (expense.linkedItemType === 'flight') return 'flight';
+  if (expense.linkedItemType === 'hotel') return 'hotel';
+  if (expense.category === 'hotel') return 'hotel';
+  if (expense.category === 'food') return 'food';
+  if (expense.category === 'activity') return 'activity';
+  if (expense.category === 'ride') return 'ride';
+  if (expense.category === 'shopping') return 'shopping';
+  return 'other';
+}
+
+function buildCategoriesWithSpent(categories, expenses) {
+  const result = {};
+  for (const [name, budgetAmount] of Object.entries(categories)) {
+    const spent = expenses
+      .filter(exp => mapExpenseCategory(exp) === name)
+      .reduce((sum, exp) => sum + (exp.amount || 0), 0);
+    result[name] = { budget: budgetAmount, spent: Math.round(spent) };
+  }
+  return result;
+}
+
+function validateCategories(categories) {
+  if (!categories || typeof categories !== 'object' || Array.isArray(categories)) {
+    return { error: 'Categories must be an object' };
+  }
+  const validated = {};
+  for (const [name, amount] of Object.entries(categories)) {
+    if (!VALID_CATEGORIES.includes(name)) return { error: 'Invalid category name', category: name };
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+      return { error: 'Invalid budgeted amount', category: name };
+    }
+    validated[name] = Math.round(amount);
+  }
+  return { validated };
 }
 
 // GET /api/budgets/:tripId - Get budget for a trip
 router.get("/:tripId", async (req, res) => {
   try {
     const { tripId } = req.params;
-    const userId = req.user.id;
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    // Return budget or empty structure
-    const budget = trip.budget || {
-      totalBudget: 0,
-      currency: "USD",
-      categories: [],
-    };
-
-    // Filter expenses to only include those for THIS trip
-    if (budget.expenses && Array.isArray(budget.expenses)) {
-      budget.expenses = budget.expenses.filter((e) => e.tripId === tripId);
-    }
-
-    res.json(budget);
+    const trip = await getTripWithAccess(tripId, req.user.id, false);
+    res.json(trip.budget || null);
   } catch (error) {
-    console.error("❌ Get budget error:", error);
+    console.error("Get budget error:", error);
     if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to get budget" });
+      return res.status(404).json({ error: error.message });
     }
+    res.status(500).json({ error: "Failed to get budget" });
   }
 });
 
-// POST /api/budgets/:tripId - Create or update budget for a trip
+// POST /api/budgets/:tripId - Create budget
 router.post("/:tripId", async (req, res) => {
   try {
     const { tripId } = req.params;
-    const userId = req.user.id;
-    const budgetData = req.body;
+    const { totalBudget, currency, categories } = req.body;
 
-    const trip = await getTripWithAccess(tripId, userId);
+    const trip = await getTripWithAccess(tripId, req.user.id);
 
-    // Validate budget data
-    if (
-      typeof budgetData.totalBudget !== "number" ||
-      budgetData.totalBudget < 0
-    ) {
-      return res.status(400).json({ error: "Invalid total budget" });
+    if (!totalBudget || typeof totalBudget !== 'number' || totalBudget < 0) {
+      return res.status(400).json({ error: 'Invalid total budget' });
+    }
+    if (!currency || typeof currency !== 'string') {
+      return res.status(400).json({ error: 'Invalid currency' });
     }
 
-    if (!Array.isArray(budgetData.categories)) {
-      return res.status(400).json({ error: "Categories must be an array" });
-    }
+    const { error, validated } = validateCategories(categories);
+    if (error) return res.status(400).json({ error });
 
-    // Validate categories
-    for (const category of budgetData.categories) {
-      if (!category.name || typeof category.name !== "string") {
-        return res.status(400).json({ error: "Invalid category name" });
-      }
-      if (typeof category.budgeted !== "number" || category.budgeted < 0) {
-        return res.status(400).json({ error: "Invalid budgeted amount" });
-      }
-      if (typeof category.spent !== "number" || category.spent < 0) {
-        return res.status(400).json({ error: "Invalid spent amount" });
-      }
-    }
-
-    // Prepare budget object
     const budget = {
-      totalBudget: budgetData.totalBudget,
-      currency: budgetData.currency || "USD",
-      categories: budgetData.categories,
-      updatedAt: new Date(),
+      totalBudget: Math.round(totalBudget),
+      currency: currency.toUpperCase(),
+      categories: validated,
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
 
-    // Update trip with budget
     const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    const updateQuery = ObjectId.isValid(tripId)
-      ? { _id: new ObjectId(tripId) }
-      : { id: tripId };
-
-    const result = await tripsCollection.updateOne(updateQuery, {
-      $set: { budget: budget },
-    });
+    const q = ObjectId.isValid(tripId) ? { _id: new ObjectId(tripId) } : { id: tripId };
+    const result = await db.collection("trips").updateOne(q, { $set: { budget } });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "Trip not found" });
     }
 
-    res.json({ success: true, budget });
+    res.status(201).json({
+      tripId,
+      totalBudget: budget.totalBudget,
+      currency: budget.currency,
+      categories: buildCategoriesWithSpent(validated, trip.expenses || [])
+    });
   } catch (error) {
-    console.error("Save budget error:", error);
+    console.error('Error creating budget:', error);
     if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to save budget" });
+      return res.status(404).json({ error: error.message });
     }
+    res.status(500).json({ error: 'Failed to create budget' });
   }
 });
 
-// PUT /api/budgets/:tripId - Update existing budget
+// PUT /api/budgets/:tripId - Update budget
 router.put("/:tripId", async (req, res) => {
   try {
     const { tripId } = req.params;
-    const userId = req.user.id;
-    const updates = req.body;
+    const { totalBudget, currency, categories } = req.body;
 
-    const trip = await getTripWithAccess(tripId, userId);
+    const trip = await getTripWithAccess(tripId, req.user.id);
 
     if (!trip.budget) {
-      return res.status(404).json({ error: "Budget not found for this trip" });
+      return res.status(404).json({ error: 'Budget not found for this trip' });
     }
 
-    // Merge updates with existing budget
-    const budget = {
-      ...trip.budget,
-      ...updates,
-      updatedAt: new Date(),
-    };
+    const budget = { ...trip.budget, updatedAt: new Date() };
 
-    // Update trip with budget
+    if (totalBudget !== undefined) {
+      if (typeof totalBudget !== 'number' || totalBudget < 0) {
+        return res.status(400).json({ error: 'Invalid total budget' });
+      }
+      budget.totalBudget = Math.round(totalBudget);
+    }
+
+    if (currency !== undefined) {
+      budget.currency = currency.toUpperCase();
+    }
+
+    if (categories !== undefined) {
+      const { error, validated } = validateCategories(categories);
+      if (error) return res.status(400).json({ error });
+      budget.categories = validated;
+    }
+
     const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    const updateQuery = ObjectId.isValid(tripId)
-      ? { _id: new ObjectId(tripId) }
-      : { id: tripId };
-
-    const result = await tripsCollection.updateOne(updateQuery, {
-      $set: { budget: budget },
-    });
+    const q = ObjectId.isValid(tripId) ? { _id: new ObjectId(tripId) } : { id: tripId };
+    const result = await db.collection("trips").updateOne(q, { $set: { budget } });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "Trip not found" });
     }
 
-    res.json({ success: true, budget });
+    res.json({
+      tripId,
+      totalBudget: budget.totalBudget,
+      currency: budget.currency,
+      categories: buildCategoriesWithSpent(budget.categories, trip.expenses || [])
+    });
   } catch (error) {
-    console.error("Update budget error:", error);
+    console.error('Error updating budget:', error);
     if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to update budget" });
+      return res.status(404).json({ error: error.message });
     }
+    res.status(500).json({ error: 'Failed to update budget' });
   }
 });
 
@@ -185,21 +181,11 @@ router.put("/:tripId", async (req, res) => {
 router.delete("/:tripId", async (req, res) => {
   try {
     const { tripId } = req.params;
-    const userId = req.user.id;
+    await getTripWithAccess(tripId, req.user.id);
 
-    const trip = await getTripWithAccess(tripId, userId);
-
-    // Remove budget from trip
     const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    const updateQuery = ObjectId.isValid(tripId)
-      ? { _id: new ObjectId(tripId) }
-      : { id: tripId };
-
-    const result = await tripsCollection.updateOne(updateQuery, {
-      $unset: { budget: "" },
-    });
+    const q = ObjectId.isValid(tripId) ? { _id: new ObjectId(tripId) } : { id: tripId };
+    const result = await db.collection("trips").updateOne(q, { $unset: { budget: "" } });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "Trip not found" });
@@ -207,438 +193,11 @@ router.delete("/:tripId", async (req, res) => {
 
     res.json({ success: true, message: "Budget deleted successfully" });
   } catch (error) {
-    console.error("Delete budget error:", error);
+    console.error('Error deleting budget:', error);
     if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to delete budget" });
+      return res.status(404).json({ error: error.message });
     }
-  }
-});
-
-// POST /api/budgets/:tripId/categories - Add a category
-router.post("/:tripId/categories", async (req, res) => {
-  try {
-    const { tripId } = req.params;
-    const userId = req.user.id;
-    const category = req.body;
-
-    if (!category.name || typeof category.name !== "string") {
-      return res.status(400).json({ error: "Invalid category name" });
-    }
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    if (!trip.budget) {
-      return res.status(404).json({ error: "Budget not found for this trip" });
-    }
-
-    // Add category ID if not present
-    const newCategory = {
-      id: category.id || new ObjectId().toString(),
-      name: category.name,
-      budgeted: category.budgeted || 0,
-      spent: category.spent || 0,
-      icon: category.icon || null,
-      color: category.color || null,
-    };
-
-    // Add category to budget
-    const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    const updateQuery = ObjectId.isValid(tripId)
-      ? { _id: new ObjectId(tripId) }
-      : { id: tripId };
-
-    const result = await tripsCollection.updateOne(updateQuery, {
-      $push: { "budget.categories": newCategory },
-      $set: { "budget.updatedAt": new Date() },
-    });
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    res.json({ success: true, category: newCategory });
-  } catch (error) {
-    console.error("Add category error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to add category" });
-    }
-  }
-});
-
-// PUT /api/budgets/:tripId/categories/:categoryId - Update a category
-router.put("/:tripId/categories/:categoryId", async (req, res) => {
-  try {
-    const { tripId, categoryId } = req.params;
-    const userId = req.user.id;
-    const updates = req.body;
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    if (!trip.budget || !trip.budget.categories) {
-      return res.status(404).json({ error: "Budget not found for this trip" });
-    }
-
-    // Find category index
-    const categoryIndex = trip.budget.categories.findIndex(
-      (cat) => cat.id === categoryId
-    );
-
-    if (categoryIndex === -1) {
-      return res.status(404).json({ error: "Category not found" });
-    }
-
-    // Update category
-    const updatedCategory = {
-      ...trip.budget.categories[categoryIndex],
-      ...updates,
-    };
-
-    // Update in database
-    const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    const updateQuery = ObjectId.isValid(tripId)
-      ? { _id: new ObjectId(tripId) }
-      : { id: tripId };
-
-    const result = await tripsCollection.updateOne(updateQuery, {
-      $set: {
-        [`budget.categories.${categoryIndex}`]: updatedCategory,
-        "budget.updatedAt": new Date(),
-      },
-    });
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    res.json({ success: true, category: updatedCategory });
-  } catch (error) {
-    console.error("Update category error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to update category" });
-    }
-  }
-});
-
-// DELETE /api/budgets/:tripId/categories/:categoryId - Delete a category
-router.delete("/:tripId/categories/:categoryId", async (req, res) => {
-  try {
-    const { tripId, categoryId } = req.params;
-    const userId = req.user.id;
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    if (!trip.budget || !trip.budget.categories) {
-      return res.status(404).json({ error: "Budget not found for this trip" });
-    }
-
-    // Remove category
-    const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    const updateQuery = ObjectId.isValid(tripId)
-      ? { _id: new ObjectId(tripId) }
-      : { id: tripId };
-
-    const result = await tripsCollection.updateOne(updateQuery, {
-      $pull: { "budget.categories": { id: categoryId } },
-      $set: { "budget.updatedAt": new Date() },
-    });
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    res.json({ success: true, message: "Category deleted successfully" });
-  } catch (error) {
-    console.error("Delete category error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to delete category" });
-    }
-  }
-});
-
-// ============= BUDGET EXPENSE ENDPOINTS =============
-
-// GET /api/budgets/:tripId/expenses - Get all budget expenses
-router.get("/:tripId/expenses", async (req, res) => {
-  try {
-    const { tripId } = req.params;
-    const userId = req.user.id;
-
-    const trip = await getTripWithAccess(tripId, userId);
-    const allExpenses = trip.budget?.expenses || [];
-
-    // Filter to only return expenses for THIS trip
-    const expenses = allExpenses.filter((e) => e.tripId === tripId);
-
-    res.json(expenses);
-  } catch (error) {
-    console.error("Get expenses error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to get expenses" });
-    }
-  }
-});
-
-// POST /api/budgets/:tripId/expenses - Add expense
-router.post("/:tripId/expenses", async (req, res) => {
-  try {
-    const { tripId } = req.params;
-    const userId = req.user.id;
-    const expense = req.body;
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    // Validate expense
-    if (!expense.category || typeof expense.category !== "string") {
-      return res.status(400).json({ error: "Invalid category" });
-    }
-    if (typeof expense.amount !== "number" || expense.amount <= 0) {
-      return res.status(400).json({ error: "Invalid amount" });
-    }
-    if (!expense.description || typeof expense.description !== "string") {
-      return res.status(400).json({ error: "Invalid description" });
-    }
-    if (!expense.date) {
-      return res.status(400).json({ error: "Date is required" });
-    }
-
-    // Create expense with metadata
-    const newExpense = {
-      _id:
-        expense._id ||
-        `expense-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      tripId,
-      category: expense.category,
-      amount: expense.amount,
-      currency: expense.currency || "USD",
-      description: expense.description,
-      date: expense.date,
-      notes: expense.notes || "",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    // Initialize budget.expenses if it doesn't exist
-    if (!trip.budget) {
-      trip.budget = { expenses: [] };
-    }
-    if (!trip.budget.expenses) {
-      trip.budget.expenses = [];
-    }
-
-    // Add expense
-    const result = await tripsCollection.updateOne(
-      { _id: trip._id },
-      {
-        $push: { "budget.expenses": newExpense },
-        $set: { updatedAt: new Date().toISOString() },
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    res.json(newExpense);
-  } catch (error) {
-    console.error("Add expense error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to add expense" });
-    }
-  }
-});
-
-// PUT /api/budgets/:tripId/expenses/:expenseId - Update expense
-router.put("/:tripId/expenses/:expenseId", async (req, res) => {
-  try {
-    const { tripId, expenseId } = req.params;
-    const userId = req.user.id;
-    const expense = req.body;
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    // Find expense index
-    const expenses = trip.budget?.expenses || [];
-    const expenseIndex = expenses.findIndex((e) => e._id === expenseId);
-
-    if (expenseIndex === -1) {
-      return res.status(404).json({ error: "Expense not found" });
-    }
-
-    // Validate updates
-    if (
-      expense.amount !== undefined &&
-      (typeof expense.amount !== "number" || expense.amount <= 0)
-    ) {
-      return res.status(400).json({ error: "Invalid amount" });
-    }
-
-    // Update expense
-    const updatedExpense = {
-      ...expenses[expenseIndex],
-      ...expense,
-      _id: expenseId, // Keep original ID
-      tripId, // Keep original tripId
-      updatedAt: new Date().toISOString(),
-    };
-
-    const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    // Update the specific expense in the array
-    expenses[expenseIndex] = updatedExpense;
-
-    const result = await tripsCollection.updateOne(
-      { _id: trip._id },
-      {
-        $set: {
-          "budget.expenses": expenses,
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    res.json(updatedExpense);
-  } catch (error) {
-    console.error("Update expense error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to update expense" });
-    }
-  }
-});
-
-// DELETE /api/budgets/:tripId/expenses - Delete all expenses or cleanup auto-added (use ?cleanup=auto query param)
-router.delete("/:tripId/expenses", async (req, res) => {
-  try {
-    const { tripId } = req.params;
-    const { cleanup } = req.query;
-    const userId = req.user.id;
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    // If cleanup=auto, remove only auto-added expenses for THIS trip
-    if (cleanup === "auto") {
-      const result = await tripsCollection.updateOne(
-        { _id: trip._id },
-        {
-          $pull: {
-            "budget.expenses": {
-              $and: [{ _id: { $regex: /^trip-/ } }, { tripId: tripId }],
-            },
-          },
-          $set: { updatedAt: new Date().toISOString() },
-        }
-      );
-
-      if (result.matchedCount === 0) {
-        return res.status(404).json({ error: "Trip not found" });
-      }
-
-      return res.json({
-        success: true,
-        message: "Auto-added expenses cleaned up successfully",
-        modifiedCount: result.modifiedCount,
-      });
-    }
-
-    // Otherwise, delete all expenses
-    const result = await tripsCollection.updateOne(
-      { _id: trip._id },
-      {
-        $set: {
-          "budget.expenses": [],
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    res.json({
-      success: true,
-      message: "All expenses deleted successfully",
-    });
-  } catch (error) {
-    console.error("Delete expenses error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to delete expenses" });
-    }
-  }
-});
-
-// DELETE /api/budgets/:tripId/expenses/:expenseId - Delete expense
-router.delete("/:tripId/expenses/:expenseId", async (req, res) => {
-  try {
-    const { tripId, expenseId } = req.params;
-    const userId = req.user.id;
-
-    const trip = await getTripWithAccess(tripId, userId);
-
-    // Find expense
-    const expenses = trip.budget?.expenses || [];
-    const expenseExists = expenses.some((e) => e._id === expenseId);
-
-    if (!expenseExists) {
-      return res.status(404).json({ error: "Expense not found" });
-    }
-
-    const db = getDatabase();
-    const tripsCollection = db.collection("trips");
-
-    // Remove expense from array
-    const result = await tripsCollection.updateOne(
-      { _id: trip._id },
-      {
-        $pull: { "budget.expenses": { _id: expenseId } },
-        $set: { updatedAt: new Date().toISOString() },
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Trip not found" });
-    }
-
-    res.json({ success: true, message: "Expense deleted successfully" });
-  } catch (error) {
-    console.error("Delete expense error:", error);
-    if (error.message === "Trip not found or access denied") {
-      res.status(404).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: "Failed to delete expense" });
-    }
+    res.status(500).json({ error: 'Failed to delete budget' });
   }
 });
 
