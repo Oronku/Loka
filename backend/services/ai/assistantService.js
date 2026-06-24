@@ -71,6 +71,58 @@ function embedChangeSet(cs) {
   };
 }
 
+/**
+ * Persist a Loka message into the user's AI chat, optionally carrying a proposed
+ * ChangeSet (rendered as a diff card by the client). Shared by the live chat
+ * reply path and the background agents. Returns the saved message.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {string} opts.userId
+ * @param {string} opts.text
+ * @param {object|null} [opts.changeSet]  full changeset doc (from createChangeSet)
+ * @param {string|null} [opts.chatId]     reuse a known chat id, else resolve it
+ * @returns {Promise<object>} the saved message (with string _id)
+ */
+export async function postAssistantMessage(db, { userId, text, changeSet = null, chatId = null }) {
+  if (!chatId) {
+    const chat = await getOrCreateAiChat(db, userId);
+    chatId = chat._id.toString();
+  }
+
+  const aiMessage = {
+    chatId,
+    senderId: "loka-bot",
+    senderName: "Loka",
+    text: text || "",
+    changeSet: embedChangeSet(changeSet),
+    timestamp: new Date(),
+    readBy: [],
+  };
+  const ins = await db.collection("messages").insertOne(aiMessage);
+  const messageId = ins.insertedId;
+
+  if (changeSet) {
+    await db
+      .collection(PROPOSALS_COLLECTION)
+      .updateOne({ _id: new ObjectId(changeSet._id) }, { $set: { messageId } });
+  }
+
+  await db.collection("chats").updateOne(
+    { _id: new ObjectId(chatId) },
+    {
+      $set: {
+        lastMessage: (text || "").slice(0, 120),
+        lastMessageAt: new Date(),
+        updatedAt: new Date(),
+      },
+      $inc: { [`unreadCount.${userId}`]: 1 },
+    },
+  );
+
+  return { ...aiMessage, _id: messageId.toString() };
+}
+
 async function loadAiContext(db, userId) {
   const trips = await db
     .collection("trips")
@@ -133,35 +185,12 @@ export async function generateAiReply(db, { chatId, user, userMessage, activeTri
     });
   }
 
-  const aiMessage = {
-    chatId,
-    senderId: "loka-bot",
-    senderName: "Loka",
+  const saved = await postAssistantMessage(db, {
+    userId,
     text: result.text,
-    changeSet: embedChangeSet(changeSet),
-    timestamp: new Date(),
-    readBy: [],
-  };
-  const ins = await db.collection("messages").insertOne(aiMessage);
-  const messageId = ins.insertedId;
-
-  if (changeSet) {
-    await db
-      .collection(PROPOSALS_COLLECTION)
-      .updateOne({ _id: new ObjectId(changeSet._id) }, { $set: { messageId } });
-  }
-
-  await db.collection("chats").updateOne(
-    { _id: new ObjectId(chatId) },
-    {
-      $set: {
-        lastMessage: result.text.slice(0, 120),
-        lastMessageAt: new Date(),
-        updatedAt: new Date(),
-      },
-      $inc: { [`unreadCount.${userId}`]: 1 },
-    },
-  );
+    changeSet,
+    chatId,
+  });
 
   // Fold durable preferences into long-term memory (fire-and-forget, throttled
   // so we don't spend a utility-LLM call on every single turn).
@@ -172,7 +201,7 @@ export async function generateAiReply(db, { chatId, user, userMessage, activeTri
     userMessage,
   );
 
-  return { ...aiMessage, _id: messageId.toString() };
+  return saved;
 }
 
 /** Reflect a proposal status change onto the embedded copy in its chat message. */

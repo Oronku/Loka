@@ -8,6 +8,7 @@ import {
 } from "../services/ai/assistantService.js";
 import { applyChangeSet, rejectChangeSet, PROPOSALS_COLLECTION } from "../services/ai/changeset.js";
 import { getUserProfile, clearUserProfile, publicProfile } from "../services/ai/memory.js";
+import { runAgentsForUser } from "../services/ai/agents/runner.js";
 
 const router = express.Router();
 router.use(verifyGoogleToken);
@@ -192,6 +193,23 @@ router.delete("/profile", async (req, res) => {
   } catch (error) {
     console.error("[assistant/profile delete] error:", error);
     res.status(500).json({ error: "Failed to clear profile" });
+  }
+});
+
+/**
+ * Run the background agents for the current user right now (on-demand). Handy
+ * for testing without waiting for the scheduler. Any proposals/briefings land
+ * in the user's Loka chat.
+ */
+router.post("/agents/run", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  try {
+    const results = await runAgentsForUser(db, req.user);
+    res.json({ ok: true, results });
+  } catch (error) {
+    console.error("[assistant/agents/run] error:", error);
+    res.status(500).json({ error: "Failed to run agents" });
   }
 });
 

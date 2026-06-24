@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { connectToDatabase, closeDatabase } from './config/database.js';
+import { startAgentScheduler } from './services/ai/agents/scheduler.js';
 import authRoutes from './routes/auth.js';
 import hotelRoutes from './routes/hotels.js';
 import rideRoutes from './routes/rides.js';
@@ -123,6 +124,7 @@ async function startServer() {
 			console.log(`✓ Server running on port ${PORT}`);
 			console.log('✓ Using MongoDB for persistent storage');
 			console.log('✓ All API endpoints ready');
+			startAgentScheduler();
 		});
 	} catch (error) {
 		console.error('⚠️  Failed to connect to MongoDB, falling back to in-memory storage');
