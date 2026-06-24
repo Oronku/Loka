@@ -43,6 +43,18 @@ export function summarizeOperations(operations = []) {
   return parts.join(" ") || "no changes";
 }
 
+/** Summary tuned for the diff card header (new-trip vs edit-trip). */
+export function summarizeChangeSet(operations = [], { createsTrip = false, tripName = "" } = {}) {
+  if (createsTrip) {
+    const tripOp = operations.find((o) => o.entity === "trip" && o.op === "add");
+    const name = tripName || tripOp?.after?.name || "New trip";
+    const items = operations.filter((o) => o.entity !== "trip");
+    if (items.length === 0) return name;
+    return `${name} · ${items.length} item${items.length === 1 ? "" : "s"}`;
+  }
+  return summarizeOperations(operations);
+}
+
 /**
  * Persist a new ChangeSet (status: pending).
  * @returns {Promise<object>} the stored changeset with a string `_id`
@@ -50,6 +62,7 @@ export function summarizeOperations(operations = []) {
 export async function createChangeSet(db, {
   tripId = null,
   tripName = "",
+  createsTrip = false,
   chatId = null,
   messageId = null,
   userId,
@@ -60,12 +73,15 @@ export async function createChangeSet(db, {
   const doc = {
     tripId,
     tripName,
+    createsTrip: !!createsTrip,
     chatId,
     messageId,
     userId,
     source,
     status: "pending",
-    summary: summary || summarizeOperations(operations),
+    summary:
+      summary ||
+      summarizeChangeSet(operations, { createsTrip, tripName }),
     operations,
     createdAt: new Date(),
     appliedAt: null,

@@ -1,7 +1,7 @@
 import { ObjectId } from "mongodb";
 import { runAssistant } from "./runner.js";
 import { createChangeSet, PROPOSALS_COLLECTION } from "./changeset.js";
-import { getUserProfile, updateProfileFromConversation } from "./memory.js";
+import { getUserProfile, maybeUpdateProfile } from "./memory.js";
 
 const AI_WELCOME = `Hey! I'm Loka 👋
 
@@ -65,6 +65,7 @@ function embedChangeSet(cs) {
     summary: cs.summary,
     tripId: cs.tripId,
     tripName: cs.tripName,
+    createsTrip: !!cs.createsTrip,
     source: cs.source,
     operations: cs.operations,
   };
@@ -124,10 +125,10 @@ export async function generateAiReply(db, { chatId, user, userMessage, activeTri
     changeSet = await createChangeSet(db, {
       tripId: result.createsTrip ? null : result.targetTripId,
       tripName: result.tripName,
+      createsTrip: result.createsTrip,
       chatId,
       userId,
       source: "chat",
-      summary: result.summary,
       operations: result.operations,
     });
   }
@@ -162,8 +163,14 @@ export async function generateAiReply(db, { chatId, user, userMessage, activeTri
     },
   );
 
-  // Fold durable preferences into long-term memory (fire-and-forget).
-  updateProfileFromConversation(db, userId, [...history, { role: "assistant", content: result.text }]);
+  // Fold durable preferences into long-term memory (fire-and-forget, throttled
+  // so we don't spend a utility-LLM call on every single turn).
+  maybeUpdateProfile(
+    db,
+    userId,
+    [...history, { role: "assistant", content: result.text }],
+    userMessage,
+  );
 
   return { ...aiMessage, _id: messageId.toString() };
 }

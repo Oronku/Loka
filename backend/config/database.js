@@ -67,6 +67,13 @@ export async function connectToDatabase() {
     await db.collection("messages").createIndex({ chatId: 1, timestamp: -1 });
     await db.collection("messages").createIndex({ senderId: 1 });
 
+    // Create indexes for the Loka AI assistant (memory + proposals)
+    await db
+      .collection("ai_user_profiles")
+      .createIndex({ userId: 1 }, { unique: true });
+    await db.collection("ai_proposals").createIndex({ userId: 1, createdAt: -1 });
+    await db.collection("ai_proposals").createIndex({ status: 1 });
+
     // Create indexes for friends system
     await db
       .collection("friendships")

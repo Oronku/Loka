@@ -7,6 +7,7 @@ import {
   syncEmbeddedChangeSetStatus,
 } from "../services/ai/assistantService.js";
 import { applyChangeSet, rejectChangeSet, PROPOSALS_COLLECTION } from "../services/ai/changeset.js";
+import { getUserProfile, clearUserProfile, publicProfile } from "../services/ai/memory.js";
 
 const router = express.Router();
 router.use(verifyGoogleToken);
@@ -162,6 +163,35 @@ router.get("/proposals", async (req, res) => {
   } catch (error) {
     console.error("[assistant/proposals] error:", error);
     res.status(500).json({ error: "Failed to load proposals" });
+  }
+});
+
+/**
+ * What Loka remembers about the user (durable travel preferences). Returns a
+ * client-safe view with internal bookkeeping stripped out.
+ */
+router.get("/profile", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  try {
+    const profile = await getUserProfile(db, req.user.id);
+    res.json({ profile: publicProfile(profile) });
+  } catch (error) {
+    console.error("[assistant/profile] error:", error);
+    res.status(500).json({ error: "Failed to load profile" });
+  }
+});
+
+/** Forget everything Loka has learned about the user. */
+router.delete("/profile", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  try {
+    await clearUserProfile(db, req.user.id);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("[assistant/profile delete] error:", error);
+    res.status(500).json({ error: "Failed to clear profile" });
   }
 });
 
