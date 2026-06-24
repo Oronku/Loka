@@ -9,6 +9,7 @@ import {
 import { applyChangeSet, rejectChangeSet, PROPOSALS_COLLECTION } from "../services/ai/changeset.js";
 import { getUserProfile, clearUserProfile, publicProfile } from "../services/ai/memory.js";
 import { runAgentsForUser } from "../services/ai/agents/runner.js";
+import { listNotifications, markNotificationRead } from "../services/ai/notifications.js";
 
 const router = express.Router();
 router.use(verifyGoogleToken);
@@ -150,13 +151,24 @@ router.post("/proposals/:id/reject", async (req, res) => {
   }
 });
 
-/** List the user's recent proposals (for an inbox / debugging). */
+/**
+ * List the user's proposals. Optional filters:
+ *   ?tripId=<id>      only proposals for that trip
+ *   ?status=pending   only proposals with that status (default: pending)
+ * Use ?status=all to include applied/rejected.
+ */
 router.get("/proposals", async (req, res) => {
   const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
   try {
+    const { tripId, status = "pending" } = req.query;
+    const query = { userId: req.user.id };
+    if (tripId) query.tripId = tripId;
+    if (status && status !== "all") query.status = status;
+
     const proposals = await db
       .collection(PROPOSALS_COLLECTION)
-      .find({ userId: req.user.id })
+      .find(query)
       .sort({ createdAt: -1 })
       .limit(50)
       .toArray();
@@ -164,6 +176,34 @@ router.get("/proposals", async (req, res) => {
   } catch (error) {
     console.error("[assistant/proposals] error:", error);
     res.status(500).json({ error: "Failed to load proposals" });
+  }
+});
+
+/** Loka notifications/feed (agent briefings + heads-ups). */
+router.get("/notifications", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  try {
+    const unreadOnly = req.query.unreadOnly === "true";
+    const notifications = await listNotifications(db, req.user.id, { unreadOnly });
+    res.json({ notifications });
+  } catch (error) {
+    console.error("[assistant/notifications] error:", error);
+    res.status(500).json({ error: "Failed to load notifications" });
+  }
+});
+
+/** Mark a notification as read. */
+router.post("/notifications/:id/read", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  try {
+    const ok = await markNotificationRead(db, req.params.id, req.user.id);
+    if (!ok) return res.status(404).json({ error: "Notification not found" });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("[assistant/notifications/read] error:", error);
+    res.status(500).json({ error: "Failed to update notification" });
   }
 });
 

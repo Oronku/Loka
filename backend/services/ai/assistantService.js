@@ -67,6 +67,7 @@ function embedChangeSet(cs) {
     tripName: cs.tripName,
     createsTrip: !!cs.createsTrip,
     source: cs.source,
+    rationale: cs.rationale || "",
     operations: cs.operations,
   };
 }

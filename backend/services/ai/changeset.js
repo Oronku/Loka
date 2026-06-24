@@ -68,6 +68,7 @@ export async function createChangeSet(db, {
   userId,
   source = "chat",
   summary = "",
+  rationale = "",
   operations = [],
 }) {
   const doc = {
@@ -82,6 +83,7 @@ export async function createChangeSet(db, {
     summary:
       summary ||
       summarizeChangeSet(operations, { createsTrip, tripName }),
+    rationale,
     operations,
     createdAt: new Date(),
     appliedAt: null,

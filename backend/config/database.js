@@ -76,6 +76,10 @@ export async function connectToDatabase() {
     await db
       .collection("ai_agent_runs")
       .createIndex({ userId: 1, key: 1 }, { unique: true });
+    await db.collection("ai_proposals").createIndex({ tripId: 1, status: 1 });
+    await db
+      .collection("ai_notifications")
+      .createIndex({ userId: 1, read: 1, createdAt: -1 });
 
     // Create indexes for friends system
     await db

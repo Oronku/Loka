@@ -6,7 +6,7 @@ import {
   newOperation,
   summarizeChangeSet,
 } from "../changeset.js";
-import { postAssistantMessage } from "../assistantService.js";
+import { createNotification } from "../notifications.js";
 import { AGENTS } from "./registry.js";
 
 export const AGENT_RUNS_COLLECTION = "ai_agent_runs";
@@ -38,12 +38,13 @@ function makeTools(db, user, now) {
     enrichPlace,
 
     /**
-     * Propose a change to an existing trip. Creates a ChangeSet and posts it to
-     * the user's Loka chat as a diff card. `text` is the friendly explanation.
+     * Propose a change to an existing trip. Creates a pending ChangeSet that the
+     * app surfaces contextually on the trip screen (NOT in the chat). `text` is a
+     * short rationale stored on the proposal for display.
      */
     async emitProposal({ tripId, tripName = "", source, operations = [], text = "", summary }) {
       if (!operations.length) return null;
-      const changeSet = await createChangeSet(db, {
+      return createChangeSet(db, {
         tripId: tripId || null,
         tripName,
         createsTrip: false,
@@ -51,16 +52,25 @@ function makeTools(db, user, now) {
         userId: user.id,
         source: source || "agent",
         summary: summary || summarizeChangeSet(operations, { tripName }),
+        rationale: text,
         operations,
       });
-      await postAssistantMessage(db, { userId: user.id, text, changeSet });
-      return changeSet;
     },
 
-    /** Post a plain Loka message (no diff), e.g. a daily briefing. */
-    async emitMessage({ text }) {
+    /**
+     * Emit a non-diff notice (e.g. a daily briefing or heads-up) as an in-app
+     * notification — surfaced in the home feed, never in the chat.
+     */
+    async emitMessage({ text, tripId = null, title = "", type = "info", source = "agent" }) {
       if (!text || !text.trim()) return null;
-      return postAssistantMessage(db, { userId: user.id, text });
+      return createNotification(db, {
+        userId: user.id,
+        type,
+        title,
+        body: text,
+        tripId,
+        source,
+      });
     },
 
     /** Cheap utility-LLM text generation. Returns "" when AI isn't configured. */
