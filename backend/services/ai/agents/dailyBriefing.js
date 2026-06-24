@@ -191,7 +191,13 @@ export default {
 
         if (!text?.trim()) continue;
 
-        await tools.emitMessage({ text });
+        await tools.emitMessage({
+          text,
+          tripId,
+          type: "briefing",
+          title: trip.name || "Daily briefing",
+          source: "agent:daily_briefing",
+        });
         await tools.recordRun(dedupKey, { tripId });
         effects.push({ tripId });
       } catch (err) {
