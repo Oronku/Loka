@@ -564,9 +564,11 @@ Always be helpful, concise, and friendly.
       responseText =
         "I can help manage your accommodation. What hotel are you staying at?";
     } else {
-      // General conversation
+      // Legacy rule-based fallback retired. The shallow, repetitive replies came
+      // from this canned branch. The real assistant now lives at
+      // POST /api/assistant/stream (stateful gpt-4o + tools + proposals).
       responseText =
-        "I'm Loka, your AI travel assistant. I can help you plan trips, track flights, and manage your itinerary. How can I help you today?";
+        "I've upgraded to a much smarter brain ✨ Please update the app to keep chatting with me.";
     }
 
     // 3. Return response

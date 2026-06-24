@@ -13,6 +13,7 @@ import chatRoutes from './routes/chats.js';
 import friendRoutes from './routes/friends.js';
 import checkInRoutes from './routes/checkins.js';
 import aiRoutes from './routes/ai.js';
+import assistantRoutes from './routes/assistant.js';
 import budgetRoutes from './routes/budgets.js';
 import weatherRoutes from './routes/weather.js';
 import adminRoutes from './routes/admin.js';
@@ -84,6 +85,7 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/friends', friendRoutes);
 app.use('/api/checkins', checkInRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/assistant', assistantRoutes); // New Loka AI assistant (streaming + proposals)
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/weather', weatherRoutes);
 app.use('/api/admin', adminRoutes);
