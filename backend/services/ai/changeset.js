@@ -70,6 +70,7 @@ export async function createChangeSet(db, {
   summary = "",
   rationale = "",
   operations = [],
+  target = null,
 }) {
   const doc = {
     tripId,
@@ -84,6 +85,7 @@ export async function createChangeSet(db, {
       summary ||
       summarizeChangeSet(operations, { createsTrip, tripName }),
     rationale,
+    target: target || null,
     operations,
     createdAt: new Date(),
     appliedAt: null,

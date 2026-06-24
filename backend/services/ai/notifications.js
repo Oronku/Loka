@@ -16,6 +16,7 @@ export const NOTIFICATIONS_COLLECTION = "ai_notifications";
  * @param {string|null} [opts.tripId]
  * @param {string} [opts.source]  e.g. "agent:daily_briefing"
  * @param {object|null} [opts.data]
+ * @param {{ entity: 'flight'|'hotel'|'ride'|'attraction'|'trip', itemId: string|null }|null} [opts.target]
  * @returns {Promise<object>} the saved notification (string _id)
  */
 export async function createNotification(db, {
@@ -26,6 +27,7 @@ export async function createNotification(db, {
   tripId = null,
   source = "agent",
   data = null,
+  target = null,
 }) {
   if (!db || !userId) return null;
   const doc = {
@@ -36,6 +38,7 @@ export async function createNotification(db, {
     tripId,
     source,
     data,
+    target: target || null,
     read: false,
     createdAt: new Date(),
   };

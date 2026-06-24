@@ -42,7 +42,7 @@ function makeTools(db, user, now) {
      * app surfaces contextually on the trip screen (NOT in the chat). `text` is a
      * short rationale stored on the proposal for display.
      */
-    async emitProposal({ tripId, tripName = "", source, operations = [], text = "", summary }) {
+    async emitProposal({ tripId, tripName = "", source, operations = [], text = "", summary, target = null }) {
       if (!operations.length) return null;
       return createChangeSet(db, {
         tripId: tripId || null,
@@ -54,6 +54,7 @@ function makeTools(db, user, now) {
         summary: summary || summarizeChangeSet(operations, { tripName }),
         rationale: text,
         operations,
+        target,
       });
     },
 
@@ -61,7 +62,7 @@ function makeTools(db, user, now) {
      * Emit a non-diff notice (e.g. a daily briefing or heads-up) as an in-app
      * notification — surfaced in the home feed, never in the chat.
      */
-    async emitMessage({ text, tripId = null, title = "", type = "info", source = "agent" }) {
+    async emitMessage({ text, tripId = null, title = "", type = "info", source = "agent", target = null }) {
       if (!text || !text.trim()) return null;
       return createNotification(db, {
         userId: user.id,
@@ -70,6 +71,7 @@ function makeTools(db, user, now) {
         body: text,
         tripId,
         source,
+        target,
       });
     },
 

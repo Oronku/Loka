@@ -194,6 +194,7 @@ export default {
                 tripId,
                 type: "heads_up",
                 source: "agent:trip_monitor",
+                target: norm.id ? { entity: "flight", itemId: norm.id } : null,
               });
               await tools.recordRun(dedupKey, { tripId, flightId });
               effects.push({ tripId, type: "mismatch", flightId });
@@ -244,6 +245,7 @@ export default {
                   }),
                 ],
                 text: rationale,
+                target: norm.id ? { entity: "flight", itemId: norm.id } : null,
               });
               await tools.recordRun(dedupKey, { tripId, flightId });
               effects.push({ tripId, type: "ride", flightId });
