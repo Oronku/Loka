@@ -148,8 +148,21 @@ function pickArrivalFlight(flights, city) {
     const c = (f.arrivalCity || "").toLowerCase();
     return (cityLower && (label.includes(cityLower) || c.includes(cityLower))) || false;
   });
-  if (matched.length > 0) return matched[matched.length - 1];
-  return list[list.length - 1];
+  const norm = matched.length > 0 ? matched[matched.length - 1] : list[list.length - 1];
+  const raw = norm.raw;
+  const sourceIndex = (flights || []).indexOf(raw);
+  return { norm, raw, sourceIndex };
+}
+
+/** Target for inline nudges — matches frontend `resolveTripItemId` (`id` or `{entity}-{index}`). */
+function flightTarget(flights, flight, sourceIndex) {
+  const idx =
+    typeof sourceIndex === "number" && sourceIndex >= 0
+      ? sourceIndex
+      : (flights || []).indexOf(flight);
+  if (idx < 0) return null;
+  const itemId = flight?.id || `flight-${idx}`;
+  return { entity: "flight", itemId };
 }
 
 function hotelDropoff(hotels, city) {
@@ -179,22 +192,27 @@ export default {
         const attractions = trip.attractions || [];
         const tripName = trip.name || "trip";
         const primaryHotel = hotels[0] || null;
-        const primaryFlight = flights.length ? pickArrivalFlight(flights, city)?.raw || flights[flights.length - 1] : null;
-        const norm = primaryFlight ? normalizeFlight(primaryFlight) : null;
+        const arrival = flights.length ? pickArrivalFlight(flights, city) : null;
+        const primaryFlight = arrival?.raw ?? null;
+        const norm = arrival?.norm ?? null;
+        const flightSourceIndex = arrival?.sourceIndex ?? -1;
+        const flightTargetRef = primaryFlight
+          ? flightTarget(flights, primaryFlight, flightSourceIndex)
+          : null;
 
         // Flight lands in one place, hotel is somewhere else (e.g. Paris → Dolomites).
         if (tripEffects < MAX_EFFECTS_PER_TRIP && primaryFlight && primaryHotel) {
           const mismatch = detectLocationMismatch(primaryFlight, primaryHotel, city);
           if (mismatch) {
             const flightId = norm.id || `${norm.flightNumber || "flight"}:${norm.date || ""}`;
-            const dedupKey = `trip_monitor:mismatch:${tripId}:${flightId}`;
+            const dedupKey = `trip_monitor:mismatch:v2:${tripId}:${flightId}`;
             if (!(await tools.hasRecentRun(dedupKey, SEVEN_DAYS))) {
               await tools.emitMessage({
                 text: mismatch,
                 tripId,
                 type: "heads_up",
                 source: "agent:trip_monitor",
-                target: norm.id ? { entity: "flight", itemId: norm.id } : null,
+                target: flightTargetRef,
               });
               await tools.recordRun(dedupKey, { tripId, flightId });
               effects.push({ tripId, type: "mismatch", flightId });
@@ -207,7 +225,7 @@ export default {
         if (tripEffects < MAX_EFFECTS_PER_TRIP && norm?.date) {
           const flightId = norm.id || `${norm.flightNumber || "flight"}:${norm.date}`;
           if (!hasRideOnDate(rides, norm.date)) {
-            const dedupKey = `trip_monitor:ride:${tripId}:${flightId}`;
+            const dedupKey = `trip_monitor:ride:v2:${tripId}:${flightId}`;
             if (!(await tools.hasRecentRun(dedupKey, SEVEN_DAYS))) {
               const pickup = norm.arrivalLabel;
               const dropoff = hotelDropoff(hotels, city);
@@ -245,7 +263,7 @@ export default {
                   }),
                 ],
                 text: rationale,
-                target: norm.id ? { entity: "flight", itemId: norm.id } : null,
+                target: flightTargetRef,
               });
               await tools.recordRun(dedupKey, { tripId, flightId });
               effects.push({ tripId, type: "ride", flightId });
