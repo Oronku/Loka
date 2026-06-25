@@ -5,6 +5,10 @@ import { verifyGoogleToken } from "../middleware/auth.js";
 import OpenAI from "openai";
 import googleApi from "../services/googleApi.js";
 import * as tripService from "../services/trip.service.js";
+import {
+  getOrCreateAiChat,
+  generateAiReply,
+} from "../services/ai/assistantService.js";
 
 const router = express.Router();
 
@@ -41,74 +45,8 @@ const openai = process.env.OPENAI_API_KEY
 // Apply auth middleware to all routes
 router.use(verifyGoogleToken);
 
-// Helper to get or create AI chat
-async function getOrCreateAiChat(db, userId) {
-  let chat = await db.collection("chats").findOne({
-    contextType: "ai_assistant",
-    "participants.userId": userId,
-  });
-
-  if (!chat) {
-    chat = {
-      contextType: "ai_assistant",
-      contextId: userId,
-      participants: [
-        {
-          userId: userId,
-          role: "owner",
-          joinedAt: new Date(),
-        },
-        {
-          userId: "loka-bot",
-          name: "Loka",
-          role: "system",
-          joinedAt: new Date(),
-          avatar: "/videos/idle-animation.apng",
-        },
-      ],
-      permissions: {
-        canInvite: [],
-        canRemove: [],
-        canMessage: ["owner", "system"],
-      },
-      status: "active",
-      unreadCount: { [userId]: 0 },
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      lastMessageAt: new Date(),
-      lastMessage: "👋 שלום! אני לוקה, הסוכן הוירטואלי שלך ✈️",
-    };
-    const result = await db.collection("chats").insertOne(chat);
-    chat._id = result.insertedId;
-
-    // Insert welcome message
-    const welcomeMessage = `👋 **שלום! אני לוקה, הסוכן הוירטואלי שלך**
-
-אני כאן כדי לעזור לך לתכנן את הטיול המושלם! 🌍✈️
-
-**אני יכול לעזור לך:**
-• 🗺️ לבנות מסלול מפורט ליעדים
-• 🍽️ למצוא מסעדות ואטרקציות מומלצות
-• 🏨 להוסיף מלונות וטיסות
-• 🚗 לתכנן נסיעות בין מקומות
-• ☀️ לבדוק מזג אויר ולהמליץ מה להביא
-
-**איך מתחילים?**
-פשוט ספר לי לאן אתה רוצה לנסוע ומתי, ואני אדאג לכל השאר! 😊
-
-לדוגמה: "תבנה לי טיול לרומא 5 ימים בפברואר"`;
-
-    await db.collection("messages").insertOne({
-      chatId: chat._id,
-      senderId: "loka-bot",
-      senderName: "Loka",
-      text: welcomeMessage,
-      timestamp: new Date(),
-      readBy: [],
-    });
-  }
-  return chat;
-}
+// `getOrCreateAiChat` now lives in services/ai/assistantService.js (shared with
+// the streaming assistant route) and is imported above.
 
 /**
  * Unified Chat Schema (MEETLOKA + QUICKET):
@@ -573,10 +511,14 @@ router.post("/:chatId/messages", async (req, res) => {
       },
     );
 
-    // If AI chat, trigger AI response
+    // If AI chat, generate the assistant reply in the background using the new
+    // services/ai pipeline (produces a proposal/ChangeSet, never silent writes).
     if (isAiChat) {
-      // Run in background, don't await
-      processAiResponse(db, chatId, req.user.id, text);
+      generateAiReply(db, {
+        chatId,
+        user: req.user,
+        userMessage: text,
+      }).catch((err) => console.error("[chats] AI reply failed:", err));
     }
 
     res.status(201).json({

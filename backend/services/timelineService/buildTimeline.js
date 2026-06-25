@@ -119,6 +119,7 @@ export function buildTimeline(trip) {
     const arriveLabel = arrivalAirport || flight.arrivalCity || null;
 
     pushEvent(result, {
+      id: flight.id || `flight-${sourceIndex}`,
       type: "flight",
       sourceIndex,
       title: flight.flightNumber ? `Flight ${flight.flightNumber}` : "Flight",
@@ -157,6 +158,7 @@ export function buildTimeline(trip) {
     const hotelLocation = extractLocation(hotel) || hotel.name || null;
 
     pushEvent(result, {
+      id: hotel.id || `hotel-${sourceIndex}`,
       type: "hotel-checkin",
       sourceIndex,
       title: hotel.name ? `Check in: ${hotel.name}` : "Hotel check-in",
@@ -171,6 +173,7 @@ export function buildTimeline(trip) {
     });
 
     pushEvent(result, {
+      id: hotel.id || `hotel-${sourceIndex}`,
       type: "hotel-checkout",
       sourceIndex,
       title: hotel.name ? `Check out: ${hotel.name}` : "Hotel check-out",
@@ -186,6 +189,7 @@ export function buildTimeline(trip) {
 
   (trip.rides || []).forEach((ride, sourceIndex) => {
     pushEvent(result, {
+      id: ride.id || `ride-${sourceIndex}`,
       type: "ride",
       sourceIndex,
       title:
@@ -207,6 +211,7 @@ export function buildTimeline(trip) {
     const when =
       attraction.scheduledDateTime || attraction.scheduledDate || null;
     pushEvent(result, {
+      id: attraction.id || `attraction-${sourceIndex}`,
       type: "attraction",
       sourceIndex,
       title: attraction.name || "Attraction",

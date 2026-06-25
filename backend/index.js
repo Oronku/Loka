@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { connectToDatabase, closeDatabase } from './config/database.js';
+import { startAgentScheduler } from './services/ai/agents/scheduler.js';
 import authRoutes from './routes/auth.js';
 import hotelRoutes from './routes/hotels.js';
 import rideRoutes from './routes/rides.js';
@@ -13,6 +14,7 @@ import chatRoutes from './routes/chats.js';
 import friendRoutes from './routes/friends.js';
 import checkInRoutes from './routes/checkins.js';
 import aiRoutes from './routes/ai.js';
+import assistantRoutes from './routes/assistant.js';
 import budgetRoutes from './routes/budgets.js';
 import weatherRoutes from './routes/weather.js';
 import adminRoutes from './routes/admin.js';
@@ -84,6 +86,7 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/friends', friendRoutes);
 app.use('/api/checkins', checkInRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/assistant', assistantRoutes); // New Loka AI assistant (streaming + proposals)
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/weather', weatherRoutes);
 app.use('/api/admin', adminRoutes);
@@ -121,6 +124,7 @@ async function startServer() {
 			console.log(`✓ Server running on port ${PORT}`);
 			console.log('✓ Using MongoDB for persistent storage');
 			console.log('✓ All API endpoints ready');
+			startAgentScheduler();
 		});
 	} catch (error) {
 		console.error('⚠️  Failed to connect to MongoDB, falling back to in-memory storage');
