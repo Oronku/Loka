@@ -205,6 +205,8 @@ router.get('/search-route', async (req, res) => {
     const dateEnd = `${date}T23:59`
     
     let allDepartures = []
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms))
     
     // Morning flights (00:00-12:00)
     try {
@@ -216,7 +218,7 @@ router.get('/search-route', async (req, res) => {
             'X-RapidAPI-Host': RAPIDAPI_HOST
           },
           params: {
-            withLeg: false,
+            withLeg: true,
             withCancelled: false,
             withCodeshared: true,
             withCargo: false,
@@ -234,6 +236,9 @@ router.get('/search-route', async (req, res) => {
     } catch (err) {
       console.log(`Morning flights error: ${err.response?.status} - ${err.message}`)
     }
+
+    // Wait to avoid rate limiting (AeroDataBox free tier: ~1 req/sec)
+    await sleep(1100)
     
     // Afternoon/evening flights (12:00-23:59)
     try {
@@ -245,7 +250,7 @@ router.get('/search-route', async (req, res) => {
             'X-RapidAPI-Host': RAPIDAPI_HOST
           },
           params: {
-            withLeg: false,
+            withLeg: true,
             withCancelled: false,
             withCodeshared: true,
             withCargo: false,
@@ -286,9 +291,9 @@ router.get('/search-route', async (req, res) => {
       }, null, 2))
     }
 
-    // Filter by destination airport IATA code - check both arrival and movement
+    // Filter by destination airport IATA code
     let routeFlights = allDepartures.filter(flight => {
-      const arrivalIata = flight.arrival?.airport?.iata || flight.movement?.airport?.iata
+      const arrivalIata = flight.arrival?.airport?.iata
       return arrivalIata === to.toUpperCase()
     })
     
@@ -312,33 +317,21 @@ router.get('/search-route', async (req, res) => {
 
     console.log(`Found ${routeFlights.length} flights from ${from} to ${to}`)
 
-    // Transform to our format - departure flights API structure uses 'movement' for arrival
+    // Transform to our format using withLeg=true structure
     const flightResults = routeFlights.slice(0, 20).map(flight => {
-      // For departure searches, 'movement' contains the arrival airport info
-      const arrivalTime = flight.movement?.scheduledTime?.local || 
-                          flight.movement?.scheduledTime?.utc
-      
-      // Departure time might be in the root or we calculate based on arrival - duration
-      const departureTime = arrivalTime // Will need to calculate actual departure from arrival - duration
+      const depUtc = flight.departure?.scheduledTime?.utc
+      const depLocal = flight.departure?.scheduledTime?.local
+      const arrUtc = flight.arrival?.scheduledTime?.utc
+      const arrLocal = flight.arrival?.scheduledTime?.local
 
-      // Calculate duration if we have both times
+      // Calculate duration from UTC timestamps
       let durationMinutes = 0
-      // Note: For departure searches, we might not have the exact departure time easily
-      // The scheduledTime in movement is actually the arrival time
-
-      // Estimate departure time if not available (assume typical flight duration)
-      // Most flights from TLV to DXB are ~4 hours, adjust as needed
-      const estimatedDuration = 240 // 4 hours in minutes, default estimate
-      let estimatedDeparture = arrivalTime
-      if (arrivalTime) {
+      if (depUtc && arrUtc) {
         try {
-          const arrivalDate = new Date(arrivalTime)
-          const departureDate = new Date(arrivalDate.getTime() - (estimatedDuration * 60 * 1000))
-          estimatedDeparture = departureDate.toISOString()
-        } catch (e) {
-          // Fallback to using the date string
-          estimatedDeparture = `${date}T12:00:00Z`
-        }
+          const depDate = new Date(depUtc.replace(' ', 'T').replace('Z', '+00:00'))
+          const arrDate = new Date(arrUtc.replace(' ', 'T').replace('Z', '+00:00'))
+          durationMinutes = Math.round((arrDate - depDate) / 60000)
+        } catch (e) { /* ignore */ }
       }
 
       return {
@@ -347,18 +340,18 @@ router.get('/search-route', async (req, res) => {
         flightNumber: flight.number || '',
         flightIata: flight.airline?.iata || '',
         departure: {
-          airport: `${from} Airport`,
+          airport: `${from.toUpperCase()} Airport`,
           iata: from.toUpperCase(),
-          scheduled: estimatedDeparture || `${date}T12:00:00Z`,
-          terminal: null
+          scheduled: toIsoDateTime(depLocal || depUtc) || `${date}T00:00:00Z`,
+          terminal: flight.departure?.terminal || null
         },
         arrival: {
-          airport: `${flight.movement?.airport?.name} (${flight.movement?.airport?.iata})`,
-          iata: flight.movement?.airport?.iata || to.toUpperCase(),
-          scheduled: arrivalTime || `${date}T16:00:00Z`,
-          terminal: flight.movement?.terminal || null
+          airport: `${flight.arrival?.airport?.name} (${flight.arrival?.airport?.iata})`,
+          iata: flight.arrival?.airport?.iata || to.toUpperCase(),
+          scheduled: toIsoDateTime(arrLocal || arrUtc) || `${date}T04:00:00Z`,
+          terminal: flight.arrival?.terminal || null
         },
-        durationMinutes: estimatedDuration,
+        durationMinutes,
         stops: 0,
         aircraft: flight.aircraft?.model || '',
         status: flight.status || 'scheduled'
