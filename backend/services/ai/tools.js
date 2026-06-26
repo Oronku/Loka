@@ -16,8 +16,48 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "update_trip",
+      description:
+        "Propose updating an EXISTING trip's metadata (name, destination, dates). Use this when the user wants to change trip details — never use create_trip for that.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: {
+            type: "string",
+            description: "Id of the existing trip to update.",
+          },
+          name: { type: "string", description: "New trip name" },
+          destination: { type: "string", description: "New city or country" },
+          startDate: { type: "string", description: "New start date YYYY-MM-DD" },
+          endDate: { type: "string", description: "New end date YYYY-MM-DD" },
+        },
+        required: ["tripId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_trip",
+      description: "Propose permanently deleting an existing trip. Owner-only action.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: {
+            type: "string",
+            description: "Id of the trip to delete.",
+          },
+        },
+        required: ["tripId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_trip",
-      description: "Propose creating a new trip with a destination and date range.",
+      description:
+        "Propose creating a brand-NEW trip with a destination and date range. Only when the user explicitly wants a new trip — never for editing an existing one.",
       parameters: {
         type: "object",
         properties: {

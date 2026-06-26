@@ -52,6 +52,10 @@ export function summarizeChangeSet(operations = [], { createsTrip = false, tripN
     if (items.length === 0) return name;
     return `${name} · ${items.length} item${items.length === 1 ? "" : "s"}`;
   }
+  const tripDelete = operations.find((o) => o.entity === "trip" && o.op === "remove");
+  if (tripDelete) return `Delete ${tripName || tripDelete.before?.name || "trip"}`;
+  const tripUpdate = operations.find((o) => o.entity === "trip" && o.op === "update");
+  if (tripUpdate) return `Update ${tripName || tripUpdate.before?.name || "trip"}`;
   return summarizeOperations(operations);
 }
 
@@ -159,6 +163,30 @@ export async function applyChangeSet(db, id, user) {
     return { ok: false, status: 409, error: `Proposal already ${changeSet.status}` };
   }
 
+  const deleteTripOp = changeSet.operations.find((o) => o.entity === "trip" && o.op === "remove");
+  if (deleteTripOp) {
+    const tripId = changeSet.tripId;
+    if (!tripId) return { ok: false, status: 404, error: "Target trip not found" };
+    const existing = await tripService.findById(tripId);
+    if (!existing) return { ok: false, status: 404, error: "Target trip not found" };
+    if (!tripService.isOwner(existing, user.id)) {
+      return { ok: false, status: 403, error: "Only trip owner can delete" };
+    }
+    await tripService.deleteById(tripId);
+    await db.collection(PROPOSALS_COLLECTION).updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "applied", appliedAt: new Date(), tripId } },
+    );
+    return {
+      ok: true,
+      deleted: true,
+      trip: null,
+      changeSet: { ...changeSet, status: "applied", tripId },
+    };
+  }
+
+  const updateTripOp = changeSet.operations.find((o) => o.entity === "trip" && o.op === "update");
+
   // 1. Resolve (or create) the target trip.
   let trip = null;
   const createOp = changeSet.operations.find((o) => o.entity === "trip" && o.op === "add");
@@ -183,6 +211,18 @@ export async function applyChangeSet(db, id, user) {
 
   if (!trip && !createOp) {
     return { ok: false, status: 404, error: "Target trip not found" };
+  }
+
+  if (updateTripOp && trip) {
+    const access = tripService.getAccess(trip, user.id);
+    if (!access.canEdit) {
+      return { ok: false, status: 403, error: "You cannot edit this trip" };
+    }
+    const updateData = tripService.sanitizeUpdatePayload(updateTripOp.after || {}, access);
+    await db.collection("trips").updateOne(tripService.buildIdQuery(canonicalTripId(trip)), {
+      $set: updateData,
+    });
+    trip = await tripService.findById(canonicalTripId(trip));
   }
 
   // 2. Apply each embedded-item operation in order.

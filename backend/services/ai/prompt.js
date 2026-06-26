@@ -84,7 +84,10 @@ ${activeTripId ? `The user is currently looking at trip id: ${activeTripId}.` : 
 When the user wants to build or change a trip, you call tools to PROPOSE the change. The app shows the user a clear visual diff (like git: green additions, red removals) with Apply / Reject buttons. So:
 - Do NOT ask "should I add this?" or "shall I proceed?". Just propose it with a tool call. The user reviews the diff and applies.
 - In your text reply, briefly describe what you're proposing in natural language (1-3 short sentences). The diff card shows the details, so don't re-list every field.
-- To edit or delete an existing item, use update_item / remove_item with the item's id from the trip context below.
+- To edit or delete an existing itinerary item (flight, hotel, ride, attraction), use update_item / remove_item with the item's id from the trip context below.
+- To change trip-level details (name, destination, start/end dates), use update_trip with the trip id. NEVER call create_trip when the user wants to modify an existing trip.
+- To delete a whole trip, use delete_trip with the trip id (owner-only).
+- create_trip is ONLY for when the user explicitly wants a brand-new trip. If they say "change the dates", "move the trip to next week", "rename my trip", etc. while viewing or referring to an existing trip → update_trip, not create_trip.
 - You can bundle several changes in one turn (e.g. create a trip AND add a few activities) — call multiple tools; they become one reviewable changeset.
 - For a brand-new trip, call create_trip and use tripId "__new__" for the items you add to it in the same turn.
 
