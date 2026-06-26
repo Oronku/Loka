@@ -61,6 +61,11 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
       createsTrip = true;
       tripName = args.name;
       createDestination = args.destination;
+    } else if (
+      (call.name === "update_trip" || call.name === "delete_trip") &&
+      args?.tripId
+    ) {
+      targetTripId = args.tripId;
     } else if (args?.tripId && args.tripId !== NEW_TRIP_REF && !targetTripId) {
       targetTripId = args.tripId;
     }
@@ -80,6 +85,52 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
   for (const call of toolCalls) {
     const a = call.args || {};
     switch (call.name) {
+      case "update_trip": {
+        const dest = a.destination ?? targetTrip?.destination;
+        const start = a.startDate ?? targetTrip?.startDate;
+        const end = a.endDate ?? targetTrip?.endDate;
+        const changes = {};
+        if (a.name) changes.name = a.name;
+        if (a.destination) changes.destination = a.destination;
+        if (a.startDate) changes.startDate = a.startDate;
+        if (a.endDate) changes.endDate = a.endDate;
+        if (dest && start && end) {
+          changes.destinations = [{ name: dest, startDate: start, endDate: end }];
+        }
+        const parts = Object.entries(changes)
+          .filter(([k]) => k !== "destinations")
+          .map(([k, v]) => `${k} → ${v}`);
+        operations.push(
+          newOperation({
+            op: "update",
+            entity: "trip",
+            before: {
+              name: targetTrip?.name,
+              destination: targetTrip?.destination,
+              startDate: targetTrip?.startDate,
+              endDate: targetTrip?.endDate,
+            },
+            after: changes,
+            label: parts.length ? `Update trip: ${parts.join(", ")}` : "Update trip details",
+          }),
+        );
+        break;
+      }
+      case "delete_trip":
+        operations.push(
+          newOperation({
+            op: "remove",
+            entity: "trip",
+            before: {
+              name: targetTrip?.name,
+              destination: targetTrip?.destination,
+              startDate: targetTrip?.startDate,
+              endDate: targetTrip?.endDate,
+            },
+            label: `Delete trip: ${targetTrip?.name || "trip"}`,
+          }),
+        );
+        break;
       case "create_trip":
         operations.push(
           newOperation({
