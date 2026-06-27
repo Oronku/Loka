@@ -1,6 +1,6 @@
 import { getDatabase } from "../../config/database.js";
 import googleApi from "../googleApi.js";
-import { toTime } from "./buildTimeline.js";
+import { combineDateAndTime, toTime } from "./buildTimeline.js";
 
 const memoryGeocodeCache = new Map();
 const memoryTravelCache = new Map();
@@ -247,6 +247,47 @@ function dayIndex(value) {
 }
 
 /**
+ * True when the user already added an explicit ride for the airport → hotel leg,
+ * so we should not also synthesize an arrival-transfer (which duplicates it).
+ */
+function hasUserRideForArrivalTransfer(trip, flight, checkin) {
+  const rides = trip?.rides;
+  if (!Array.isArray(rides) || rides.length === 0) return false;
+
+  const flightDay = dayIndex(flight.end);
+  const hotelLabel = (checkin.subtitle || checkin.title || "").toLowerCase();
+  const hotelShort = hotelLabel.replace(/^check in:\s*/i, "").trim();
+  const airportCode = (flight.arrivalAirport || "").toLowerCase();
+
+  return rides.some((ride) => {
+    const when =
+      ride.pickupDateTime || combineDateAndTime(ride.date, ride.time);
+    const rideDay = dayIndex(when);
+    if (flightDay != null && rideDay != null && rideDay !== flightDay) {
+      return false;
+    }
+
+    const pickup = (ride.pickup || "").toLowerCase();
+    const dropoff = (ride.dropoff || "").toLowerCase();
+    if (!pickup || !dropoff) return false;
+
+    const mentionsAirport =
+      pickup.includes("airport") ||
+      dropoff.includes("airport") ||
+      (airportCode &&
+        (pickup.includes(airportCode) || dropoff.includes(airportCode)));
+    const mentionsHotel =
+      (hotelShort &&
+        (pickup.includes(hotelShort) || dropoff.includes(hotelShort))) ||
+      (hotelLabel &&
+        hotelLabel !== hotelShort &&
+        (pickup.includes(hotelLabel) || dropoff.includes(hotelLabel)));
+
+    return mentionsAirport && mentionsHotel;
+  });
+}
+
+/**
  * For each hotel check-in, find the relevant inbound flight and compute the
  * airport -> hotel transfer (drive time + estimated hotel arrival).
  *
@@ -288,6 +329,10 @@ export async function calculateArrivalTransfers(trip, events, opts = {}) {
       );
       const flight = pool[0]?.f;
       if (!flight) return null;
+
+      if (hasUserRideForArrivalTransfer(trip, flight, checkin)) {
+        return null;
+      }
 
       const transfer = {
         type: "arrival-transfer",
