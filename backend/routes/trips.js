@@ -1,4 +1,5 @@
 import express from "express";
+import { randomUUID } from "crypto";
 import { memoryStore } from "../config/memoryStore.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
@@ -14,6 +15,11 @@ import {
   detectAttractionConflicts,
   findAttractionIndex,
 } from "../services/timeline.service.js";
+import {
+  priceFlight,
+  buildPriceResponse,
+  findFlightById,
+} from "../services/flightPriceTracker.js";
 
 const router = express.Router();
 
@@ -726,6 +732,7 @@ router.post("/:id/flights", async (req, res) => {
     return;
   // Optional departureAirport/arrivalAirport (IATA code or name, stored as-is)
   // let the timeline route travel to/from the correct airports.
+  if (!flight.id) flight.id = randomUUID();
   trip.flights.push(flight);
 
   const collection = getTripsCollection();
@@ -748,6 +755,54 @@ router.post("/:id/flights", async (req, res) => {
   }
 
   respondWithTimeline(res, updated, 201);
+});
+
+router.get("/:id/flights/:flightId/price", async (req, res) => {
+  try {
+    const trip = await loadTrip(req, res, { requireEdit: false });
+    if (!trip) return;
+
+    const { flight, flightId } = findFlightById(trip, req.params.flightId);
+    if (!flight || !flightId) {
+      return res.status(404).json({ error: "Flight not found" });
+    }
+
+    const tripId = tripIdOf(trip);
+    const payload = await buildPriceResponse(
+      tripId,
+      flightId,
+      flight.departureDateTime,
+    );
+    res.json(payload);
+  } catch (error) {
+    console.error("Error fetching flight price:", error);
+    res.status(500).json({ error: "Failed to fetch flight price" });
+  }
+});
+
+router.post("/:id/flights/:flightId/price/refresh", async (req, res) => {
+  try {
+    const trip = await getTripOr404(req, res);
+    if (!trip) return;
+
+    const { flight, flightId } = findFlightById(trip, req.params.flightId);
+    if (!flight || !flightId) {
+      return res.status(404).json({ error: "Flight not found" });
+    }
+
+    const tripId = tripIdOf(trip);
+    await priceFlight(trip, flight, flightId);
+
+    const payload = await buildPriceResponse(
+      tripId,
+      flightId,
+      flight.departureDateTime,
+    );
+    res.json(payload);
+  } catch (error) {
+    console.error("Error refreshing flight price:", error);
+    res.status(500).json({ error: "Failed to refresh flight price" });
+  }
 });
 
 router.post("/:id/hotels", async (req, res) => {
