@@ -21,14 +21,6 @@ export function getTripsCollection() {
   return db ? db.collection(COLLECTION_NAME) : null;
 }
 
-export function buildShareUrl(tripId) {
-  const base =
-    process.env.FRONTEND_URL ||
-    process.env.CLIENT_URL ||
-    "http://localhost:5190";
-  return `${base.replace(/\/$/, "")}/trips/${tripId}`;
-}
-
 export function buildIdQuery(tripId) {
   const query = [{ id: tripId }];
   if (ObjectId.isValid(tripId)) {
@@ -125,7 +117,6 @@ export function attachAccessFlags(trip, userId, userEmail) {
     isParticipant: access.isParticipant,
     isInvited: invited,
     canEdit: access.canEdit,
-    shareUrl: buildShareUrl(trip.id),
   };
 }
 

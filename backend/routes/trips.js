@@ -291,10 +291,7 @@ router.post("/", async (req, res) => {
       );
     }
 
-    res.status(201).json({
-      ...createdTrip,
-      shareUrl: tripService.buildShareUrl(createdTrip.id),
-    });
+    res.status(201).json(createdTrip);
   } catch (error) {
     console.error("Error creating trip:", error);
     res
@@ -535,7 +532,6 @@ router.post("/:id/share", async (req, res) => {
       message: `Invited ${newParticipants.length + newPendingInvites.length} user(s)`,
       sharedWith: updatedTrip.sharedWith,
       pendingInvites: updatedTrip.pendingInvites || [],
-      shareUrl: tripService.buildShareUrl(trip.id),
       addedParticipants: newParticipants.length,
       addedPendingInvites: newPendingInvites.length,
       skipped,
