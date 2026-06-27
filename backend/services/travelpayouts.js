@@ -1,4 +1,8 @@
 import axios from "axios";
+import {
+  matchesAirlineFlightNumber,
+  normalizeFlightNumber,
+} from "./flightNumberUtils.js";
 
 /**
  * Travelpayouts API Service
@@ -155,6 +159,143 @@ class TravelpayoutsService {
     } catch (error) {
       console.error("Travelpayouts Flight Search Error:", error.message);
       throw error;
+    }
+  }
+
+  /** Fetch route fares for a date (raw Aviasales rows). */
+  async fetchRouteFares(origin, destination, departDate, limit = 30) {
+    if (!this.token) return [];
+
+    const params = {
+      origin: origin.toUpperCase(),
+      destination: destination.toUpperCase(),
+      depart_date: departDate,
+      currency: "USD",
+      sorting: "price",
+      direct: "false",
+      one_way: "true",
+      limit,
+      token: this.token,
+    };
+
+    const response = await axios.get(`${this.aviasalesBase}/prices_for_dates`, {
+      params,
+    });
+
+    return response.data?.data || [];
+  }
+
+  mapAviasalesRow(flight, origin, destination) {
+    const airline = flight.airline || "";
+    const flightNum = flight.flight_number ?? "";
+    const fullNumber = normalizeFlightNumber(`${airline}${flightNum}`);
+    const price = flight.price ?? flight.value ?? 0;
+    return {
+      price,
+      currency: flight.currency || "USD",
+      airline,
+      flightNumber: fullNumber || null,
+      airlineIata: airline,
+      flightNum: String(flightNum),
+      departureTime: flight.departure_at || null,
+      arrivalTime: flight.return_at || null,
+      stops: flight.transfers ?? flight.number_of_changes ?? 0,
+      bookingLink: this.generateFlightBookingLink(origin, destination, flight.departure_at?.slice?.(0, 10) || ""),
+    };
+  }
+
+  buildRoutePricing(rows, origin, destination, flightNumber) {
+    const mapped = rows
+      .filter((row) => (row.price ?? row.value ?? 0) > 0)
+      .map((row) => this.mapAviasalesRow(row, origin, destination));
+    if (!mapped.length) return null;
+
+    mapped.sort((a, b) => a.price - b.price);
+    const routeLowest = mapped[0];
+    const alternatives = mapped.slice(0, 5).map((f, i) => ({
+      offerId: `aviasales-${i}-${f.flightNumber || "unknown"}`,
+      airline: f.airline,
+      flightNumber: f.flightNumber,
+      departureTime: f.departureTime,
+      arrivalTime: f.arrivalTime,
+      stops: f.stops,
+      price: f.price,
+      currency: f.currency,
+    }));
+
+    let matched = null;
+    if (flightNumber) {
+      matched =
+        mapped.find((f) =>
+          matchesAirlineFlightNumber(flightNumber, f.airlineIata, f.flightNum),
+        ) ||
+        mapped.find((f) => f.flightNumber === normalizeFlightNumber(flightNumber)) ||
+        null;
+    }
+
+    const hasCheaperOptions =
+      (matched == null && alternatives.length > 0) ||
+      (matched != null && matched.price > routeLowest.price);
+
+    return {
+      priceScope: "route",
+      price: routeLowest.price,
+      currency: routeLowest.currency,
+      offerId: null,
+      routeLowest: routeLowest.price,
+      matchedFlightPrice: matched?.price ?? null,
+      matchedFlightFound: matched != null,
+      hasCheaperOptions,
+      cheaperBy:
+        hasCheaperOptions && matched ? matched.price - routeLowest.price : null,
+      alternatives,
+      routeSource: "travelpayouts",
+      matchedFlightSource: matched ? "travelpayouts" : null,
+      routeBookable: false,
+      matchedFlightBookable: false,
+    };
+  }
+
+  /** Route + optional matched-flight pricing from Aviasales / Travelpayouts. */
+  async getRoutePricing(origin, destination, departDate, flightContext = {}) {
+    if (!this.isConfigured()) return null;
+    try {
+      const rows = await this.fetchRouteFares(origin, destination, departDate);
+      return this.buildRoutePricing(
+        rows,
+        origin,
+        destination,
+        flightContext.flightNumber,
+      );
+    } catch (error) {
+      console.error("[Travelpayouts] getRoutePricing:", error.message);
+      return null;
+    }
+  }
+
+  /** Matched-flight price only — used when Duffel has route data but no match. */
+  async getMatchedFlightPrice(origin, destination, departDate, flightNumber) {
+    if (!this.isConfigured() || !flightNumber) return null;
+    try {
+      const rows = await this.fetchRouteFares(origin, destination, departDate);
+      const mapped = rows
+        .filter((row) => (row.price ?? row.value ?? 0) > 0)
+        .map((row) => this.mapAviasalesRow(row, origin, destination));
+      const matched =
+        mapped.find((f) =>
+          matchesAirlineFlightNumber(flightNumber, f.airlineIata, f.flightNum),
+        ) ||
+        mapped.find((f) => f.flightNumber === normalizeFlightNumber(flightNumber)) ||
+        null;
+      if (!matched) return null;
+      return {
+        price: matched.price,
+        currency: matched.currency,
+        source: "travelpayouts",
+      };
+    } catch (error) {
+      console.error("[Travelpayouts] getMatchedFlightPrice:", error.message);
+      return null;
     }
   }
 

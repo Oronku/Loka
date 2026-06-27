@@ -7,6 +7,10 @@
  */
 
 import axios from "axios";
+import {
+  matchesFlightNumber,
+  normalizeFlightNumber,
+} from "./flightNumberUtils.js";
 
 class GoogleFlightsService {
   constructor() {
@@ -166,11 +170,13 @@ class GoogleFlightsService {
             .map((s) => s.flight_number)
             .filter(Boolean)
             .join(", "),
+          segmentFlightNumbers: segments
+            .map((s) => s.flight_number)
+            .filter(Boolean),
           aircraft: segments
             .map((s) => s.airplane)
             .filter(Boolean)
             .join(", "),
-          // Google Flights deep link (affiliate-ready)
           bookingLink:
             flight.booking_link ||
             `https://www.google.com/travel/flights?hl=en&q=Flights%20from%20${origin}%20to%20${destination}`,
@@ -184,6 +190,92 @@ class GoogleFlightsService {
     }
 
     return flights;
+  }
+
+  itineraryMatchesFlight(itinerary, flightNumber) {
+    const target = normalizeFlightNumber(flightNumber);
+    if (!target) return false;
+    return (itinerary.segmentFlightNumbers || []).some((num) =>
+      matchesFlightNumber(flightNumber, num),
+    );
+  }
+
+  toAlternative(itinerary, index) {
+    const nums = itinerary.segmentFlightNumbers || [];
+    return {
+      offerId: `google-${index}-${nums.join("-") || "unknown"}`,
+      airline: itinerary.airline,
+      flightNumber: nums[0] || itinerary.flightNumbers?.split(",")[0]?.trim() || null,
+      departureTime: itinerary.departureTime,
+      arrivalTime: itinerary.arrivalTime,
+      stops: itinerary.stops,
+      price: itinerary.price,
+      currency: itinerary.currency,
+    };
+  }
+
+  buildRoutePricing(flights, flightNumber) {
+    const priced = flights.filter((f) => f.price > 0);
+    if (!priced.length) return null;
+
+    priced.sort((a, b) => a.price - b.price);
+    const routeLowest = priced[0];
+    const alternatives = priced.slice(0, 5).map((f, i) => this.toAlternative(f, i));
+
+    let matched = null;
+    if (flightNumber) {
+      matched = priced.find((f) => this.itineraryMatchesFlight(f, flightNumber)) || null;
+    }
+
+    const hasCheaperOptions =
+      (matched == null && alternatives.length > 0) ||
+      (matched != null && matched.price > routeLowest.price);
+
+    return {
+      priceScope: "route",
+      price: routeLowest.price,
+      currency: routeLowest.currency,
+      offerId: null,
+      routeLowest: routeLowest.price,
+      matchedFlightPrice: matched?.price ?? null,
+      matchedFlightFound: matched != null,
+      hasCheaperOptions,
+      cheaperBy:
+        hasCheaperOptions && matched ? matched.price - routeLowest.price : null,
+      alternatives,
+      routeSource: "google_flights",
+      matchedFlightSource: matched ? "google_flights" : null,
+      routeBookable: false,
+      matchedFlightBookable: false,
+    };
+  }
+
+  /** Route + optional matched-flight pricing from Google Flights. */
+  async getRoutePricing(origin, destination, departureDate, flightContext = {}) {
+    if (!this.isConfigured()) return null;
+    try {
+      const flights = await this.searchFlights(origin, destination, departureDate);
+      return this.buildRoutePricing(flights, flightContext.flightNumber);
+    } catch (error) {
+      console.error("[Google Flights] getRoutePricing:", error.message);
+      return null;
+    }
+  }
+
+  /** Matched-flight price only — used when Duffel has route data but no match. */
+  async getMatchedFlightPrice(origin, destination, departureDate, flightNumber) {
+    if (!this.isConfigured() || !flightNumber) return null;
+    try {
+      const flights = await this.searchFlights(origin, destination, departureDate);
+      const matched = flights.find(
+        (f) => f.price > 0 && this.itineraryMatchesFlight(f, flightNumber),
+      );
+      if (!matched) return null;
+      return { price: matched.price, currency: matched.currency, source: "google_flights" };
+    } catch (error) {
+      console.error("[Google Flights] getMatchedFlightPrice:", error.message);
+      return null;
+    }
   }
 
   /**

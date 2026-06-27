@@ -81,6 +81,10 @@ export async function connectToDatabase() {
       .collection("ai_notifications")
       .createIndex({ userId: 1, read: 1, createdAt: -1 });
 
+    await db
+      .collection("flight_price_history")
+      .createIndex({ tripId: 1, flightId: 1, checkedAt: -1 });
+
     // Create indexes for friends system
     await db
       .collection("friendships")
