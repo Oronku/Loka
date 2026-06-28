@@ -103,6 +103,12 @@ export async function connectToDatabase() {
       .collection("social_caption_cache")
       .createIndex({ url: 1 }, { unique: true });
 
+    // Shared place cache (Google + AI enrichment + aggregated sources)
+    await db
+      .collection("places_cache")
+      .createIndex({ placeId: 1 }, { unique: true });
+    await db.collection("places_cache").createIndex({ country: 1 });
+
     console.log("✓ Database indexes created");
 
     return db;

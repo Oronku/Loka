@@ -2,17 +2,22 @@ import express from "express";
 import { ObjectId } from "mongodb";
 import { getDb } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
-import { enrichPlace } from "../services/ai/places.js";
-import googleApi from "../services/googleApi.js";
 import { getCaption, detectPlatform } from "../services/socialImport.js";
 import { extractAndEnrich } from "../services/ai/extractPlaces.js";
+import {
+  PLACES_CACHE_COLLECTION,
+  getOrCreatePlaceCache,
+  addSourceToPlace,
+  ensurePlaceSummary,
+  denormalizedFromCache,
+} from "../services/placeCache.js";
 
 const router = express.Router();
 
 const COLLECTIONS = "explore_collections";
 const PLACES = "saved_places";
 
-const VALID_SOURCE_TYPES = ["manual", "instagram", "tiktok"];
+const VALID_SOURCE_TYPES = ["manual", "instagram", "tiktok", "web"];
 
 router.use(verifyGoogleToken);
 
@@ -22,21 +27,148 @@ function toObjectId(id) {
   return new ObjectId(id);
 }
 
-function imageUrlFrom(enriched) {
-  if (!enriched?.photoReference) return enriched?.imageUrl || null;
-  return googleApi.getPhotoUrl(enriched.photoReference, 800);
+function publicSources(sources = []) {
+  return sources.map((s) => ({
+    type: s.type,
+    url: s.url,
+    caption: s.caption ?? null,
+    addedAt: s.addedAt,
+  }));
 }
 
 /**
- * Build a persistable saved-place document from arbitrary client input.
- *
- * Accepts either a `placeId` or a raw `name`. When location data is missing we
- * enrich via Google Places (enrichPlace -> searchPlaceByText). Already-enriched
- * import candidates pass through without an extra geocode call.
+ * Merge a saved_places row with its places_cache doc into the SavedPlace API shape.
+ */
+function formatSavedPlace(saved, cache) {
+  const types =
+    Array.isArray(saved.types) && saved.types.length
+      ? saved.types
+      : cache?.types || [];
+  const images =
+    Array.isArray(saved.images) && saved.images.length
+      ? saved.images
+      : cache?.images || [];
+  const tags =
+    Array.isArray(saved.tags) && saved.tags.length
+      ? saved.tags
+      : cache?.tags || [];
+
+  return {
+    id: saved._id.toString(),
+    placeId: saved.placeId || cache?.placeId || null,
+    name: saved.name || cache?.name || "",
+    address: saved.address ?? cache?.address ?? null,
+    location: saved.location || cache?.location || null,
+    city: saved.city ?? cache?.city ?? null,
+    country: saved.country ?? cache?.country ?? null,
+    countryCode: saved.countryCode ?? cache?.countryCode ?? null,
+    category: saved.category || cache?.category || "",
+    types,
+    rating: saved.rating ?? cache?.rating ?? null,
+    priceLevel: saved.priceLevel ?? cache?.priceLevel ?? null,
+    imageUrl: saved.imageUrl || images[0] || null,
+    images,
+    summary: saved.summary ?? cache?.summary ?? null,
+    tags,
+    notes: saved.notes || "",
+    collectionId: saved.collectionId ?? null,
+    sources: publicSources(cache?.sources || saved.sources || []),
+    createdAt: saved.createdAt,
+  };
+}
+
+function formatSavedPlaceDetail(saved, cache) {
+  const base = formatSavedPlace(saved, cache);
+  return {
+    ...base,
+    website: cache?.website ?? null,
+    googleMapsUrl: cache?.googleMapsUrl ?? null,
+    openingHours: cache?.openingHours?.weekday_text ?? cache?.openingHours ?? null,
+    reviews: cache?.reviews ?? null,
+  };
+}
+
+function savedPlaceNeedsEnrichment(saved) {
+  return !saved.country || !saved.summary || !saved.city;
+}
+
+/** Persist denormalized cache fields back onto a saved_places row. */
+async function persistDenormalized(db, savedId, cacheDoc) {
+  if (!cacheDoc) return;
+  const patch = denormalizedFromCache(cacheDoc);
+  await db.collection(PLACES).updateOne(
+    { _id: savedId },
+    { $set: { ...patch, updatedAt: new Date() } }
+  );
+}
+
+/**
+ * Best-effort lazy enrichment for legacy saved_places rows. Respects a ~1s budget;
+ * continues in the background when slow.
+ */
+async function lazyEnrichSavedPlace(db, savedPlace, cacheDoc) {
+  const work = async () => {
+    let cache = cacheDoc;
+    if (!cache) {
+      cache = await getOrCreatePlaceCache(db, {
+        placeId: savedPlace.placeId || undefined,
+        name: savedPlace.name || undefined,
+        cityContext: savedPlace.city || savedPlace.country || null,
+      });
+    }
+    if (!cache) return null;
+
+    const captionHint =
+      savedPlace.source?.caption ||
+      (Array.isArray(savedPlace.sources) && savedPlace.sources[0]?.caption) ||
+      null;
+    cache = await ensurePlaceSummary(db, cache, captionHint);
+    await persistDenormalized(db, savedPlace._id, cache);
+    return cache;
+  };
+
+  const timeoutMs = 900;
+  let timedOut = false;
+
+  const result = await Promise.race([
+    work().catch((err) => {
+      console.error("[explore] lazy enrich failed:", err.message);
+      return null;
+    }),
+    new Promise((resolve) =>
+      setTimeout(() => {
+        timedOut = true;
+        resolve(undefined);
+      }, timeoutMs)
+    ),
+  ]);
+
+  if (timedOut) {
+    work().catch((err) =>
+      console.error("[explore] async lazy enrich failed:", err.message)
+    );
+    return cacheDoc;
+  }
+
+  return result ?? cacheDoc;
+}
+
+async function loadCacheMap(db, placeIds) {
+  const ids = [...new Set(placeIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const docs = await db
+    .collection(PLACES_CACHE_COLLECTION)
+    .find({ placeId: { $in: ids } })
+    .toArray();
+  return Object.fromEntries(docs.map((d) => [d.placeId, d]));
+}
+
+/**
+ * Build a persistable saved-place document from client input, backed by places_cache.
  *
  * @returns {Promise<{ ok: true, doc: object } | { ok: false, error: string }>}
  */
-async function buildSavedPlace(userId, input, fallbackCollectionId) {
+async function buildSavedPlace(db, userId, input, fallbackCollectionId) {
   if (!input || typeof input !== "object") {
     return { ok: false, error: "Invalid place payload" };
   }
@@ -51,24 +183,6 @@ async function buildSavedPlace(userId, input, fallbackCollectionId) {
     return { ok: false, error: "A place name or placeId is required" };
   }
 
-  const hasLocation =
-    input.location &&
-    typeof input.location.lat === "number" &&
-    typeof input.location.lng === "number";
-
-  let enriched = null;
-  // Only spend a Google call when the candidate isn't already geocoded.
-  if (!hasLocation && name) {
-    const cityContext = input.city || input.country || null;
-    enriched = await enrichPlace(name, cityContext);
-  }
-
-  const location = hasLocation
-    ? { lat: input.location.lat, lng: input.location.lng }
-    : enriched?.location
-    ? { lat: enriched.location.lat, lng: enriched.location.lng }
-    : null;
-
   const collectionId =
     (typeof input.collectionId === "string" && input.collectionId.trim()) ||
     fallbackCollectionId ||
@@ -79,33 +193,67 @@ async function buildSavedPlace(userId, input, fallbackCollectionId) {
     ? rawSource.type
     : "manual";
 
+  const cityContext =
+    input.city || input.country || input.cityContext || null;
+
+  let cacheDoc = await getOrCreatePlaceCache(db, {
+    placeId: placeId || undefined,
+    name: name || undefined,
+    cityContext,
+  });
+
+  if (cacheDoc) {
+    const captionHint =
+      typeof rawSource.caption === "string" ? rawSource.caption : null;
+    cacheDoc = await ensurePlaceSummary(db, cacheDoc, captionHint);
+
+    if (typeof rawSource.url === "string" && rawSource.url.trim()) {
+      cacheDoc =
+        (await addSourceToPlace(db, cacheDoc.placeId, {
+          type: sourceType,
+          url: rawSource.url.trim(),
+          caption: captionHint,
+          addedByUserId: userId,
+        })) || cacheDoc;
+    }
+  }
+
+  const hasLocation =
+    input.location &&
+    typeof input.location.lat === "number" &&
+    typeof input.location.lng === "number";
+
   const now = new Date();
+  const denorm = denormalizedFromCache(cacheDoc);
+
   const doc = {
     userId,
     collectionId,
-    placeId: placeId || enriched?.placeId || null,
-    name: name || enriched?.name || "",
-    address: input.address ?? enriched?.address ?? null,
-    location,
-    photoReference: input.photoReference ?? enriched?.photoReference ?? null,
-    imageUrl: input.imageUrl ?? imageUrlFrom(enriched) ?? null,
-    rating: input.rating ?? enriched?.rating ?? null,
-    types: Array.isArray(input.types)
-      ? input.types
-      : enriched?.types || [],
+    placeId: denorm.placeId || placeId || null,
+    name: denorm.name || name,
+    address: input.address ?? denorm.address ?? null,
+    location: hasLocation
+      ? { lat: input.location.lat, lng: input.location.lng }
+      : denorm.location || null,
+    city: input.city ?? denorm.city ?? null,
+    country: input.country ?? denorm.country ?? null,
+    countryCode: denorm.countryCode ?? null,
     category:
       (typeof input.category === "string" && input.category.trim()) ||
       (typeof input.type === "string" && input.type.trim()) ||
+      denorm.category ||
       "",
+    types: Array.isArray(input.types) ? input.types : denorm.types || [],
+    rating: input.rating ?? denorm.rating ?? null,
+    priceLevel: input.priceLevel ?? denorm.priceLevel ?? null,
+    imageUrl: input.imageUrl ?? denorm.imageUrl ?? null,
+    images: Array.isArray(input.images) ? input.images : denorm.images || [],
+    summary: denorm.summary ?? null,
+    tags: denorm.tags || [],
     notes:
       (typeof input.notes === "string" && input.notes) ||
       (typeof input.tip === "string" && input.tip) ||
       "",
-    source: {
-      type: sourceType,
-      url: typeof rawSource.url === "string" ? rawSource.url : null,
-      caption: typeof rawSource.caption === "string" ? rawSource.caption : null,
-    },
     createdAt: now,
     updatedAt: now,
   };
@@ -257,10 +405,58 @@ router.get("/places", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.json(places);
+    let cacheMap = await loadCacheMap(
+      db,
+      places.map((p) => p.placeId)
+    );
+
+    const needsEnrich = places.filter(savedPlaceNeedsEnrichment);
+    if (needsEnrich.length > 0) {
+      await Promise.all(
+        needsEnrich.map((p) =>
+          lazyEnrichSavedPlace(db, p, cacheMap[p.placeId])
+        )
+      );
+      cacheMap = await loadCacheMap(
+        db,
+        places.map((p) => p.placeId)
+      );
+    }
+
+    const formatted = places.map((p) => formatSavedPlace(p, cacheMap[p.placeId]));
+    res.json(formatted);
   } catch (error) {
     console.error("Error fetching saved places:", error);
     res.status(500).json({ error: "Failed to fetch saved places" });
+  }
+});
+
+// Full saved-place detail (merged with places_cache)
+router.get("/places/:id", async (req, res) => {
+  try {
+    const db = getDb();
+    const userId = req.user.id;
+    const _id = toObjectId(req.params.id);
+    if (!_id) return res.status(400).json({ error: "Invalid place id" });
+
+    const saved = await db.collection(PLACES).findOne({ _id, userId });
+    if (!saved) return res.status(404).json({ error: "Place not found" });
+
+    let cacheMap = await loadCacheMap(db, [saved.placeId]);
+    let cache = cacheMap[saved.placeId];
+
+    if (savedPlaceNeedsEnrichment(saved)) {
+      cache = await lazyEnrichSavedPlace(db, saved, cache);
+      if (!cache && saved.placeId) {
+        const refreshed = await loadCacheMap(db, [saved.placeId]);
+        cache = refreshed[saved.placeId];
+      }
+    }
+
+    res.json(formatSavedPlaceDetail(saved, cache));
+  } catch (error) {
+    console.error("Error fetching saved place detail:", error);
+    res.status(500).json({ error: "Failed to fetch place" });
   }
 });
 
@@ -289,7 +485,9 @@ router.post("/places", async (req, res) => {
         : null;
 
     const built = await Promise.all(
-      inputs.map((input) => buildSavedPlace(userId, input, fallbackCollectionId))
+      inputs.map((input) =>
+        buildSavedPlace(db, userId, input, fallbackCollectionId)
+      )
     );
 
     const docs = [];
@@ -306,10 +504,18 @@ router.post("/places", async (req, res) => {
     }
 
     const result = await db.collection(PLACES).insertMany(docs);
-    const saved = docs.map((doc, i) => ({
-      ...doc,
-      _id: result.insertedIds[i],
-    }));
+
+    const cacheMap = await loadCacheMap(
+      db,
+      docs.map((d) => d.placeId)
+    );
+
+    const saved = docs.map((doc, i) =>
+      formatSavedPlace(
+        { ...doc, _id: result.insertedIds[i] },
+        cacheMap[doc.placeId]
+      )
+    );
 
     if (isBatch) {
       return res.status(201).json({ saved, errors });
@@ -346,7 +552,9 @@ router.patch("/places/:id", async (req, res) => {
 
     const updated = result?.value ?? result;
     if (!updated) return res.status(404).json({ error: "Place not found" });
-    res.json(updated);
+
+    const cacheMap = await loadCacheMap(db, [updated.placeId]);
+    res.json(formatSavedPlace(updated, cacheMap[updated.placeId]));
   } catch (error) {
     console.error("Error updating place:", error);
     res.status(500).json({ error: "Failed to update place" });
