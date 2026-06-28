@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "build:airports": "node scripts/buildAirportsJson.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

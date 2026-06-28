@@ -11,7 +11,9 @@ const STATIC_AIRPORTS = airports.map((a) => ({
   name: a.name,
   city: a.city,
   country: a.country,
-  location: { lat: a.lat, lng: a.lng },
+  ...(a.lat != null && a.lng != null
+    ? { location: { lat: a.lat, lng: a.lng } }
+    : {}),
 }))
 
 function scoreMatch(airport, q) {
