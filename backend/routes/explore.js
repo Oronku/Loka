@@ -11,6 +11,10 @@ import {
   ensurePlaceSummary,
   denormalizedFromCache,
 } from "../services/placeCache.js";
+import {
+  buildDiscoverFeed,
+  getDiscoverPlaceById,
+} from "../services/discoverFeed.js";
 
 const router = express.Router();
 
@@ -384,6 +388,43 @@ router.delete("/collections/:id", async (req, res) => {
   } catch (error) {
     console.error("Error deleting collection:", error);
     res.status(500).json({ error: "Failed to delete collection" });
+  }
+});
+
+/* ------------------------------- Discover ------------------------------ */
+
+// Recommended places from shared places_cache, grouped into sections.
+router.get("/discover", async (req, res) => {
+  try {
+    const db = getDb();
+    const { country, category } = req.query;
+    const feed = await buildDiscoverFeed(db, { country, category });
+    res.json(feed);
+  } catch (error) {
+    console.error("Error fetching discover feed:", error);
+    res.status(500).json({ error: "Failed to fetch discover feed" });
+  }
+});
+
+// Full cache-backed detail for a discovered place (Google place_id).
+router.get("/discover/place/:placeId", async (req, res) => {
+  try {
+    const db = getDb();
+    const placeId =
+      typeof req.params.placeId === "string" ? req.params.placeId.trim() : "";
+    if (!placeId) {
+      return res.status(400).json({ error: "placeId is required" });
+    }
+
+    const place = await getDiscoverPlaceById(db, placeId);
+    if (!place) {
+      return res.status(404).json({ error: "Place not found" });
+    }
+
+    res.json(place);
+  } catch (error) {
+    console.error("Error fetching discover place:", error);
+    res.status(500).json({ error: "Failed to fetch place" });
   }
 });
 
