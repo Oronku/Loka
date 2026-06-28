@@ -1,11 +1,8 @@
 import express from 'express'
-import axios from 'axios'
+import { aeroDataBoxGet } from '../services/aeroDataBox.js'
+import { searchAirports } from '../services/airportSearch.js'
 
 const router = express.Router()
-
-// AeroDataBox API configuration
-const AERODATABOX_BASE_URL = 'https://aerodatabox.p.rapidapi.com'
-const RAPIDAPI_HOST = 'aerodatabox.p.rapidapi.com'
 
 /**
  * Normalize a datetime to strict ISO 8601, preserving the local offset.
@@ -47,22 +44,17 @@ router.get('/search/:flightNumber', async (req, res) => {
     }
 
     console.log(`Fetching real flight data for ${flightNumber} on ${date}`)
-    // Call AeroDataBox API
-    const response = await axios.get(
-      `${AERODATABOX_BASE_URL}/flights/number/${flightNumber}/${date}`,
+    const data = await aeroDataBoxGet(
+      `/flights/number/${flightNumber}/${date}`,
       {
-        headers: {
-          'X-RapidAPI-Key': RAPIDAPI_KEY,
-          'X-RapidAPI-Host': RAPIDAPI_HOST
-        },
         params: {
           withAircraftImage: false,
-          withLocation: false
-        }
-      }
+          withLocation: false,
+        },
+      },
     )
 
-    if (!response.data || response.data.length === 0) {
+    if (!data || data.length === 0) {
       return res.status(404).json({ 
         error: 'Flight not found',
         message: `No flight found for ${flightNumber} on ${date}`
@@ -82,10 +74,10 @@ router.get('/search/:flightNumber', async (req, res) => {
     }
 
     const flight =
-      response.data.find((f) => localDate(f) === date) || null
+      data.find((f) => localDate(f) === date) || null
 
     if (!flight) {
-      const availableDates = [...new Set(response.data.map(localDate).filter(Boolean))]
+      const availableDates = [...new Set(data.map(localDate).filter(Boolean))]
       return res.status(404).json({
         error: 'Flight not found on requested date',
         message: `No ${flightNumber} flight operates on ${date}.`,
@@ -205,75 +197,69 @@ router.get('/search-route', async (req, res) => {
     const dateEnd = `${date}T23:59`
     
     let allDepartures = []
+    let morningStatus = null
+    let afternoonStatus = null
 
-    const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+    const departureParams = {
+      withLeg: true,
+      withCancelled: false,
+      withCodeshared: true,
+      withCargo: false,
+      withPrivate: false,
+      withLocation: false,
+      direction: 'Departure',
+    }
     
     // Morning flights (00:00-12:00)
     try {
-      const response1 = await axios.get(
-        `${AERODATABOX_BASE_URL}/flights/airports/iata/${from.toUpperCase()}/${dateStart1}/${dateMid}`,
-        {
-          headers: {
-            'X-RapidAPI-Key': RAPIDAPI_KEY,
-            'X-RapidAPI-Host': RAPIDAPI_HOST
-          },
-          params: {
-            withLeg: true,
-            withCancelled: false,
-            withCodeshared: true,
-            withCargo: false,
-            withPrivate: false,
-            withLocation: false,
-            direction: 'Departure'
-          }
-        }
+      const data1 = await aeroDataBoxGet(
+        `/flights/airports/iata/${from.toUpperCase()}/${dateStart1}/${dateMid}`,
+        { params: departureParams },
       )
       
-      if (response1.data?.departures) {
-        console.log(`Found ${response1.data.departures.length} morning departures`)
-        allDepartures = allDepartures.concat(response1.data.departures)
+      if (data1?.departures) {
+        console.log(`Found ${data1.departures.length} morning departures`)
+        allDepartures = allDepartures.concat(data1.departures)
       }
     } catch (err) {
-      console.log(`Morning flights error: ${err.response?.status} - ${err.message}`)
+      morningStatus = err.response?.status || 500
+      console.log(`Morning flights error: ${morningStatus} - ${err.message}`)
     }
-
-    // Wait to avoid rate limiting (AeroDataBox free tier: ~1 req/sec)
-    await sleep(1100)
     
-    // Afternoon/evening flights (12:00-23:59)
+    // Afternoon/evening flights (12:00-23:59) — throttled via shared queue
     try {
-      const response2 = await axios.get(
-        `${AERODATABOX_BASE_URL}/flights/airports/iata/${from.toUpperCase()}/${dateMid}/${dateEnd}`,
-        {
-          headers: {
-            'X-RapidAPI-Key': RAPIDAPI_KEY,
-            'X-RapidAPI-Host': RAPIDAPI_HOST
-          },
-          params: {
-            withLeg: true,
-            withCancelled: false,
-            withCodeshared: true,
-            withCargo: false,
-            withPrivate: false,
-            withLocation: false,
-            direction: 'Departure'
-          }
-        }
+      const data2 = await aeroDataBoxGet(
+        `/flights/airports/iata/${from.toUpperCase()}/${dateMid}/${dateEnd}`,
+        { params: departureParams },
       )
       
-      if (response2.data?.departures) {
-        console.log(`Found ${response2.data.departures.length} afternoon/evening departures`)
-        allDepartures = allDepartures.concat(response2.data.departures)
+      if (data2?.departures) {
+        console.log(`Found ${data2.departures.length} afternoon/evening departures`)
+        allDepartures = allDepartures.concat(data2.departures)
       }
     } catch (err) {
-      console.log(`Afternoon flights error: ${err.response?.status} - ${err.message}`)
+      afternoonStatus = err.response?.status || 500
+      console.log(`Afternoon flights error: ${afternoonStatus} - ${err.message}`)
     }
 
     if (allDepartures.length === 0) {
-      // Check if both requests were rate limited
-      return res.status(429).json({ 
-        error: 'API rate limit exceeded',
-        message: 'The flight search API has reached its rate limit. Please try again in a few minutes.'
+      if (morningStatus === 429 || afternoonStatus === 429) {
+        return res.status(429).json({ 
+          error: 'API rate limit exceeded',
+          message: 'The flight search API has reached its rate limit. Please try again in a few minutes.'
+        })
+      }
+
+      if (morningStatus >= 400 && afternoonStatus >= 400) {
+        return res.status(502).json({
+          error: 'Flight data unavailable',
+          message: 'Could not fetch flight schedules from the provider. Please try again later.',
+        })
+      }
+
+      return res.status(404).json({
+        error: 'No flights found',
+        message: `No departures found from ${from.toUpperCase()} on ${date}`,
       })
     }
 
@@ -394,75 +380,17 @@ router.get('/airports/search', async (req, res) => {
       })
     }
 
-    const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY
-    
-    if (!RAPIDAPI_KEY) {
-      // Return common airports if API key not configured
-      const commonAirports = [
-        { code: 'TLV', name: 'Ben Gurion Airport', city: 'Tel Aviv', country: 'IL', location: { lat: 32.01, lng: 34.87 } },
-        { code: 'JFK', name: 'John F Kennedy Intl', city: 'New York', country: 'US', location: { lat: 40.64, lng: -73.78 } },
-        { code: 'LHR', name: 'London Heathrow', city: 'London', country: 'GB', location: { lat: 51.47, lng: -0.46 } },
-        { code: 'DXB', name: 'Dubai Intl', city: 'Dubai', country: 'AE', location: { lat: 25.25, lng: 55.36 } },
-        { code: 'CDG', name: 'Charles de Gaulle', city: 'Paris', country: 'FR', location: { lat: 49.01, lng: 2.55 } },
-        { code: 'LAX', name: 'Los Angeles Intl', city: 'Los Angeles', country: 'US', location: { lat: 33.94, lng: -118.41 } },
-      ].filter(a => 
-        a.code.toLowerCase().includes(query.toLowerCase()) ||
-        a.name.toLowerCase().includes(query.toLowerCase()) ||
-        a.city.toLowerCase().includes(query.toLowerCase())
-      )
-      return res.json({ airports: commonAirports })
-    }
-
-    // Call AeroDataBox API for airport search
-    const response = await axios.get(
-      `${AERODATABOX_BASE_URL}/airports/search/term`,
-      {
-        headers: {
-          'X-RapidAPI-Key': RAPIDAPI_KEY,
-          'X-RapidAPI-Host': RAPIDAPI_HOST
-        },
-        params: {
-          q: query,
-          limit: 10
-        }
-      }
-    )
-
-    const airports = response.data.items?.map(airport => ({
-      code: airport.iata,
-      name: airport.name,
-      city: airport.municipalityName,
-      country: airport.countryCode,
-      location: {
-        lat: airport.location?.lat || 0,
-        lng: airport.location?.lon || 0
-      }
-    })) || []
-
+    const airports = await searchAirports(query.trim())
     res.json({ airports })
   } catch (error) {
     console.error('Airport search error:', error.message)
     
-    // If rate limited or API error, fallback to common airports
-    if (error.response?.status === 429 || error.response?.status >= 500) {
-      console.log('Falling back to common airports due to API issues')
-      const commonAirports = [
-        { code: 'TLV', name: 'Ben Gurion Airport', city: 'Tel Aviv', country: 'IL', location: { lat: 32.01, lng: 34.87 } },
-        { code: 'JFK', name: 'John F Kennedy Intl', city: 'New York', country: 'US', location: { lat: 40.64, lng: -73.78 } },
-        { code: 'LHR', name: 'London Heathrow', city: 'London', country: 'GB', location: { lat: 51.47, lng: -0.46 } },
-        { code: 'DXB', name: 'Dubai Intl', city: 'Dubai', country: 'AE', location: { lat: 25.25, lng: 55.36 } },
-        { code: 'CDG', name: 'Charles de Gaulle', city: 'Paris', country: 'FR', location: { lat: 49.01, lng: 2.55 } },
-        { code: 'LAX', name: 'Los Angeles Intl', city: 'Los Angeles', country: 'US', location: { lat: 33.94, lng: -118.41 } },
-        { code: 'AMS', name: 'Amsterdam Schiphol', city: 'Amsterdam', country: 'NL', location: { lat: 52.31, lng: 4.77 } },
-        { code: 'FRA', name: 'Frankfurt Airport', city: 'Frankfurt', country: 'DE', location: { lat: 50.05, lng: 8.57 } },
-        { code: 'SIN', name: 'Singapore Changi', city: 'Singapore', country: 'SG', location: { lat: 1.36, lng: 103.99 } },
-        { code: 'HND', name: 'Tokyo Haneda', city: 'Tokyo', country: 'JP', location: { lat: 35.55, lng: 139.78 } },
-      ].filter(a => 
-        a.code.toLowerCase().includes(query.toLowerCase()) ||
-        a.name.toLowerCase().includes(query.toLowerCase()) ||
-        a.city.toLowerCase().includes(query.toLowerCase())
-      )
-      return res.json({ airports: commonAirports })
+    if (error.response?.status === 429) {
+      return res.status(429).json({
+        error: 'Rate limit exceeded',
+        message: 'Airport search is temporarily unavailable. Try again in a few minutes.',
+        airports: [],
+      })
     }
     
     res.status(500).json({ 
