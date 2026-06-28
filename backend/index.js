@@ -13,6 +13,7 @@ import quicketRoutes from './routes/quicket.js';
 import chatRoutes from './routes/chats.js';
 import friendRoutes from './routes/friends.js';
 import checkInRoutes from './routes/checkins.js';
+import exploreRoutes from './routes/explore.js';
 import aiRoutes from './routes/ai.js';
 import assistantRoutes from './routes/assistant.js';
 import budgetRoutes from './routes/budgets.js';
@@ -85,6 +86,7 @@ app.use('/api/quicket', quicketRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/friends', friendRoutes);
 app.use('/api/checkins', checkInRoutes);
+app.use('/api/explore', exploreRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/assistant', assistantRoutes); // New Loka AI assistant (streaming + proposals)
 app.use('/api/budgets', budgetRoutes);

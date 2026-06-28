@@ -93,6 +93,16 @@ export async function connectToDatabase() {
     await db.collection("users").createIndex({ email: 1 }, { unique: true });
     await db.collection("users").createIndex({ name: "text", email: "text" });
 
+    // Create indexes for Explore (collections + saved places)
+    await db
+      .collection("explore_collections")
+      .createIndex({ userId: 1, createdAt: -1 });
+    await db.collection("saved_places").createIndex({ userId: 1, createdAt: -1 });
+    await db.collection("saved_places").createIndex({ userId: 1, placeId: 1 });
+    await db
+      .collection("social_caption_cache")
+      .createIndex({ url: 1 }, { unique: true });
+
     console.log("✓ Database indexes created");
 
     return db;
