@@ -5,6 +5,7 @@ import { ObjectId } from "mongodb";
 import { getDatabase } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
+import { OAuth2Client } from "google-auth-library";
 
 const router = express.Router();
 const JWT_SECRET =
@@ -78,6 +79,79 @@ router.post("/register", async (req, res) => {
   } catch (error) {
     console.error("Registration error:", error);
     res.status(500).json({ error: "Failed to register user" });
+  }
+});
+
+// Google Sign In
+router.post("/google", async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({ error: "ID token is required" });
+    }
+
+    const collection = getUsersCollection();
+    if (!collection) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    // Verify token with Google
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    
+    const ticket = await client.verifyIdToken({
+      idToken: idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const { email, name, picture, sub: googleId } = payload;
+
+    // Convert email to lowercase
+    const normalizedEmail = email.toLowerCase();
+
+    // Find or create user
+    let user = await collection.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      // Create new user (same structure as /register)
+      const newUser = {
+        id: `user-${Date.now()}`,
+        email: normalizedEmail,
+        password: null,
+        name: name || email.split("@")[0],
+        picture: picture || null,
+        provider: "google",
+        googleId: googleId,
+        emailVerified: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await collection.insertOne(newUser);
+      user = newUser;
+    }
+
+    const linkedTripsCount = 0;
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: user.id, email: user.email, name: user.name },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
+
+    res.status(201).json({
+      user: userWithoutPassword,
+      token,
+      linkedTripsCount,
+    });
+  } catch (error) {
+    console.error("Google auth error:", error);
+    res.status(401).json({ error: "Google authentication failed" });
   }
 });
 
