@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { normalizeFlightNumber } from './flightNumberUtils.js';
 
 class DuffelService {
 	constructor() {
@@ -15,6 +16,16 @@ class DuffelService {
 
 	isConfigured() {
 		return !!this.apiKey && this.apiKey !== 'GET_FROM_duffel.com';
+	}
+
+	/** Duffel test tokens (duffel_test_…) return sandbox/fictional offers only. */
+	isTestMode() {
+		return String(this.apiKey || '').startsWith('duffel_test_');
+	}
+
+	/** Route search must not surface sandbox offers to users. */
+	isConfiguredForRouteSearch() {
+		return this.isConfigured() && !this.isTestMode();
 	}
 
 	/**
@@ -104,8 +115,12 @@ class DuffelService {
 				// Format duration (ISO 8601 duration to human readable)
 				const duration = this.formatDuration(outboundSlice.duration);
 
-				// Get airline name
+				// Get airline name and IATA
 				const airline = firstSegment.operating_carrier.name;
+				const airlineIata =
+					firstSegment.operating_carrier?.iata_code ||
+					firstSegment.marketing_carrier?.iata_code ||
+					'';
 
 				// Get price
 				const price = parseFloat(offer.total_amount);
@@ -114,6 +129,7 @@ class DuffelService {
 				return {
 					id: offer.id,
 					airline,
+					airlineIata,
 					origin: firstSegment.origin.iata_code,
 					destination: lastSegment.destination.iata_code,
 					departureTime: firstSegment.departing_at,
@@ -130,6 +146,10 @@ class DuffelService {
 						origin: seg.origin.iata_code,
 						destination: seg.destination.iata_code,
 						airline: seg.operating_carrier.name,
+						airlineIata:
+							seg.operating_carrier?.iata_code ||
+							seg.marketing_carrier?.iata_code ||
+							'',
 						flightNumber: seg.operating_carrier_flight_number,
 						departureTime: seg.departing_at,
 						arrivalTime: seg.arriving_at,
@@ -267,25 +287,14 @@ class DuffelService {
 		return null;
 	}
 
-	/** Normalize "LY0315" / "LY 315" → "LY315" for comparison. */
-	normalizeFlightNumber(input) {
-		const raw = String(input || '')
-			.trim()
-			.toUpperCase()
-			.replace(/\s+/g, '');
-		const match = /^([A-Z0-9]{2,3})(\d+)$/.exec(raw);
-		if (!match) return raw;
-		return `${match[1]}${parseInt(match[2], 10)}`;
-	}
-
 	segmentFlightNumber(segment) {
 		const iata = segment.operating_carrier?.iata_code || segment.marketing_carrier?.iata_code || '';
 		const num = segment.operating_carrier_flight_number || segment.marketing_carrier_flight_number || '';
-		return this.normalizeFlightNumber(`${iata}${num}`);
+		return normalizeFlightNumber(`${iata}${num}`);
 	}
 
 	offerMatchesFlight(offer, flightNumber) {
-		const target = this.normalizeFlightNumber(flightNumber);
+		const target = normalizeFlightNumber(flightNumber);
 		if (!target) return false;
 		const slice = offer.slices?.[0];
 		if (!slice) return false;

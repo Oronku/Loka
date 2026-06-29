@@ -4,7 +4,7 @@ import googleFlights from './googleFlights.js'
 import duffel from './duffel.js'
 import travelpayouts from './travelpayouts.js'
 import aviationStack from './aviationStack.js'
-import { normalizeFlightNumber } from './flightNumberUtils.js'
+import { normalizeFlightNumber, formatFlightNumber, hasAirlineFlightNumberPrefix } from './flightNumberUtils.js'
 
 /** Normalize AeroDataBox-style datetimes to strict ISO 8601. */
 export function toIsoDateTime(value) {
@@ -64,7 +64,17 @@ function computeDurationMinutes(depIso, arrIso) {
   }
 }
 
+/** Fictional carriers returned by Duffel sandbox — never show to users. */
+function isSandboxAirline(airline) {
+  const name = String(airline || '').trim()
+  if (!name) return false
+  return /\bduffel\b/i.test(name)
+}
+
 function isValidRouteFlight(flight, searchDate) {
+  if (isSandboxAirline(flight.airline)) return false
+  if (!hasAirlineFlightNumberPrefix(flight.flightNumber)) return false
+
   const dep = flight.departure?.scheduled
   const arr = flight.arrival?.scheduled
   if (!dep || !arr) return false
@@ -134,12 +144,14 @@ function mapAeroDataBoxRouteFlight(flight, from, to, date) {
   const depIso = pickIsoDateTime(readAeroDataBoxTimes(originLeg))
   const arrIso = pickIsoDateTime(readAeroDataBoxTimes(destLeg))
   const durationMinutes = computeDurationMinutes(depIso, arrIso)
+  const airlineIata = flight.airline?.iata || ''
+  const flightNumber = formatFlightNumber(airlineIata, flight.number) || flight.number || ''
 
   return {
-    id: `${flight.number}-${date}`,
+    id: `${flightNumber || flight.number}-${date}`,
     airline: flight.airline?.name || 'Unknown',
-    flightNumber: flight.number || '',
-    flightIata: flight.airline?.iata || '',
+    flightNumber,
+    flightIata: airlineIata,
     departure: {
       airport: `${from.toUpperCase()} Airport`,
       iata: from.toUpperCase(),
@@ -162,8 +174,11 @@ function mapAeroDataBoxRouteFlight(flight, from, to, date) {
 
 function mapGoogleFlightsRoute(flight, from, to, date, index) {
   const nums = flight.segmentFlightNumbers || []
-  const flightNumber = nums[0] || flight.flightNumbers?.split(',')[0]?.trim() || ''
-  const airlineIata = normalizeFlightNumber(flightNumber).replace(/\d+$/, '')
+  const rawNumber = nums[0] || flight.flightNumbers?.split(',')[0]?.trim() || ''
+  const flightNumber = formatFlightNumber('', rawNumber) || normalizeFlightNumber(rawNumber)
+  const airlineIata = hasAirlineFlightNumberPrefix(flightNumber)
+    ? normalizeFlightNumber(flightNumber).replace(/\d+$/, '')
+    : ''
 
   return {
     id: `google-${index}-${flightNumber || 'unknown'}`,
@@ -192,13 +207,14 @@ function mapGoogleFlightsRoute(flight, from, to, date, index) {
 
 function mapDuffelRoute(flight, from, to, date) {
   const firstSeg = flight.segments?.[0]
-  const flightNumber = firstSeg?.flightNumber ? String(firstSeg.flightNumber) : ''
+  const airlineIata = firstSeg?.airlineIata || flight.airlineIata || ''
+  const flightNumber = formatFlightNumber(airlineIata, firstSeg?.flightNumber)
 
   return {
     id: flight.id || `${flightNumber}-${date}`,
     airline: flight.airline,
     flightNumber,
-    flightIata: '',
+    flightIata: airlineIata,
     departure: {
       airport: `${from.toUpperCase()} Airport`,
       iata: from.toUpperCase(),
@@ -222,7 +238,7 @@ function mapDuffelRoute(flight, from, to, date) {
 function mapTravelpayoutsRoute(flight, from, to, date, index) {
   const airline = flight.airline || ''
   const num = flight.flightNumber ?? flight.flight_number ?? ''
-  const flightNumber = normalizeFlightNumber(`${airline}${num}`) || String(num)
+  const flightNumber = formatFlightNumber(airline, num)
 
   return {
     id: `aviasales-${index}-${flightNumber || 'unknown'}`,
@@ -418,8 +434,8 @@ async function searchRouteFallbacks(from, to, date, filters) {
     })
   }
 
-  // Last resort — Duffel test/sandbox is free; production offers cost money
-  if (duffel.isConfigured()) {
+  // Last resort — production Duffel only (sandbox tokens return fictional data)
+  if (duffel.isConfiguredForRouteSearch()) {
     attempts.push(async () => {
       const rows = await duffel.searchFlights(from, to, date)
       return rows.map((row) => mapDuffelRoute(row, from, to, date))
