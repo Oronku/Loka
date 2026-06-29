@@ -22,31 +22,79 @@ function isRateLimitError(error) {
   return error?.response?.status === 429
 }
 
-function mapAeroDataBoxFlight(flight, flightNumber, date) {
-  const departureTime = toIsoDateTime(
-    flight.departure?.scheduledTime?.local ||
-      flight.departure?.scheduledTime?.utc ||
-      flight.departure?.scheduledTimeLocal ||
-      flight.departure?.scheduledTimeUtc,
-  )
-
-  const arrivalTime = toIsoDateTime(
-    flight.arrival?.scheduledTime?.local ||
-      flight.arrival?.scheduledTime?.utc ||
-      flight.arrival?.scheduledTimeLocal ||
-      flight.arrival?.scheduledTimeUtc,
-  )
-
-  let durationMinutes = 0
-  if (departureTime && arrivalTime) {
-    try {
-      durationMinutes = Math.round(
-        (new Date(arrivalTime) - new Date(departureTime)) / 60000,
-      )
-    } catch {
-      /* ignore */
-    }
+/** Read scheduled/revised times from an AeroDataBox leg (supports pre/post Oct 2023 shapes). */
+function readAeroDataBoxTimes(leg) {
+  if (!leg) return { local: null, utc: null }
+  const scheduled = leg.scheduledTime || {}
+  const revised = leg.revisedTime || {}
+  return {
+    local:
+      scheduled.local ||
+      leg.scheduledTimeLocal ||
+      revised.local ||
+      leg.revisedTimeLocal ||
+      null,
+    utc:
+      scheduled.utc ||
+      leg.scheduledTimeUtc ||
+      revised.utc ||
+      leg.revisedTimeUtc ||
+      null,
   }
+}
+
+function pickIsoDateTime(times) {
+  if (!times) return null
+  return toIsoDateTime(times.local || times.utc) || null
+}
+
+function localDateFromScheduled(value) {
+  if (!value) return null
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(value))
+  return m ? m[1] : null
+}
+
+function computeDurationMinutes(depIso, arrIso) {
+  if (!depIso || !arrIso) return null
+  try {
+    const minutes = Math.round((new Date(arrIso) - new Date(depIso)) / 60000)
+    return minutes > 0 ? minutes : null
+  } catch {
+    return null
+  }
+}
+
+function isValidRouteFlight(flight, searchDate) {
+  const dep = flight.departure?.scheduled
+  const arr = flight.arrival?.scheduled
+  if (!dep || !arr) return false
+
+  const depDate = localDateFromScheduled(dep)
+  if (depDate && depDate !== searchDate) return false
+
+  const duration =
+    flight.durationMinutes ?? computeDurationMinutes(dep, arr)
+  if (!duration || duration <= 0) return false
+
+  flight.durationMinutes = duration
+  return true
+}
+
+function dedupeRouteFlights(flights) {
+  const seen = new Set()
+  return flights.filter((f) => {
+    const key = `${normalizeFlightNumber(f.flightNumber)}|${f.departure?.scheduled}|${f.arrival?.iata}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function mapAeroDataBoxFlight(flight, flightNumber, date) {
+  const departureTime = pickIsoDateTime(readAeroDataBoxTimes(flight.departure))
+  const arrivalTime = pickIsoDateTime(readAeroDataBoxTimes(flight.arrival))
+
+  const durationMinutes = computeDurationMinutes(departureTime, arrivalTime) || 0
 
   return {
     airline: flight.airline?.name || 'Unknown',
@@ -80,21 +128,12 @@ function mapAeroDataBoxFlight(flight, flightNumber, date) {
 }
 
 function mapAeroDataBoxRouteFlight(flight, from, to, date) {
-  const depUtc = flight.departure?.scheduledTime?.utc
-  const depLocal = flight.departure?.scheduledTime?.local
-  const arrUtc = flight.arrival?.scheduledTime?.utc
-  const arrLocal = flight.arrival?.scheduledTime?.local
-
-  let durationMinutes = 0
-  if (depUtc && arrUtc) {
-    try {
-      const depDate = new Date(depUtc.replace(' ', 'T').replace('Z', '+00:00'))
-      const arrDate = new Date(arrUtc.replace(' ', 'T').replace('Z', '+00:00'))
-      durationMinutes = Math.round((arrDate - depDate) / 60000)
-    } catch {
-      /* ignore */
-    }
-  }
+  // FIDS at the origin airport: movement holds the local departure time.
+  const originLeg = flight.movement || flight.departure
+  const destLeg = flight.arrival
+  const depIso = pickIsoDateTime(readAeroDataBoxTimes(originLeg))
+  const arrIso = pickIsoDateTime(readAeroDataBoxTimes(destLeg))
+  const durationMinutes = computeDurationMinutes(depIso, arrIso)
 
   return {
     id: `${flight.number}-${date}`,
@@ -104,14 +143,14 @@ function mapAeroDataBoxRouteFlight(flight, from, to, date) {
     departure: {
       airport: `${from.toUpperCase()} Airport`,
       iata: from.toUpperCase(),
-      scheduled: toIsoDateTime(depLocal || depUtc) || `${date}T00:00:00Z`,
-      terminal: flight.departure?.terminal || null,
+      scheduled: depIso,
+      terminal: originLeg?.terminal || flight.departure?.terminal || null,
     },
     arrival: {
-      airport: `${flight.arrival?.airport?.name} (${flight.arrival?.airport?.iata})`,
+      airport: `${flight.arrival?.airport?.name || to.toUpperCase()} (${flight.arrival?.airport?.iata || to.toUpperCase()})`,
       iata: flight.arrival?.airport?.iata || to.toUpperCase(),
-      scheduled: toIsoDateTime(arrLocal || arrUtc) || `${date}T04:00:00Z`,
-      terminal: flight.arrival?.terminal || null,
+      scheduled: arrIso,
+      terminal: destLeg?.terminal || null,
     },
     durationMinutes,
     stops: 0,
@@ -134,16 +173,16 @@ function mapGoogleFlightsRoute(flight, from, to, date, index) {
     departure: {
       airport: `${from.toUpperCase()} Airport`,
       iata: from.toUpperCase(),
-      scheduled: flight.departureTime || `${date}T00:00:00`,
+      scheduled: toIsoDateTime(flight.departureTime) || flight.departureTime || null,
       terminal: null,
     },
     arrival: {
       airport: `${to.toUpperCase()} Airport`,
       iata: to.toUpperCase(),
-      scheduled: flight.arrivalTime || `${date}T04:00:00`,
+      scheduled: toIsoDateTime(flight.arrivalTime) || flight.arrivalTime || null,
       terminal: null,
     },
-    durationMinutes: flight.durationMinutes || 0,
+    durationMinutes: flight.durationMinutes || null,
     stops: flight.stops ?? 0,
     aircraft: flight.aircraft || '',
     status: 'scheduled',
@@ -163,16 +202,16 @@ function mapDuffelRoute(flight, from, to, date) {
     departure: {
       airport: `${from.toUpperCase()} Airport`,
       iata: from.toUpperCase(),
-      scheduled: flight.departureTime || `${date}T00:00:00`,
+      scheduled: toIsoDateTime(flight.departureTime) || flight.departureTime || null,
       terminal: null,
     },
     arrival: {
       airport: `${to.toUpperCase()} Airport`,
       iata: to.toUpperCase(),
-      scheduled: flight.arrivalTime || `${date}T04:00:00`,
+      scheduled: toIsoDateTime(flight.arrivalTime) || flight.arrivalTime || null,
       terminal: null,
     },
-    durationMinutes: parseDurationMinutes(flight.duration) || 0,
+    durationMinutes: parseDurationMinutes(flight.duration) || null,
     stops: flight.stops ?? 0,
     aircraft: flight.aircraft || '',
     status: 'scheduled',
@@ -193,16 +232,16 @@ function mapTravelpayoutsRoute(flight, from, to, date, index) {
     departure: {
       airport: `${from.toUpperCase()} Airport`,
       iata: from.toUpperCase(),
-      scheduled: flight.departure?.time || `${date}T00:00:00`,
+      scheduled: toIsoDateTime(flight.departure?.time) || flight.departure?.time || null,
       terminal: null,
     },
     arrival: {
       airport: `${to.toUpperCase()} Airport`,
       iata: to.toUpperCase(),
-      scheduled: flight.arrival?.time || `${date}T04:00:00`,
+      scheduled: toIsoDateTime(flight.arrival?.time) || flight.arrival?.time || null,
       terminal: null,
     },
-    durationMinutes: parseDurationMinutes(flight.duration) || 0,
+    durationMinutes: parseDurationMinutes(flight.duration) || null,
     stops: flight.stops ?? 0,
     aircraft: '',
     status: 'scheduled',
@@ -235,6 +274,71 @@ function applyRouteFilters(flights, { directOnly, airline }) {
   }
 
   return filtered
+}
+
+async function enrichRouteFlightByNumber(routeFlight, date) {
+  const num = normalizeFlightNumber(routeFlight.flightNumber)
+  if (!num) return routeFlight
+
+  const needsEnrichment =
+    !routeFlight.departure?.scheduled ||
+    !routeFlight.arrival?.scheduled ||
+    (routeFlight.durationMinutes ?? 0) <= 0
+
+  if (!needsEnrichment) return routeFlight
+
+  try {
+    const detail = await searchByNumberAeroDataBox(num, date)
+    if (!detail) return routeFlight
+
+    if (
+      detail.departureAirportCode &&
+      detail.departureAirportCode !== routeFlight.departure.iata
+    ) {
+      return routeFlight
+    }
+    if (
+      detail.arrivalAirportCode &&
+      detail.arrivalAirportCode !== routeFlight.arrival.iata
+    ) {
+      return routeFlight
+    }
+
+    return {
+      ...routeFlight,
+      airline: detail.airline || routeFlight.airline,
+      flightNumber: detail.flightNumber || routeFlight.flightNumber,
+      departure: {
+        ...routeFlight.departure,
+        scheduled: detail.departureDateTime,
+        terminal: detail.terminal?.departure ?? routeFlight.departure.terminal,
+      },
+      arrival: {
+        ...routeFlight.arrival,
+        scheduled: detail.arrivalDateTime,
+        terminal: detail.terminal?.arrival ?? routeFlight.arrival.terminal,
+      },
+      durationMinutes: detail.durationMinutes ?? routeFlight.durationMinutes,
+    }
+  } catch (error) {
+    if (error.code === 'NOT_ON_DATE') return null
+    return routeFlight
+  }
+}
+
+async function finalizeRouteFlights(flights, date, limit = 20) {
+  const deduped = dedupeRouteFlights(flights)
+  const finalized = []
+
+  for (const flight of deduped) {
+    if (finalized.length >= limit) break
+    const enriched = await enrichRouteFlightByNumber(flight, date)
+    if (enriched && isValidRouteFlight(enriched, date)) {
+      finalized.push(enriched)
+    }
+  }
+
+  return finalized
 }
 
 async function searchRouteAeroDataBox(from, to, date) {
@@ -287,9 +391,12 @@ async function searchRouteAeroDataBox(from, to, date) {
     return []
   }
 
-  return allDepartures
-    .filter((flight) => flight.arrival?.airport?.iata === to.toUpperCase())
-    .map((flight) => mapAeroDataBoxRouteFlight(flight, from, to, date))
+  return finalizeRouteFlights(
+    allDepartures
+      .filter((flight) => flight.arrival?.airport?.iata === to.toUpperCase())
+      .map((flight) => mapAeroDataBoxRouteFlight(flight, from, to, date)),
+    date,
+  )
 }
 
 async function searchRouteFallbacks(from, to, date, filters) {
@@ -323,8 +430,11 @@ async function searchRouteFallbacks(from, to, date, filters) {
     try {
       const flights = applyRouteFilters(await attempt(), filters)
       if (flights.length > 0) {
-        console.log(`[flightSearch] route fallback succeeded (${flights[0].source})`)
-        return flights.slice(0, 20)
+        const finalized = await finalizeRouteFlights(flights, date)
+        if (finalized.length > 0) {
+          console.log(`[flightSearch] route fallback succeeded (${finalized[0].source})`)
+          return finalized
+        }
       }
     } catch (error) {
       console.error('[flightSearch] route fallback failed:', error.message)
@@ -348,7 +458,7 @@ export async function searchRoute(from, to, date, filters = {}) {
       await searchRouteAeroDataBox(from, to, date),
       filters,
     )
-    if (flights.length > 0) return flights.slice(0, 20)
+    if (flights.length > 0) return flights
   } catch (error) {
     if (!isRateLimitError(error)) throw error
     console.warn('[flightSearch] AeroDataBox rate limited — trying fallbacks')
@@ -371,12 +481,8 @@ async function searchByNumberAeroDataBox(flightNumber, date) {
   if (!data?.length) return null
 
   const localDate = (f) => {
-    const dep =
-      f.departure?.scheduledTime?.local ||
-      f.departure?.scheduledTime?.utc ||
-      f.departure?.scheduledTimeLocal ||
-      f.departure?.scheduledTimeUtc
-    return dep ? String(dep).slice(0, 10) : null
+    const dep = pickIsoDateTime(readAeroDataBoxTimes(f.departure))
+    return dep ? dep.slice(0, 10) : null
   }
 
   const flight = data.find((f) => localDate(f) === date) || null
