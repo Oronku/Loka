@@ -45,8 +45,11 @@ router.get('/search/:flightNumber', async (req, res) => {
     if (error.code === 'NOT_ON_DATE') {
       return res.status(404).json({
         error: 'Flight not found on requested date',
+        code: 'NOT_ON_DATE',
         message: `No ${req.params.flightNumber} flight operates on ${req.query.date}.`,
         availableDates: error.availableDates,
+        nearestDates: error.nearestDates,
+        scheduleTemplate: error.scheduleTemplate ?? null,
       })
     }
 

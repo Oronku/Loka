@@ -357,6 +357,121 @@ async function finalizeRouteFlights(flights, date, limit = 20) {
   return finalized
 }
 
+function addDaysIso(isoDate, days) {
+  const d = new Date(`${isoDate}T12:00:00`)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+function nearestOperatingDates(allDates, requestedDate, limit = 4) {
+  const sorted = [...new Set(allDates)].filter(Boolean).sort()
+  if (!sorted.length) return []
+
+  const reqMs = new Date(`${requestedDate}T12:00:00`).getTime()
+  return sorted
+    .map((d) => ({
+      date: d,
+      diff: Math.abs(new Date(`${d}T12:00:00`).getTime() - reqMs),
+    }))
+    .sort((a, b) => a.diff - b.diff || a.date.localeCompare(b.date))
+    .slice(0, limit)
+    .map((row) => row.date)
+}
+
+async function fetchOperatingDates(flightNumber, centerDate, windowDays = 45) {
+  const from = addDaysIso(centerDate, -windowDays)
+  const to = addDaysIso(centerDate, windowDays)
+  const normalized = normalizeFlightNumber(flightNumber) || String(flightNumber || '').trim()
+
+  try {
+    const data = await aeroDataBoxGet(
+      `/flights/number/${encodeURIComponent(normalized)}/dates/${from}/${to}`,
+      { cacheTtlMs: 0 },
+    )
+    return Array.isArray(data) ? data : []
+  } catch {
+    return []
+  }
+}
+
+async function loadAeroDataBoxFlightOnDate(flightNumber, date) {
+  const normalized = normalizeFlightNumber(flightNumber) || String(flightNumber || '').trim()
+  const data = await aeroDataBoxGet(`/flights/number/${encodeURIComponent(normalized)}/${date}`, {
+    params: {
+      withAircraftImage: false,
+      withLocation: false,
+    },
+  })
+
+  if (!data?.length) return null
+
+  const localDate = (f) => {
+    const dep = pickIsoDateTime(readAeroDataBoxTimes(f.departure))
+    return dep ? dep.slice(0, 10) : null
+  }
+
+  const flight = data.find((f) => localDate(f) === date) || data[0]
+  return mapAeroDataBoxFlight(flight, flightNumber, date)
+}
+
+function wallClockHmFromIso(iso) {
+  if (!iso) return ''
+  const m = /T(\d{2}):(\d{2})/.exec(String(iso))
+  return m ? `${m[1]}:${m[2]}` : ''
+}
+
+function toScheduleTemplate(flight, patternDate) {
+  if (!flight?.departureAirportCode || !flight?.arrivalAirportCode) return null
+
+  const depTime = wallClockHmFromIso(flight.departureDateTime)
+  const arrTime = wallClockHmFromIso(flight.arrivalDateTime)
+  if (!depTime || !arrTime) return null
+
+  const depDate = String(flight.departureDateTime || '').slice(0, 10)
+  const arrDate = String(flight.arrivalDateTime || '').slice(0, 10)
+  let arrivalDayOffset = 0
+  if (depDate && arrDate && depDate !== arrDate) {
+    arrivalDayOffset = Math.max(
+      0,
+      Math.round((new Date(`${arrDate}T12:00:00`) - new Date(`${depDate}T12:00:00`)) / 86400000),
+    )
+  }
+
+  return {
+    airline: flight.airline,
+    flightNumber: flight.flightNumber,
+    departureAirportCode: flight.departureAirportCode,
+    arrivalAirportCode: flight.arrivalAirportCode,
+    departureTime: depTime,
+    arrivalTime: arrTime,
+    arrivalDayOffset,
+    durationMinutes: flight.durationMinutes,
+    patternDate,
+  }
+}
+
+async function throwNotOnDate(flightNumber, date, availableDates) {
+  const nearestDates = nearestOperatingDates(availableDates, date)
+  let scheduleTemplate = null
+
+  for (const patternDate of nearestDates) {
+    try {
+      const sample = await loadAeroDataBoxFlightOnDate(flightNumber, patternDate)
+      scheduleTemplate = toScheduleTemplate(sample, patternDate)
+      if (scheduleTemplate) break
+    } catch {
+      /* try next nearest date */
+    }
+  }
+
+  const err = new Error('Flight not found on requested date')
+  err.code = 'NOT_ON_DATE'
+  err.availableDates = availableDates
+  err.nearestDates = nearestDates
+  err.scheduleTemplate = scheduleTemplate
+  throw err
+}
+
 async function searchRouteAeroDataBox(from, to, date) {
   const dateStart1 = `${date}T00:00`
   const dateMid = `${date}T12:00`
@@ -487,7 +602,8 @@ export async function searchRoute(from, to, date, filters = {}) {
 }
 
 async function searchByNumberAeroDataBox(flightNumber, date) {
-  const data = await aeroDataBoxGet(`/flights/number/${flightNumber}/${date}`, {
+  const normalized = normalizeFlightNumber(flightNumber) || String(flightNumber || '').trim()
+  const data = await aeroDataBoxGet(`/flights/number/${encodeURIComponent(normalized)}/${date}`, {
     params: {
       withAircraftImage: false,
       withLocation: false,
@@ -504,10 +620,7 @@ async function searchByNumberAeroDataBox(flightNumber, date) {
   const flight = data.find((f) => localDate(f) === date) || null
   if (!flight) {
     const availableDates = [...new Set(data.map(localDate).filter(Boolean))]
-    const err = new Error('Flight not found on requested date')
-    err.code = 'NOT_ON_DATE'
-    err.availableDates = availableDates
-    throw err
+    await throwNotOnDate(flightNumber, date, availableDates)
   }
 
   return mapAeroDataBoxFlight(flight, flightNumber, date)
@@ -527,6 +640,12 @@ export async function searchByFlightNumber(flightNumber, date) {
   try {
     const result = await searchByNumberAeroDataBox(flightNumber, date)
     if (result) return result
+
+    const operatingDates = await fetchOperatingDates(flightNumber, date)
+    if (operatingDates.length) {
+      await throwNotOnDate(flightNumber, date, operatingDates)
+    }
+
     return null
   } catch (error) {
     if (error.code === 'NOT_ON_DATE') throw error
