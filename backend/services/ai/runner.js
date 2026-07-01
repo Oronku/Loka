@@ -325,7 +325,15 @@ async function streamCompletion(openai, messages, { tools, onToken }) {
  * @param {(delta: string) => void} [args.onToken]  streaming callback
  * @returns {Promise<{ text: string, operations: object[], summary: string, createsTrip: boolean, tripName: string, targetTripId: string|null }>}
  */
-export async function runAssistant({ history = [], trips = [], profile = null, activeTripId = null, onToken }) {
+export async function runAssistant({
+  history = [],
+  trips = [],
+  profile = null,
+  activeTripId = null,
+  isGroupChat = false,
+  groupParticipants = [],
+  onToken,
+}) {
   const openai = getOpenAI();
   if (!openai) {
     return {
@@ -338,7 +346,13 @@ export async function runAssistant({ history = [], trips = [], profile = null, a
     };
   }
 
-  const system = buildSystemPrompt({ trips, profile, activeTripId });
+  const system = buildSystemPrompt({
+    trips,
+    profile,
+    activeTripId,
+    isGroupChat,
+    groupParticipants,
+  });
   const baseMessages = [{ role: "system", content: system }, ...history];
 
   // First pass: stream with tools. Text streams live; tool calls accumulate.

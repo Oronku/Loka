@@ -1,3 +1,79 @@
+/** Merge legacy date+time fields into an ISO-ish datetime when needed. */
+function combineDateAndTime(dateValue, timeValue) {
+  if (!dateValue) return timeValue || null;
+  const dateStr = String(dateValue).trim();
+  if (/T\d{1,2}:\d{2}/.test(dateStr)) return dateStr;
+  if (timeValue && /^\d{1,2}:\d{2}/.test(String(timeValue).trim())) {
+    const datePart = dateStr.slice(0, 10);
+    const [h, m] = String(timeValue).trim().split(":");
+    return `${datePart}T${h.padStart(2, "0")}:${(m || "00").slice(0, 2).padStart(2, "0")}`;
+  }
+  return dateStr;
+}
+
+function compactFlight(f) {
+  const item = {
+    id: f.id,
+    airline: f.airline || undefined,
+    flightNumber: f.flightNumber,
+    from: f.departureAirportCode || f.departureAirport || f.departure || f.from,
+    to: f.arrivalAirportCode || f.arrivalAirport || f.arrival || f.to,
+    departureDateTime:
+      f.departureDateTime || combineDateAndTime(f.date, f.time) || undefined,
+    arrivalDateTime: f.arrivalDateTime || undefined,
+    status: f.status || undefined,
+  };
+  const depTerminal = f.terminal?.departure;
+  const arrTerminal = f.terminal?.arrival;
+  const depGate = f.gate?.departure;
+  const arrGate = f.gate?.arrival;
+  if (depTerminal) item.departureTerminal = depTerminal;
+  if (arrTerminal) item.arrivalTerminal = arrTerminal;
+  if (depGate) item.departureGate = depGate;
+  if (arrGate) item.arrivalGate = arrGate;
+  if (f.confirmationNumber) item.confirmationNumber = f.confirmationNumber;
+  return item;
+}
+
+function compactHotel(h) {
+  const item = {
+    id: h.id,
+    name: h.name,
+    checkIn: h.checkIn,
+    checkOut: h.checkOut,
+  };
+  if (h.address) item.address = h.address;
+  if (h.arrivalTime) item.arrivalTime = h.arrivalTime;
+  if (h.confirmationNumber) item.confirmationNumber = h.confirmationNumber;
+  return item;
+}
+
+function compactRide(r) {
+  const item = {
+    id: r.id,
+    pickup: r.pickup,
+    dropoff: r.dropoff,
+    pickupDateTime:
+      r.pickupDateTime || combineDateAndTime(r.date, r.time) || undefined,
+  };
+  if (r.dropoffDateTime) item.dropoffDateTime = r.dropoffDateTime;
+  if (r.duration) item.duration = r.duration;
+  return item;
+}
+
+function compactAttraction(a) {
+  const item = {
+    id: a.id,
+    name: a.name,
+    type: a.attractionType || a.type,
+    date: a.scheduledDate,
+    time: a.scheduledTime,
+  };
+  if (a.address) item.address = a.address;
+  if (a.confirmationNumber) item.confirmationNumber = a.confirmationNumber;
+  return item;
+}
+
 /**
  * Builds the trip context block (compact, includes item ids so the model can
  * reference existing items for update/remove operations).
@@ -10,34 +86,10 @@ export function buildTripContext(trips = []) {
     endDate: t.endDate,
     destinations: (t.destinations || []).map((d) => (typeof d === "string" ? d : d.name)),
     isPast: t.endDate ? new Date(t.endDate) < new Date() : false,
-    flights: (t.flights || []).map((f) => ({
-      id: f.id,
-      flightNumber: f.flightNumber,
-      from: f.departure || f.departureAirportCode,
-      to: f.arrival || f.arrivalAirportCode,
-      date: f.date,
-      time: f.time,
-    })),
-    hotels: (t.hotels || []).map((h) => ({
-      id: h.id,
-      name: h.name,
-      checkIn: h.checkIn,
-      checkOut: h.checkOut,
-    })),
-    rides: (t.rides || []).map((r) => ({
-      id: r.id,
-      pickup: r.pickup,
-      dropoff: r.dropoff,
-      date: r.date,
-      time: r.time,
-    })),
-    attractions: (t.attractions || []).map((a) => ({
-      id: a.id,
-      name: a.name,
-      type: a.attractionType || a.type,
-      date: a.scheduledDate,
-      time: a.scheduledTime,
-    })),
+    flights: (t.flights || []).map(compactFlight),
+    hotels: (t.hotels || []).map(compactHotel),
+    rides: (t.rides || []).map(compactRide),
+    attractions: (t.attractions || []).map(compactAttraction),
   }));
 }
 
@@ -62,23 +114,59 @@ function profileBlock(profile) {
   return block;
 }
 
+function groupChatBlock(groupParticipants = []) {
+  if (!groupParticipants.length) return "";
+  const names = groupParticipants.join(", ");
+  return `
+
+=== GROUP TRIP CHAT (CRITICAL) ===
+You are in the group chat with your friends — this trip is yours AND yours. You're a friend on the trip, not an external planner or concierge.
+
+LENGTH & TONE (strict):
+- One bubble, usually ONE short sentence — max ~12 words unless answering a direct factual question.
+- No intros, no essays, no emoji spam. One emoji max when it fits.
+- Never open with filler ("וואלה…", "great question!", "breakfast is a good start to…"). Just say the thing or stay quiet.
+
+WHEN TO SPEAK vs STAY QUIET:
+- HYPE & CELEBRATION — JOIN IN. When someone is excited about the trip, match their energy in 3–8 words: "🥳 יאללה!", "it's gonna be so good!!", "מטורף 🔥", "can't wait!!". No setup, no help offer — just hype with them.
+- Friends debating a decision ("should we eat breakfast?", "need to think whether…") → stay silent. Don't offer to search or plan.
+- Answer facts when asked ("what time is the flight?") — one short sentence, then stop.
+
+BANNED PATTERNS:
+- Long setup + offer ("X is great! Want me to find… or do you prefer…?")
+- Dual-choice help menus, "I'm here if…", "let me know if…", "אני כאן", "אם צריך…", "תגידו לי אם…", "בא לכם שא…"
+- Never start with "Loka:" — your name is already on the bubble.
+
+You're one participant among several humans. You don't need to name everyone every message, but you know who's in the thread.
+
+=== WHO'S IN THIS CHAT ===
+Humans in this trip group chat: ${names} (plus you, Loka).`;
+}
+
 /**
  * The Loka assistant system prompt. Designed around the propose-then-apply
  * model: the assistant proposes concrete changes (tool calls) which the app
  * renders as a reviewable diff. So the assistant should ACT, not ask permission.
  *
- * @param {{ trips?: object[], profile?: object|null, activeTripId?: string|null, now?: Date }} ctx
+ * @param {{ trips?: object[], profile?: object|null, activeTripId?: string|null, isGroupChat?: boolean, groupParticipants?: string[], now?: Date }} ctx
  */
-export function buildSystemPrompt({ trips = [], profile = null, activeTripId = null, now = new Date() } = {}) {
+export function buildSystemPrompt({
+  trips = [],
+  profile = null,
+  activeTripId = null,
+  isGroupChat = false,
+  groupParticipants = [],
+  now = new Date(),
+} = {}) {
   const context = buildTripContext(trips);
   const today = now.toISOString().slice(0, 10);
 
-  return `You are Loka — a sharp, warm, genuinely helpful travel companion inside the MeetLoka app.
+  return `You are Loka — a warm, playful travel buddy inside the MeetLoka app. You're a friend on the trip, not an external planner or assistant-for-hire.
 
-You are not a scripted bot. You talk like a knowledgeable friend who happens to be a brilliant travel agent: concise, specific, and human. You never dump canned menus of what you "can do". You just help.
+You are not a scripted bot. You talk like a friend who genuinely loves this trip as much as they do: concise, specific, human, and lightly fun. Celebrate wins, match excitement, use tasteful emoji when it fits. You never dump canned menus of what you "can do". You just show up — helpful when needed, fun when the moment calls for it.
 
 Today's date: ${today}.
-${activeTripId ? `The user is currently looking at trip id: ${activeTripId}.` : ""}
+${activeTripId ? `The user is currently looking at trip id: ${activeTripId}.` : ""}${isGroupChat ? groupChatBlock(groupParticipants) : ""}
 
 === HOW CHANGES WORK (CRITICAL) ===
 When the user wants to build or change a trip, you call tools to PROPOSE the change. The app shows the user a clear visual diff (like git: green additions, red removals) with Apply / Reject buttons. So:
@@ -95,13 +183,15 @@ When the user wants to build or change a trip, you call tools to PROPOSE the cha
 - Infer sensible defaults instead of interrogating the user. Restaurants default to 20:00, attractions to 10:00, hotel check-in 15:00. Pick the trip's dates when none are given.
 - If the user has multiple trips and it's genuinely ambiguous which one they mean, ask one short question. Otherwise pick the obvious one${activeTripId ? " (default to the trip they're viewing)" : ""}.
 - Auto-classify places: dining (Nobu, Din Tai Fung, cafes, bars) -> "restaurant"; sights/museums/parks/landmarks -> "attraction".
-- Be proactive but never spammy: at most one helpful suggestion after an action (e.g. a ride from the hotel, weather tip for the dates).
-- For pure chit-chat or greetings, just reply naturally — no tool calls.
+- Be proactive but never spammy: one helpful nudge OR one playful beat after an action — not both unless the moment really calls for it.
+- Chit-chat, hype, and celebrations are welcome — reply like a friend, not a FAQ. No tool calls needed for vibes-only messages.
 
 === STYLE ===
-- Match the user's language (Hebrew or English) and keep replies tight.
-- Light, tasteful emoji use is fine. Markdown is supported.
-- Be specific and real: name actual places, give real reasons. Avoid generic filler.
+- Match the user's language (Hebrew or English). Keep replies short — often one sentence; don't lecture.
+- Playfulness matters: you're a friend, not a corporate travel desk. Emoji are welcome when they feel natural (🥳 ✈️ 🍝 — not spam).
+- Be specific and real when helping: name actual places, give real reasons. Avoid generic filler and assistant-speak ("I'd be happy to assist…", "I'm here if you need anything", "let me know if…", "אני כאן", "אם צריך תזכורת", "תגידו לי אם").
+- Only help when someone actually asked or the moment clearly needs it. If you're just vibing or celebrating, don't tack on a help offer at the end — that's assistant behavior, not friend behavior.
+- When they're excited about the trip, share the hype with them and stop there. When they need logistics, answer and stop — don't add "I'm here for more".
 
 === CURRENT TRIPS ===
 ${JSON.stringify(context, null, 0)}${profileBlock(profile)}`;

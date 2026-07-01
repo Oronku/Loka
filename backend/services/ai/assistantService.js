@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import { runAssistant } from "./runner.js";
 import { createChangeSet, PROPOSALS_COLLECTION } from "./changeset.js";
 import { getUserProfile, maybeUpdateProfile } from "./memory.js";
+import { messageToContextLine, messageToGroupHistoryLine, sanitizeLokaReplyText } from "./messageFormat.js";
 
 const AI_WELCOME = `Hey! I'm Loka 👋
 
@@ -124,6 +125,55 @@ export async function postAssistantMessage(db, { userId, text, changeSet = null,
   return { ...aiMessage, _id: messageId.toString() };
 }
 
+/**
+ * Persist a Loka reply into a trip group chat and bump unread for all humans.
+ */
+export async function postGroupChatAssistantMessage(db, { chatId, text, changeSet = null }) {
+  const chat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
+  if (!chat) throw new Error("Chat not found");
+
+  const cleanText = sanitizeLokaReplyText(text) || "";
+
+  const aiMessage = {
+    chatId,
+    senderId: "loka-bot",
+    senderName: "Loka",
+    text: cleanText,
+    changeSet: embedChangeSet(changeSet),
+    timestamp: new Date(),
+    readBy: [],
+  };
+  const ins = await db.collection("messages").insertOne(aiMessage);
+  const messageId = ins.insertedId;
+
+  if (changeSet) {
+    await db
+      .collection(PROPOSALS_COLLECTION)
+      .updateOne({ _id: new ObjectId(changeSet._id) }, { $set: { messageId } });
+  }
+
+  const unreadInc = {};
+  for (const p of chat.participants) {
+    if (p.userId !== "loka-bot") {
+      unreadInc[`unreadCount.${p.userId}`] = 1;
+    }
+  }
+
+  await db.collection("chats").updateOne(
+    { _id: new ObjectId(chatId) },
+    {
+      $set: {
+        lastMessage: cleanText.slice(0, 120),
+        lastMessageAt: new Date(),
+        updatedAt: new Date(),
+      },
+      $inc: unreadInc,
+    },
+  );
+
+  return { ...aiMessage, _id: messageId.toString() };
+}
+
 async function loadAiContext(db, userId) {
   const trips = await db
     .collection("trips")
@@ -146,6 +196,58 @@ async function loadHistory(db, chatId, limit = 20) {
     .map((m) => ({ role: m.senderId === "loka-bot" ? "assistant" : "user", content: m.text }));
 }
 
+function collectTripParticipantNames(trip) {
+  if (!trip) return [];
+  const names = [];
+  if (trip.userName) names.push(trip.userName);
+  for (const entry of trip.sharedWith || []) {
+    if (entry.name) names.push(entry.name);
+  }
+  return names;
+}
+
+async function loadGroupChatParticipants(db, chatId, activeTripId, trips) {
+  const names = new Set();
+
+  if (ObjectId.isValid(chatId)) {
+    const chat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
+    for (const p of chat?.participants || []) {
+      if (p.userId !== "loka-bot" && p.name) {
+        names.add(p.name);
+      }
+    }
+  }
+
+  if (activeTripId) {
+    const trip = trips.find((t) => (t.id || t._id?.toString()) === activeTripId);
+    for (const name of collectTripParticipantNames(trip)) {
+      names.add(name);
+    }
+  }
+
+  return [...names];
+}
+
+async function loadGroupChatHistory(db, chatId, limit = 20) {
+  const msgs = await db
+    .collection("messages")
+    .find({ chatId })
+    .sort({ timestamp: -1 })
+    .limit(limit)
+    .toArray();
+  return msgs
+    .reverse()
+    .map((m) => {
+      const content = messageToGroupHistoryLine(m);
+      if (!content) return null;
+      return {
+        role: m.senderId === "loka-bot" ? "assistant" : "user",
+        content,
+      };
+    })
+    .filter(Boolean);
+}
+
 /**
  * Generate the assistant's reply for a chat turn, persist it (plus any proposed
  * ChangeSet), and return the saved message. Optionally streams tokens.
@@ -156,22 +258,46 @@ async function loadHistory(db, chatId, limit = 20) {
  * @param {{ id, email, name }} opts.user
  * @param {string} opts.userMessage
  * @param {string|null} [opts.activeTripId]
+ * @param {boolean} [opts.isGroupChat]  trip group chat (multi-user history + broadcast unread)
  * @param {(delta: string) => void} [opts.onToken]
  * @returns {Promise<object>} the saved AI message (with embedded changeSet)
  */
-export async function generateAiReply(db, { chatId, user, userMessage, activeTripId = null, onToken }) {
+export async function generateAiReply(db, {
+  chatId,
+  user,
+  userMessage,
+  activeTripId = null,
+  isGroupChat = false,
+  onToken,
+}) {
   const userId = user.id;
+  const historyLoader = isGroupChat ? loadGroupChatHistory : loadHistory;
   const [{ trips }, profile, history] = await Promise.all([
     loadAiContext(db, userId),
     getUserProfile(db, userId),
-    loadHistory(db, chatId),
+    historyLoader(db, chatId),
   ]);
 
-  if (!history.length || history[history.length - 1].content !== userMessage) {
+  const groupParticipants = isGroupChat
+    ? await loadGroupChatParticipants(db, chatId, activeTripId, trips)
+    : [];
+
+  if (
+    !isGroupChat &&
+    (!history.length || history[history.length - 1].content !== userMessage)
+  ) {
     history.push({ role: "user", content: userMessage });
   }
 
-  const result = await runAssistant({ history, trips, profile, activeTripId, onToken });
+  const result = await runAssistant({
+    history,
+    trips,
+    profile,
+    activeTripId,
+    isGroupChat,
+    groupParticipants,
+    onToken,
+  });
 
   let changeSet = null;
   if (result.operations.length > 0) {
@@ -186,12 +312,14 @@ export async function generateAiReply(db, { chatId, user, userMessage, activeTri
     });
   }
 
-  const saved = await postAssistantMessage(db, {
-    userId,
-    text: result.text,
-    changeSet,
-    chatId,
-  });
+  const saved = isGroupChat
+    ? await postGroupChatAssistantMessage(db, { text: result.text, changeSet, chatId })
+    : await postAssistantMessage(db, {
+        userId,
+        text: result.text,
+        changeSet,
+        chatId,
+      });
 
   // Fold durable preferences into long-term memory (fire-and-forget, throttled
   // so we don't spend a utility-LLM call on every single turn).
