@@ -9,6 +9,12 @@ import {
   getOrCreateAiChat,
   generateAiReply,
 } from "../services/ai/assistantService.js";
+import {
+  ensureLokaBotParticipant,
+  handleTripGroupMessage,
+  tripChatPermissions,
+  withLokaBotParticipant,
+} from "../services/ai/groupChatService.js";
 
 const router = express.Router();
 
@@ -105,12 +111,134 @@ router.use(verifyGoogleToken);
  *       url: string,
  *       name: string,
  *       size: number
+ *     },
+ *     {
+ *       type: 'place',
+ *       placeId: string,
+ *       name: string,
+ *       imageUrl?: string,
+ *       address?: string,
+ *       category?: string,
+ *       rating?: number,
+ *       source?: string  // e.g. 'discover' | 'saved'
  *     }
  *   ],
  *   timestamp: Date,
  *   readBy: [{ userId: string, readAt: Date }]
  * }
+ *
+ * A message may include text, attachments, or both (e.g. a place share with a caption).
+ * Place shares use at most one `place` attachment per message.
  */
+
+/** Accept participant objects or plain userId strings from the client. */
+function normalizeParticipantEntry(entry, defaultRole = "member") {
+  if (typeof entry === "string" && entry.trim()) {
+    return { userId: entry.trim(), role: defaultRole };
+  }
+  if (entry && typeof entry.userId === "string" && entry.userId.trim()) {
+    return {
+      ...entry,
+      userId: entry.userId.trim(),
+      role: entry.role || defaultRole,
+    };
+  }
+  return null;
+}
+
+function normalizeParticipantsInput(rawParticipants, defaultRole = "member") {
+  if (!Array.isArray(rawParticipants)) return [];
+  return rawParticipants
+    .map((entry) => normalizeParticipantEntry(entry, defaultRole))
+    .filter(Boolean);
+}
+
+function applyTripParticipantRoles(participants, trip) {
+  return participants.map((p) => ({
+    ...p,
+    role: trip.userId === p.userId ? "owner" : "member",
+  }));
+}
+
+function normalizePlaceAttachment(raw) {
+  if (!raw || raw.type !== "place") {
+    return { ok: false, error: "Invalid place attachment" };
+  }
+
+  const placeId =
+    typeof raw.placeId === "string" ? raw.placeId.trim() : "";
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+
+  if (!placeId) {
+    return { ok: false, error: "Place attachment requires placeId" };
+  }
+  if (!name) {
+    return { ok: false, error: "Place attachment requires name" };
+  }
+
+  const attachment = { type: "place", placeId, name };
+
+  if (typeof raw.imageUrl === "string" && raw.imageUrl.trim()) {
+    attachment.imageUrl = raw.imageUrl.trim();
+  }
+  if (typeof raw.address === "string" && raw.address.trim()) {
+    attachment.address = raw.address.trim();
+  }
+  if (typeof raw.category === "string" && raw.category.trim()) {
+    attachment.category = raw.category.trim();
+  }
+  if (raw.rating != null) {
+    const rating = Number(raw.rating);
+    if (Number.isFinite(rating)) {
+      attachment.rating = rating;
+    }
+  }
+  if (typeof raw.source === "string" && raw.source.trim()) {
+    attachment.source = raw.source.trim();
+  }
+
+  return { ok: true, attachment };
+}
+
+function validateMessageAttachments(rawAttachments) {
+  if (rawAttachments == null) {
+    return { ok: true, attachments: [] };
+  }
+  if (!Array.isArray(rawAttachments)) {
+    return { ok: false, error: "Attachments must be an array" };
+  }
+
+  const placeAttachments = rawAttachments.filter((a) => a?.type === "place");
+  if (placeAttachments.length > 1) {
+    return { ok: false, error: "Only one place attachment is allowed per message" };
+  }
+  if (placeAttachments.length === 1 && rawAttachments.length > 1) {
+    return {
+      ok: false,
+      error: "Place attachments cannot be combined with other attachment types",
+    };
+  }
+
+  if (placeAttachments.length === 1) {
+    const normalized = normalizePlaceAttachment(placeAttachments[0]);
+    if (!normalized.ok) return normalized;
+    return { ok: true, attachments: [normalized.attachment] };
+  }
+
+  return { ok: true, attachments: rawAttachments };
+}
+
+function messagePreviewText(text, attachments) {
+  const trimmed = (text || "").trim();
+  if (trimmed) return trimmed.substring(0, 100);
+
+  const place = attachments?.find((a) => a?.type === "place");
+  if (place?.name) {
+    return `[Shared place: ${place.name}]`.substring(0, 100);
+  }
+
+  return "Attachment";
+}
 
 // Helper function to check if user has permission
 function hasPermission(chat, userId, action) {
@@ -131,7 +259,8 @@ function getUserRole(chat, userId) {
 router.post("/", async (req, res) => {
   try {
     const db = getDb();
-    const { contextType, contextId, participants, metadata } = req.body;
+    const { contextType, contextId, participants: rawParticipants, metadata } =
+      req.body;
 
     // Validate context type
     const validContextTypes = ["quicket_item", "trip", "direct"];
@@ -139,17 +268,19 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Invalid context type" });
     }
 
+    const defaultRole = contextType === "direct" ? "friend" : "member";
+    let chatParticipants = normalizeParticipantsInput(
+      rawParticipants,
+      defaultRole,
+    );
+
     // Validate participants
-    if (
-      !participants ||
-      !Array.isArray(participants) ||
-      participants.length === 0
-    ) {
+    if (chatParticipants.length === 0) {
       return res.status(400).json({ error: "Participants are required" });
     }
 
     // Check if user creating the chat is included
-    const userInParticipants = participants.some(
+    const userInParticipants = chatParticipants.some(
       (p) => p.userId === req.user.id,
     );
     if (!userInParticipants) {
@@ -174,7 +305,7 @@ router.post("/", async (req, res) => {
       }
 
       // Check if chat already exists for this item and buyer
-      const buyerParticipant = participants.find((p) => p.role === "buyer");
+      const buyerParticipant = chatParticipants.find((p) => p.role === "buyer");
       if (buyerParticipant) {
         const existingChat = await db.collection("chats").findOne({
           contextType: "quicket_item",
@@ -207,7 +338,7 @@ router.post("/", async (req, res) => {
 
       // Verify all participants are trip members
       const tripMemberIds = tripService.getMemberIds(trip);
-      const invalidParticipants = participants.filter(
+      const invalidParticipants = chatParticipants.filter(
         (p) => !tripMemberIds.includes(p.userId),
       );
 
@@ -216,18 +347,35 @@ router.post("/", async (req, res) => {
           .status(403)
           .json({ error: "All participants must be trip members" });
       }
+
+      chatParticipants = applyTripParticipantRoles(chatParticipants, trip);
+
+      // One group chat per trip — reuse existing (messages are keyed by chatId).
+      const existingTripChat = await db.collection("chats").findOne(
+        { contextType: "trip", contextId },
+        { sort: { lastMessageAt: -1, createdAt: -1 } },
+      );
+
+      if (existingTripChat) {
+        const chat = await ensureLokaBotParticipant(db, existingTripChat);
+        return res.json({
+          message: "Chat already exists",
+          chatId: chat._id,
+          chat,
+        });
+      }
     }
 
     // Handle direct (friend) chat
     if (contextType === "direct") {
-      if (participants.length !== 2) {
+      if (chatParticipants.length !== 2) {
         return res
           .status(400)
           .json({ error: "Direct chats must have exactly 2 participants" });
       }
 
       // Check if direct chat already exists between these users
-      const userIds = participants.map((p) => p.userId).sort();
+      const userIds = chatParticipants.map((p) => p.userId).sort();
       const existingChat = await db.collection("chats").findOne({
         contextType: "direct",
         "participants.userId": { $all: userIds },
@@ -252,11 +400,7 @@ router.post("/", async (req, res) => {
         canMessage: ["buyer", "seller"],
       };
     } else if (contextType === "trip") {
-      permissions = {
-        canInvite: ["owner", "member"],
-        canRemove: ["owner"],
-        canMessage: ["owner", "member"],
-      };
+      permissions = tripChatPermissions();
     } else if (contextType === "direct") {
       permissions = {
         canInvite: [],
@@ -267,7 +411,11 @@ router.post("/", async (req, res) => {
 
     // Initialize unread counts for all participants
     const unreadCount = {};
-    participants.forEach((p) => {
+    const participantsForInsert =
+      contextType === "trip"
+        ? withLokaBotParticipant(chatParticipants)
+        : chatParticipants;
+    participantsForInsert.forEach((p) => {
       unreadCount[p.userId] = 0;
     });
 
@@ -275,9 +423,9 @@ router.post("/", async (req, res) => {
     const newChat = {
       contextType,
       contextId,
-      participants: participants.map((p) => ({
+      participants: participantsForInsert.map((p) => ({
         ...p,
-        joinedAt: new Date(),
+        joinedAt: p.joinedAt || new Date(),
       })),
       permissions,
       status: contextType === "quicket_item" ? "pending" : "active",
@@ -349,12 +497,16 @@ router.get("/:chatId", async (req, res) => {
       return res.status(400).json({ error: "Invalid chat ID" });
     }
 
-    const chat = await db
+    let chat = await db
       .collection("chats")
       .findOne({ _id: new ObjectId(chatId) });
 
     if (!chat) {
       return res.status(404).json({ error: "Chat not found" });
+    }
+
+    if (chat.contextType === "trip") {
+      chat = await ensureLokaBotParticipant(db, chat);
     }
 
     // Verify user is a participant
@@ -436,7 +588,7 @@ router.post("/:chatId/messages", async (req, res) => {
   try {
     const db = getDb();
     let { chatId } = req.params;
-    const { text, attachments } = req.body;
+    const { text, attachments: rawAttachments } = req.body;
     let isAiChat = false;
 
     // Handle AI Chat special case
@@ -450,8 +602,17 @@ router.post("/:chatId/messages", async (req, res) => {
       return res.status(400).json({ error: "Invalid chat ID" });
     }
 
-    if (!text || text.trim() === "") {
-      return res.status(400).json({ error: "Message text is required" });
+    const attachmentResult = validateMessageAttachments(rawAttachments);
+    if (!attachmentResult.ok) {
+      return res.status(400).json({ error: attachmentResult.error });
+    }
+    const attachments = attachmentResult.attachments;
+
+    const trimmedText = typeof text === "string" ? text.trim() : "";
+    if (!trimmedText && attachments.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Message text or attachment is required" });
     }
 
     const chat = await db
@@ -469,8 +630,13 @@ router.post("/:chatId/messages", async (req, res) => {
       });
     }
 
+    let activeChat = chat;
+    if (chat.contextType === "trip") {
+      activeChat = await ensureLokaBotParticipant(db, chat);
+    }
+
     // Check if user has permission to send messages
-    if (!hasPermission(chat, req.user.id, "canMessage")) {
+    if (!hasPermission(activeChat, req.user.id, "canMessage")) {
       return res
         .status(403)
         .json({ error: "Not authorized to send messages in this chat" });
@@ -481,8 +647,8 @@ router.post("/:chatId/messages", async (req, res) => {
       senderId: req.user.id,
       senderEmail: req.user.email,
       senderName: req.user.name,
-      text,
-      attachments: attachments || [],
+      text: trimmedText,
+      attachments,
       timestamp: new Date(),
       readBy: [{ userId: req.user.id, readAt: new Date() }],
     };
@@ -491,10 +657,10 @@ router.post("/:chatId/messages", async (req, res) => {
 
     // Update unread counts for all participants except sender
     const unreadUpdates = {};
-    chat.participants.forEach((p) => {
+    activeChat.participants.forEach((p) => {
       if (p.userId !== req.user.id) {
         unreadUpdates[`unreadCount.${p.userId}`] =
-          (chat.unreadCount?.[p.userId] || 0) + 1;
+          (activeChat.unreadCount?.[p.userId] || 0) + 1;
       }
     });
 
@@ -505,7 +671,7 @@ router.post("/:chatId/messages", async (req, res) => {
         $set: {
           updatedAt: new Date(),
           lastMessageAt: new Date(),
-          lastMessage: text.substring(0, 100), // Preview of message
+          lastMessage: messagePreviewText(trimmedText, attachments),
           ...unreadUpdates,
         },
       },
@@ -517,8 +683,12 @@ router.post("/:chatId/messages", async (req, res) => {
       generateAiReply(db, {
         chatId,
         user: req.user,
-        userMessage: text,
+        userMessage: trimmedText,
       }).catch((err) => console.error("[chats] AI reply failed:", err));
+    } else if (activeChat.contextType === "trip") {
+      handleTripGroupMessage(db, activeChat, req.user, trimmedText).catch((err) =>
+        console.error("[chats] trip group Loka handler failed:", err),
+      );
     }
 
     res.status(201).json({
