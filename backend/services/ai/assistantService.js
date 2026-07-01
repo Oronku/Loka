@@ -205,6 +205,179 @@ export async function generateAiReply(db, { chatId, user, userMessage, activeTri
   return saved;
 }
 
+/**
+ * Create a new per-trip AI assistant conversation thread.
+ * Seeds the standard welcome message; title stays "New chat" until the first user turn.
+ *
+ * @param {object} db
+ * @param {string} userId
+ * @param {string} tripId
+ * @returns {Promise<object>} the new chat doc (with `_id`)
+ */
+export async function createAiTripConversation(db, userId, tripId) {
+  const chat = {
+    contextType: "ai_assistant_trip",
+    contextId: tripId,
+    title: "New chat",
+    participants: [
+      { userId, role: "owner", joinedAt: new Date() },
+      {
+        userId: "loka-bot",
+        name: "Loka",
+        role: "system",
+        joinedAt: new Date(),
+        avatar: "/videos/idle-animation.apng",
+      },
+    ],
+    permissions: { canInvite: [], canRemove: [], canMessage: ["owner", "system"] },
+    status: "active",
+    unreadCount: { [userId]: 0 },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    lastMessageAt: new Date(),
+    lastMessage: AI_WELCOME,
+  };
+  const result = await db.collection("chats").insertOne(chat);
+  chat._id = result.insertedId;
+
+  await db.collection("messages").insertOne({
+    chatId: chat._id.toString(),
+    senderId: "loka-bot",
+    senderName: "Loka",
+    text: AI_WELCOME,
+    timestamp: new Date(),
+    readBy: [],
+  });
+
+  return chat;
+}
+
+/**
+ * List per-trip AI conversations for a user, newest first.
+ *
+ * @param {object} db
+ * @param {string} userId
+ * @param {string} tripId
+ * @returns {Promise<object[]>} plain summaries
+ */
+export async function listAiTripConversations(db, userId, tripId) {
+  const chats = await db
+    .collection("chats")
+    .find({
+      contextType: "ai_assistant_trip",
+      contextId: tripId,
+      "participants.userId": userId,
+    })
+    .sort({ updatedAt: -1 })
+    .toArray();
+
+  return chats.map((c) => ({
+    _id: c._id.toString(),
+    tripId: c.contextId,
+    title: c.title || "New chat",
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    lastMessage: c.lastMessage,
+    lastMessageAt: c.lastMessageAt,
+  }));
+}
+
+/**
+ * Ownership-checked lookup for a user's AI chat (global or per-trip).
+ *
+ * @param {object} db
+ * @param {string} userId
+ * @param {string} chatId
+ * @returns {Promise<object|null>}
+ */
+export async function getAiChatForUser(db, userId, chatId) {
+  if (!ObjectId.isValid(chatId)) return null;
+  return db.collection("chats").findOne({
+    _id: new ObjectId(chatId),
+    contextType: { $in: ["ai_assistant_trip", "ai_assistant"] },
+    "participants.userId": userId,
+  });
+}
+
+/**
+ * Delete a per-trip AI conversation and all of its messages.
+ * Never deletes the legacy global `ai_assistant` chat.
+ *
+ * @param {object} db
+ * @param {string} userId
+ * @param {string} chatId
+ * @returns {Promise<boolean>} true if deleted, false if not found
+ */
+export async function deleteAiTripConversation(db, userId, chatId) {
+  const chat = await getAiChatForUser(db, userId, chatId);
+  if (!chat || chat.contextType !== "ai_assistant_trip") return false;
+
+  const chatIdStr = chat._id.toString();
+  await Promise.all([
+    db.collection("chats").deleteOne({ _id: chat._id }),
+    db.collection("messages").deleteMany({ chatId: chatIdStr }),
+  ]);
+  return true;
+}
+
+/**
+ * Generate an assistant reply without persisting chat/messages (ephemeral mode).
+ * Still creates ChangeSets when the model proposes trip changes.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {{ id, email, name }} opts.user
+ * @param {string} opts.userMessage
+ * @param {{ role: string, content: string }[]} [opts.history]
+ * @param {(delta: string) => void} [opts.onToken]
+ * @returns {Promise<object>} message-shaped object (not saved to DB)
+ */
+export async function generateEphemeralAiReply(db, { user, userMessage, history = [], onToken }) {
+  const userId = user.id;
+  const [{ trips }, profile] = await Promise.all([
+    loadAiContext(db, userId),
+    getUserProfile(db, userId),
+  ]);
+
+  const convo = [...history];
+  if (!convo.length || convo[convo.length - 1].content !== userMessage) {
+    convo.push({ role: "user", content: userMessage });
+  }
+
+  const result = await runAssistant({ history: convo, trips, profile, activeTripId: null, onToken });
+
+  let changeSet = null;
+  if (result.operations.length > 0) {
+    changeSet = await createChangeSet(db, {
+      tripId: result.createsTrip ? null : result.targetTripId,
+      tripName: result.tripName,
+      createsTrip: result.createsTrip,
+      chatId: null,
+      userId,
+      source: "chat",
+      operations: result.operations,
+    });
+  }
+
+  maybeUpdateProfile(
+    db,
+    userId,
+    [...convo, { role: "assistant", content: result.text }],
+    userMessage,
+  );
+
+  return {
+    _id: new ObjectId().toString(),
+    chatId: null,
+    senderId: "loka-bot",
+    senderName: "Loka",
+    text: result.text,
+    changeSet: embedChangeSet(changeSet),
+    timestamp: new Date().toISOString(),
+    readBy: [],
+  };
+}
+
 /** Reflect a proposal status change onto the embedded copy in its chat message. */
 export async function syncEmbeddedChangeSetStatus(db, changeSetId, status) {
   await db
