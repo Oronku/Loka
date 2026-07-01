@@ -191,9 +191,10 @@ export function buildTimelineSnapshot(trip) {
   });
 
   (trip.hotels || []).forEach((hotel, sourceIndex) => {
-    const start = datePart(hotel.checkIn)
-      ? `${datePart(hotel.checkIn)}T15:00:00`
-      : undefined;
+    if (hotel.isIdea || !datePart(hotel.checkIn) || !datePart(hotel.checkOut)) {
+      return;
+    }
+    const start = `${datePart(hotel.checkIn)}T15:00:00`;
     events.push({
       id: hotel.id || `hotel-${sourceIndex}`,
       type: "hotel",
@@ -201,7 +202,7 @@ export function buildTimelineSnapshot(trip) {
       title: hotel.name,
       location: hotel.address,
       start,
-      end: datePart(hotel.checkOut) ? `${datePart(hotel.checkOut)}T11:00:00` : undefined,
+      end: `${datePart(hotel.checkOut)}T11:00:00`,
       sortKey: sortKeyFor(start),
     });
   });
