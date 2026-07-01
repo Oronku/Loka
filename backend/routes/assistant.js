@@ -2,8 +2,12 @@ import express from "express";
 import { getDb } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import {
-  getOrCreateAiChat,
+  createAiTripConversation,
+  listAiTripConversations,
+  getAiChatForUser,
+  deleteAiTripConversation,
   generateAiReply,
+  generateEphemeralAiReply,
   syncEmbeddedChangeSetStatus,
 } from "../services/ai/assistantService.js";
 import { applyChangeSet, rejectChangeSet, PROPOSALS_COLLECTION } from "../services/ai/changeset.js";
@@ -27,16 +31,59 @@ function sseSend(res, event, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+function titleFromUserMessage(text) {
+  const trimmed = text.trim();
+  if (trimmed.length <= 48) return trimmed;
+  return `${trimmed.slice(0, 48).trim()}…`;
+}
+
+async function insertUserMessage(db, chatId, user, text) {
+  await db.collection("messages").insertOne({
+    chatId,
+    senderId: user.id,
+    senderEmail: user.email,
+    senderName: user.name,
+    text: text.trim(),
+    timestamp: new Date(),
+    readBy: [{ userId: user.id, readAt: new Date() }],
+  });
+}
+
+function maybeRenameNewChat(db, chat, userMessage) {
+  if (chat.title !== "New chat") return;
+  const title = titleFromUserMessage(userMessage);
+  db.collection("chats")
+    .updateOne({ _id: chat._id }, { $set: { title } })
+    .catch((err) => console.error("[assistant] title update error:", err));
+}
+
+/**
+ * Resolve chatId for a persisted turn: existing thread, new per-trip thread, or ephemeral.
+ * @returns {{ chatId: string|null, chat: object|null, isNewTripChat: boolean }}
+ */
+async function resolvePersistedChat(db, userId, { chatIdIn, tripId }) {
+  if (chatIdIn) {
+    const chat = await getAiChatForUser(db, userId, chatIdIn);
+    if (!chat) return { notFound: true };
+    return { chatId: chat._id.toString(), chat, isNewTripChat: false };
+  }
+  if (tripId) {
+    const chat = await createAiTripConversation(db, userId, tripId);
+    return { chatId: chat._id.toString(), chat, isNewTripChat: true };
+  }
+  return { chatId: null, chat: null, isNewTripChat: false };
+}
+
 /**
  * Streaming chat turn. Saves the user message, streams assistant tokens as SSE
  * `token` events, then emits a final `done` event with the saved AI message
  * (including any proposed ChangeSet).
  *
- * Body: { text: string, tripId?: string }
+ * Body: { text: string, tripId?: string, chatId?: string, history?: object[] }
  */
 router.post("/stream", async (req, res) => {
   const db = getDb();
-  const { text, tripId } = req.body || {};
+  const { text, tripId, chatId: chatIdIn, history } = req.body || {};
 
   if (!text || !text.trim()) {
     return res.status(400).json({ error: "Message text is required" });
@@ -46,19 +93,35 @@ router.post("/stream", async (req, res) => {
   }
 
   try {
-    const chat = await getOrCreateAiChat(db, req.user.id);
-    const chatId = chat._id.toString();
+    const trimmed = text.trim();
 
-    // Persist the user's message first.
-    await db.collection("messages").insertOne({
-      chatId,
-      senderId: req.user.id,
-      senderEmail: req.user.email,
-      senderName: req.user.name,
-      text: text.trim(),
-      timestamp: new Date(),
-      readBy: [{ userId: req.user.id, readAt: new Date() }],
-    });
+    if (!chatIdIn && !tripId) {
+      sseInit(res);
+      sseSend(res, "start", { chatId: null });
+
+      const message = await generateEphemeralAiReply(db, {
+        user: req.user,
+        userMessage: trimmed,
+        history: Array.isArray(history) ? history : [],
+        onToken: (delta) => sseSend(res, "token", { delta }),
+      });
+
+      sseSend(res, "done", { message, chatId: null });
+      res.end();
+      return;
+    }
+
+    const resolved = await resolvePersistedChat(db, req.user.id, { chatIdIn, tripId });
+    if (resolved.notFound) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    const { chatId, chat, isNewTripChat } = resolved;
+
+    await insertUserMessage(db, chatId, req.user, trimmed);
+    if (isNewTripChat) {
+      maybeRenameNewChat(db, chat, trimmed);
+    }
 
     sseInit(res);
     sseSend(res, "start", { chatId });
@@ -66,12 +129,12 @@ router.post("/stream", async (req, res) => {
     const message = await generateAiReply(db, {
       chatId,
       user: req.user,
-      userMessage: text.trim(),
+      userMessage: trimmed,
       activeTripId: tripId || null,
       onToken: (delta) => sseSend(res, "token", { delta }),
     });
 
-    sseSend(res, "done", { message });
+    sseSend(res, "done", { message, chatId });
     res.end();
   } catch (error) {
     console.error("[assistant/stream] error:", error);
@@ -87,39 +150,78 @@ router.post("/stream", async (req, res) => {
 /**
  * Non-streaming fallback (same behavior, single JSON response). Useful for
  * clients that can't consume SSE.
- * Body: { text: string, tripId?: string }
+ * Body: { text: string, tripId?: string, chatId?: string, history?: object[] }
  */
 router.post("/message", async (req, res) => {
   const db = getDb();
-  const { text, tripId } = req.body || {};
+  const { text, tripId, chatId: chatIdIn, history } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: "Message text is required" });
   if (!db) return res.status(503).json({ error: "Database unavailable" });
 
   try {
-    const chat = await getOrCreateAiChat(db, req.user.id);
-    const chatId = chat._id.toString();
+    const trimmed = text.trim();
 
-    await db.collection("messages").insertOne({
-      chatId,
-      senderId: req.user.id,
-      senderEmail: req.user.email,
-      senderName: req.user.name,
-      text: text.trim(),
-      timestamp: new Date(),
-      readBy: [{ userId: req.user.id, readAt: new Date() }],
-    });
+    if (!chatIdIn && !tripId) {
+      const message = await generateEphemeralAiReply(db, {
+        user: req.user,
+        userMessage: trimmed,
+        history: Array.isArray(history) ? history : [],
+      });
+      return res.json({ message, chatId: null });
+    }
+
+    const resolved = await resolvePersistedChat(db, req.user.id, { chatIdIn, tripId });
+    if (resolved.notFound) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    const { chatId, chat, isNewTripChat } = resolved;
+
+    await insertUserMessage(db, chatId, req.user, trimmed);
+    if (isNewTripChat) {
+      maybeRenameNewChat(db, chat, trimmed);
+    }
 
     const message = await generateAiReply(db, {
       chatId,
       user: req.user,
-      userMessage: text.trim(),
+      userMessage: trimmed,
       activeTripId: tripId || null,
     });
 
-    res.json({ message });
+    res.json({ message, chatId });
   } catch (error) {
     console.error("[assistant/message] error:", error);
     res.status(500).json({ error: "Failed to process message" });
+  }
+});
+
+/** List per-trip AI conversation threads for a trip. Query: ?tripId= */
+router.get("/conversations", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  const { tripId } = req.query;
+  if (!tripId) return res.status(400).json({ error: "tripId is required" });
+  try {
+    const conversations = await listAiTripConversations(db, req.user.id, tripId);
+    res.json({ conversations });
+  } catch (error) {
+    console.error("[assistant/conversations] error:", error);
+    res.status(500).json({ error: "Failed to load conversations" });
+  }
+});
+
+/** Delete a per-trip AI conversation thread. */
+router.delete("/conversations/:chatId", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  try {
+    const ok = await deleteAiTripConversation(db, req.user.id, req.params.chatId);
+    if (!ok) return res.status(404).json({ error: "Conversation not found" });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("[assistant/conversations/delete] error:", error);
+    res.status(500).json({ error: "Failed to delete conversation" });
   }
 });
 
