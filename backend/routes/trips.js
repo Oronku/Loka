@@ -1,7 +1,13 @@
 import express from "express";
-import { randomUUID } from "crypto";
-import { memoryStore } from "../config/memoryStore.js";
-import { verifyGoogleToken } from "../middleware/auth.js";
+import {
+  randomUUID
+} from "crypto";
+import {
+  memoryStore
+} from "../config/memoryStore.js";
+import {
+  verifyGoogleToken
+} from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
 import {
   buildPendingSnapshot,
@@ -10,7 +16,9 @@ import {
   ensureTripTimeline,
   scheduleTimelineRebuild,
 } from "../services/timelineService/index.js";
-import { buildTimelineSnapshot } from "../services/timeline.service.js";
+import {
+  buildTimelineSnapshot
+} from "../services/timeline.service.js";
 import {
   detectAttractionConflicts,
   findAttractionIndex,
@@ -57,10 +65,16 @@ async function withTimelineSnapshot(trip) {
   if (!needsRebuild) return trip;
 
   const id = tripIdOf(trip);
-  if (!id) return { ...trip, timelineSnapshot: buildPendingSnapshot(trip) };
+  if (!id) return {
+    ...trip,
+    timelineSnapshot: buildPendingSnapshot(trip)
+  };
 
   const rebuilt = await ensureTripTimeline(id);
-  return { ...trip, timelineSnapshot: rebuilt || buildPendingSnapshot(trip) };
+  return {
+    ...trip,
+    timelineSnapshot: rebuilt || buildPendingSnapshot(trip)
+  };
 }
 
 /**
@@ -77,7 +91,10 @@ function respondWithTimeline(res, trip, status = 200) {
       .catch(() => {})
       .finally(() => scheduleTimelineRebuild(id));
   }
-  return res.status(status).json({ ...trip, timelineSnapshot: snapshot });
+  return res.status(status).json({
+    ...trip,
+    timelineSnapshot: snapshot
+  });
 }
 
 const MS_PER_DAY = 86400000;
@@ -124,11 +141,15 @@ function rejectIfOutsideTripRange(res, trip, dateValues, label) {
   return true;
 }
 
-async function loadTrip(req, res, { requireEdit = true } = {}) {
+async function loadTrip(req, res, {
+  requireEdit = true
+} = {}) {
   const trip = await tripService.findById(req.params.id);
 
   if (!trip) {
-    res.status(404).json({ error: "Trip not found" });
+    res.status(404).json({
+      error: "Trip not found"
+    });
     return null;
   }
 
@@ -136,7 +157,9 @@ async function loadTrip(req, res, { requireEdit = true } = {}) {
   const access = tripService.getAccess(trip, req.user.id);
 
   if (requireEdit && !access.canEdit) {
-    res.status(403).json({ error: "Access denied" });
+    res.status(403).json({
+      error: "Access denied"
+    });
     return null;
   }
 
@@ -145,7 +168,9 @@ async function loadTrip(req, res, { requireEdit = true } = {}) {
 }
 
 async function getTripOr404(req, res) {
-  return loadTrip(req, res, { requireEdit: true });
+  return loadTrip(req, res, {
+    requireEdit: true
+  });
 }
 
 // Get all trips for the authenticated user (owned + shared)
@@ -157,14 +182,20 @@ router.get("/", async (req, res) => {
     if (collection) {
       // Use MongoDB - get owned trips and trips shared with user
       const ownedTrips = await collection
-        .find({ userId: req.user.id })
-        .sort({ createdAt: -1 })
+        .find({
+          userId: req.user.id
+        })
+        .sort({
+          createdAt: -1
+        })
         .toArray();
       const sharedTrips = await collection
         .find({
           "sharedWith.userId": req.user.id,
         })
-        .sort({ createdAt: -1 })
+        .sort({
+          createdAt: -1
+        })
         .toArray();
 
       // Mark shared trips with isShared flag
@@ -188,8 +219,8 @@ router.get("/", async (req, res) => {
         .find()
         .filter(
           (t) =>
-            t.userId === req.user.id ||
-            (t.sharedWith && t.sharedWith.some((s) => s.userId === req.user.id))
+          t.userId === req.user.id ||
+          (t.sharedWith && t.sharedWith.some((s) => s.userId === req.user.id))
         );
       trips.forEach((trip) => {
         trip.isOwner = trip.userId === req.user.id;
@@ -200,14 +231,18 @@ router.get("/", async (req, res) => {
     res.json(trips);
   } catch (error) {
     console.error("Error fetching trips:", error);
-    res.status(500).json({ error: "Failed to fetch trips" });
+    res.status(500).json({
+      error: "Failed to fetch trips"
+    });
   }
 });
 
 // Get a single trip by ID (any authenticated user with the link can view)
 router.get("/:id", async (req, res) => {
   try {
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
     const response = tripService.filterChecklistsForResponse(
@@ -220,7 +255,9 @@ router.get("/:id", async (req, res) => {
     res.json(await withTimelineSnapshot(response));
   } catch (error) {
     console.error("Error fetching trip:", error);
-    res.status(500).json({ error: "Failed to fetch trip" });
+    res.status(500).json({
+      error: "Failed to fetch trip"
+    });
   }
 });
 
@@ -230,13 +267,15 @@ router.get("/:id", async (req, res) => {
 // ?refresh=true is passed.
 router.get("/:id/timeline", async (req, res) => {
   try {
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
     const allowedModes = ["driving", "walking", "transit", "bicycling"];
-    const mode = allowedModes.includes(req.query.mode)
-      ? req.query.mode
-      : "driving";
+    const mode = allowedModes.includes(req.query.mode) ?
+      req.query.mode :
+      "driving";
 
     const refresh = req.query.refresh === "true";
     const snapshot = trip.timelineSnapshot;
@@ -247,16 +286,21 @@ router.get("/:id/timeline", async (req, res) => {
       snapshot.version === 0 ||
       snapshot.mode !== mode;
 
-    const timeline = needsRebuild
-      ? await rebuildTripTimeline(trip.id, { mode })
-      : snapshot;
+    const timeline = needsRebuild ?
+      await rebuildTripTimeline(trip.id, {
+        mode
+      }) :
+      snapshot;
 
     res.json(timeline);
   } catch (error) {
     console.error("Error building trip timeline:", error);
     res
       .status(500)
-      .json({ error: "Failed to build timeline", message: error.message });
+      .json({
+        error: "Failed to build timeline",
+        message: error.message
+      });
   }
 });
 
@@ -296,7 +340,10 @@ router.post("/", async (req, res) => {
     console.error("Error creating trip:", error);
     res
       .status(500)
-      .json({ error: "Failed to create trip", message: error.message });
+      .json({
+        error: "Failed to create trip",
+        message: error.message
+      });
   }
 });
 
@@ -304,7 +351,9 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const collection = getTripsCollection();
-    const existingTrip = await loadTrip(req, res, { requireEdit: true });
+    const existingTrip = await loadTrip(req, res, {
+      requireEdit: true
+    });
     if (!existingTrip) return;
 
     const updateData = tripService.sanitizeUpdatePayload(
@@ -315,20 +364,26 @@ router.put("/:id", async (req, res) => {
     let updated;
     if (collection) {
       const result = await collection.findOneAndUpdate(
-        tripService.buildIdQuery(existingTrip.id),
-        { $set: updateData },
-        { returnDocument: "after" }
+        tripService.buildIdQuery(existingTrip.id), {
+          $set: updateData
+        }, {
+          returnDocument: "after"
+        }
       );
 
       if (!result) {
-        return res.status(404).json({ error: "Trip not found" });
+        return res.status(404).json({
+          error: "Trip not found"
+        });
       }
       updated = result;
       console.log("✓ Trip updated in MongoDB:", existingTrip.id);
     } else {
       updated = memoryStore.trips.update(existingTrip.id, updateData);
       if (!updated) {
-        return res.status(404).json({ error: "Trip not found" });
+        return res.status(404).json({
+          error: "Trip not found"
+        });
       }
       console.log("✓ Trip updated in memory:", existingTrip.id);
     }
@@ -339,7 +394,10 @@ router.put("/:id", async (req, res) => {
     console.error("Error updating trip:", error);
     res
       .status(500)
-      .json({ error: "Failed to update trip", message: error.message });
+      .json({
+        error: "Failed to update trip",
+        message: error.message
+      });
   }
 });
 
@@ -347,9 +405,13 @@ router.put("/:id", async (req, res) => {
 router.put("/:id/checklist", async (req, res) => {
   try {
     const collection = getTripsCollection();
-    const { checklist } = req.body;
+    const {
+      checklist
+    } = req.body;
 
-    const existingTrip = await loadTrip(req, res, { requireEdit: true });
+    const existingTrip = await loadTrip(req, res, {
+      requireEdit: true
+    });
     if (!existingTrip) return;
 
     const userChecklists = existingTrip.userChecklists || [];
@@ -367,25 +429,30 @@ router.put("/:id/checklist", async (req, res) => {
     } else {
       updatedUserChecklists = [
         ...userChecklists,
-        { userId: req.user.id, checklist: checklist },
+        {
+          userId: req.user.id,
+          checklist: checklist
+        },
       ];
     }
 
     let updated;
     if (collection) {
       const result = await collection.findOneAndUpdate(
-        tripService.buildIdQuery(existingTrip.id),
-        {
+        tripService.buildIdQuery(existingTrip.id), {
           $set: {
             userChecklists: updatedUserChecklists,
             updatedAt: new Date().toISOString(),
           },
-        },
-        { returnDocument: "after" }
+        }, {
+          returnDocument: "after"
+        }
       );
 
       if (!result) {
-        return res.status(404).json({ error: "Trip not found" });
+        return res.status(404).json({
+          error: "Trip not found"
+        });
       }
       updated = result;
     } else {
@@ -405,7 +472,10 @@ router.put("/:id/checklist", async (req, res) => {
     console.error("Error updating user checklist:", error);
     res
       .status(500)
-      .json({ error: "Failed to update checklist", message: error.message });
+      .json({
+        error: "Failed to update checklist",
+        message: error.message
+      });
   }
 });
 
@@ -417,11 +487,15 @@ router.delete("/:id", async (req, res) => {
     const existingTrip = await tripService.findById(req.params.id);
 
     if (!existingTrip) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     if (!tripService.isOwner(existingTrip, req.user.id)) {
-      return res.status(403).json({ error: "Only trip owner can delete" });
+      return res.status(403).json({
+        error: "Only trip owner can delete"
+      });
     }
 
     let deleted;
@@ -439,38 +513,56 @@ router.delete("/:id", async (req, res) => {
     }
 
     if (!deleted) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
-    res.json({ success: true, message: "Trip deleted successfully" });
+    res.json({
+      success: true,
+      message: "Trip deleted successfully"
+    });
   } catch (error) {
     console.error("Error deleting trip:", error);
     res
       .status(500)
-      .json({ error: "Failed to delete trip", message: error.message });
+      .json({
+        error: "Failed to delete trip",
+        message: error.message
+      });
   }
 });
 
 // Share trip with users by email (registered → sharedWith, unregistered → pendingInvites)
 router.post("/:id/share", async (req, res) => {
   try {
-    const { emails } = req.body;
+    const {
+      emails
+    } = req.body;
 
     if (!Array.isArray(emails) || emails.length === 0) {
-      return res.status(400).json({ error: "emails array is required" });
+      return res.status(400).json({
+        error: "emails array is required"
+      });
     }
 
     const collection = getTripsCollection();
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
     if (!trip._access.canShare) {
-      return res.status(403).json({ error: "Only trip owner can share" });
+      return res.status(403).json({
+        error: "Only trip owner can share"
+      });
     }
 
     const db = collection ? collection.s.db : null;
     if (!db) {
-      return res.status(500).json({ error: "Database not available" });
+      return res.status(500).json({
+        error: "Database not available"
+      });
     }
 
     const normalizedEmails = emails
@@ -489,35 +581,51 @@ router.post("/:id/share", async (req, res) => {
 
     const users = await db
       .collection("users")
-      .find({ email: { $in: normalizedEmails } })
+      .find({
+        email: {
+          $in: normalizedEmails
+        }
+      })
       .toArray();
 
     const usersByEmail = new Map(
       users.map((user) => [tripService.normalizeEmail(user.email), user])
     );
 
-    const { newParticipants, newPendingInvites, skipped } =
-      tripService.processShareInvites(trip, emails, usersByEmail, req.user.id);
+    const {
+      newParticipants,
+      newPendingInvites,
+      skipped
+    } =
+    tripService.processShareInvites(trip, emails, usersByEmail, req.user.id);
 
     if (newParticipants.length === 0 && newPendingInvites.length === 0) {
       const allInvalid = skipped.every((s) => s.reason === "invalid_email");
       return res.status(400).json({
-        error: allInvalid
-          ? "No valid email addresses provided"
-          : "No new invitations created",
+        error: allInvalid ?
+          "No valid email addresses provided" :
+          "No new invitations created",
         skipped,
       });
     }
 
     const pushUpdates = {};
     if (newParticipants.length > 0) {
-      pushUpdates.sharedWith = { $each: newParticipants };
+      pushUpdates.sharedWith = {
+        $each: newParticipants
+      };
     }
     if (newPendingInvites.length > 0) {
-      pushUpdates.pendingInvites = { $each: newPendingInvites };
+      pushUpdates.pendingInvites = {
+        $each: newPendingInvites
+      };
     }
 
-    const update = { $set: { updatedAt: new Date().toISOString() } };
+    const update = {
+      $set: {
+        updatedAt: new Date().toISOString()
+      }
+    };
     if (Object.keys(pushUpdates).length > 0) {
       update.$push = pushUpdates;
     }
@@ -540,7 +648,10 @@ router.post("/:id/share", async (req, res) => {
     console.error("Error sharing trip:", error);
     res
       .status(500)
-      .json({ error: "Failed to share trip", message: error.message });
+      .json({
+        error: "Failed to share trip",
+        message: error.message
+      });
   }
 });
 
@@ -550,13 +661,17 @@ router.delete("/:id/share/pending/:email", async (req, res) => {
     const trip = await tripService.findById(req.params.id);
 
     if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     if (!tripService.isOwner(trip, req.user.id)) {
       return res
         .status(403)
-        .json({ error: "Only trip owner can remove participants" });
+        .json({
+          error: "Only trip owner can remove participants"
+        });
     }
 
     const result = await tripService.removePendingInvite(
@@ -565,7 +680,9 @@ router.delete("/:id/share/pending/:email", async (req, res) => {
     );
 
     if (!result.ok) {
-      return res.status(result.status).json({ error: result.error });
+      return res.status(result.status).json({
+        error: result.error
+      });
     }
 
     res.json({
@@ -585,28 +702,39 @@ router.delete("/:id/share/pending/:email", async (req, res) => {
 // Remove participant by userId (owner only)
 router.delete("/:id/share/:userId", async (req, res) => {
   try {
-    const { id, userId } = req.params;
+    const {
+      id,
+      userId
+    } = req.params;
 
     const trip = await tripService.findById(id);
 
     if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     if (!tripService.isOwner(trip, req.user.id)) {
       return res
         .status(403)
-        .json({ error: "Only trip owner can remove participants" });
+        .json({
+          error: "Only trip owner can remove participants"
+        });
     }
 
     if (userId === trip.userId) {
-      return res.status(400).json({ error: "Cannot remove trip owner" });
+      return res.status(400).json({
+        error: "Cannot remove trip owner"
+      });
     }
 
     const result = await tripService.removeParticipant(id, userId);
 
     if (!result.ok) {
-      return res.status(result.status).json({ error: result.error });
+      return res.status(result.status).json({
+        error: result.error
+      });
     }
 
     res.json({
@@ -630,7 +758,9 @@ router.post("/:id/invitations/accept", async (req, res) => {
     const trip = await tripService.findById(req.params.id);
 
     if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     const email = req.user.email;
@@ -642,22 +772,37 @@ router.post("/:id/invitations/accept", async (req, res) => {
     if (!hasPending) {
       return res
         .status(404)
-        .json({ error: "No pending invitation for this trip" });
+        .json({
+          error: "No pending invitation for this trip"
+        });
     }
 
-    const { sharedWith, pendingInvites, linked } =
-      tripService.promotePendingInvitesForEmail(trip, email, req.user);
+    const {
+      sharedWith,
+      pendingInvites,
+      linked
+    } =
+    tripService.promotePendingInvitesForEmail(trip, email, req.user);
 
     if (!linked) {
-      return res.status(400).json({ error: "Could not accept invitation" });
+      return res.status(400).json({
+        error: "Could not accept invitation"
+      });
     }
 
     if (collection) {
       await collection.updateOne(tripService.buildIdQuery(trip.id), {
-        $set: { sharedWith, pendingInvites, updatedAt: new Date().toISOString() },
+        $set: {
+          sharedWith,
+          pendingInvites,
+          updatedAt: new Date().toISOString()
+        },
       });
     } else {
-      memoryStore.trips.update(trip.id, { sharedWith, pendingInvites });
+      memoryStore.trips.update(trip.id, {
+        sharedWith,
+        pendingInvites
+      });
     }
 
     const updated = await tripService.findById(trip.id);
@@ -665,7 +810,9 @@ router.post("/:id/invitations/accept", async (req, res) => {
     res.json(tripService.attachAccessFlags(updated, req.user.id, req.user.email));
   } catch (error) {
     console.error("Error accepting invitation:", error);
-    res.status(500).json({ error: "Failed to accept invitation" });
+    res.status(500).json({
+      error: "Failed to accept invitation"
+    });
   }
 });
 
@@ -675,19 +822,27 @@ router.post("/:id/invitations/decline", async (req, res) => {
     const trip = await tripService.findById(req.params.id);
 
     if (!trip) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     const result = await tripService.removePendingInvite(trip.id, req.user.email);
 
     if (!result.ok) {
-      return res.status(result.status).json({ error: result.error });
+      return res.status(result.status).json({
+        error: result.error
+      });
     }
 
-    res.json({ success: true });
+    res.json({
+      success: true
+    });
   } catch (error) {
     console.error("Error declining invitation:", error);
-    res.status(500).json({ error: "Failed to decline invitation" });
+    res.status(500).json({
+      error: "Failed to decline invitation"
+    });
   }
 });
 
@@ -734,16 +889,17 @@ router.post("/:id/flights", async (req, res) => {
   const collection = getTripsCollection();
   let updated;
   if (collection) {
-    await collection.updateOne(
-      { id: trip.id },
-      {
-        $set: {
-          flights: trip.flights,
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-    updated = await collection.findOne({ id: trip.id });
+    await collection.updateOne({
+      id: trip.id
+    }, {
+      $set: {
+        flights: trip.flights,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    updated = await collection.findOne({
+      id: trip.id
+    });
   } else {
     updated = memoryStore.trips.update(trip.id, {
       flights: trip.flights,
@@ -755,12 +911,19 @@ router.post("/:id/flights", async (req, res) => {
 
 router.get("/:id/flights/:flightId/price", async (req, res) => {
   try {
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
-    const { flight, flightId } = findFlightById(trip, req.params.flightId);
+    const {
+      flight,
+      flightId
+    } = findFlightById(trip, req.params.flightId);
     if (!flight || !flightId) {
-      return res.status(404).json({ error: "Flight not found" });
+      return res.status(404).json({
+        error: "Flight not found"
+      });
     }
 
     const tripId = tripIdOf(trip);
@@ -772,7 +935,9 @@ router.get("/:id/flights/:flightId/price", async (req, res) => {
     res.json(payload);
   } catch (error) {
     console.error("Error fetching flight price:", error);
-    res.status(500).json({ error: "Failed to fetch flight price" });
+    res.status(500).json({
+      error: "Failed to fetch flight price"
+    });
   }
 });
 
@@ -781,9 +946,14 @@ router.post("/:id/flights/:flightId/price/refresh", async (req, res) => {
     const trip = await getTripOr404(req, res);
     if (!trip) return;
 
-    const { flight, flightId } = findFlightById(trip, req.params.flightId);
+    const {
+      flight,
+      flightId
+    } = findFlightById(trip, req.params.flightId);
     if (!flight || !flightId) {
-      return res.status(404).json({ error: "Flight not found" });
+      return res.status(404).json({
+        error: "Flight not found"
+      });
     }
 
     const tripId = tripIdOf(trip);
@@ -797,7 +967,9 @@ router.post("/:id/flights/:flightId/price/refresh", async (req, res) => {
     res.json(payload);
   } catch (error) {
     console.error("Error refreshing flight price:", error);
-    res.status(500).json({ error: "Failed to refresh flight price" });
+    res.status(500).json({
+      error: "Failed to refresh flight price"
+    });
   }
 });
 
@@ -805,8 +977,14 @@ router.post("/:id/hotels", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
   const hotel = req.body || {};
-  if (!hotel.name) {
-    return res.status(400).json({ error: "name is required" });
+
+  if (!hotel.name || !hotel.checkIn || !hotel.checkOut) {
+    return res
+      .status(400)
+      .json({
+        error: "name, checkIn and checkOut are required"
+      });
+
   }
 
   if (hotel.isIdea) {
@@ -831,29 +1009,156 @@ router.post("/:id/hotels", async (req, res) => {
       )
     )
       return;
-    trip.hotels.push(hotel);
+  }
+
+  // Generate hotel ID for linking with expenses
+  if (!hotel.id) hotel.id = `hotel-${Date.now()}`;
+
+
+  // If hotel has a cost, create a corresponding expense
+  const expenses = trip.expenses || [];
+  const costAmount = parseFloat(hotel.cost);
+  
+  if (hotel.cost && costAmount > 0) {
+    const hotelExpense = {
+      id: `expense-${Date.now()}`,
+      title: hotel.name,
+      description: "Hotel booking",
+      amount: costAmount,
+      category: "Accommodation",
+      date: hotel.checkIn,
+      paidBy: req.user.id,
+      splits: [{
+        userId: req.user.id
+      }],
+      splitMethod: "equal",
+      createdBy: req.user.id,
+      createdAt: new Date().toISOString(),
+      linkedHotelId: hotel.id,
+    };
+    expenses.push(hotelExpense);
   }
 
   const collection = getTripsCollection();
   let updated;
   if (collection) {
     await collection.updateOne(
-      { id: trip.id },
-      {
+      tripService.buildIdQuery(trip.id), {
         $set: {
           hotels: trip.hotels,
+          expenses: expenses,
           updatedAt: new Date().toISOString(),
         },
       }
     );
-    updated = await collection.findOne({ id: trip.id });
+    updated = await tripService.findById(trip.id);
   } else {
     updated = memoryStore.trips.update(trip.id, {
       hotels: trip.hotels,
+      expenses: expenses,
     });
   }
 
   respondWithTimeline(res, updated, 201);
+});
+
+router.put("/:id/hotels/:idx", async (req, res) => {
+  const trip = await getTripOr404(req, res);
+  if (!trip) return;
+  const {
+    idx
+  } = req.params;
+  const hotel = req.body || {};
+
+  const i = parseInt(idx, 10);
+  if (Number.isNaN(i) || i < 0 || i >= trip.hotels.length) {
+    return res.status(400).json({
+      error: "Invalid hotel index"
+    });
+  }
+
+  if (!hotel.name || !hotel.checkIn || !hotel.checkOut) {
+    return res
+      .status(400)
+      .json({
+        error: "name, checkIn and checkOut are required"
+      });
+  }
+
+  if (
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [hotel.checkIn, hotel.checkOut],
+      "Hotel"
+    )
+  )
+    return;
+
+  const oldHotel = trip.hotels[i];
+  const hotelId = oldHotel.id || `hotel-${Date.now()}`;
+
+  // Update hotel
+  trip.hotels[i] = {
+    ...hotel,
+    id: hotelId
+  };
+
+  // Update or create/delete corresponding expense
+  const expenses = trip.expenses || [];
+  const expenseIndex = expenses.findIndex(e => e.linkedHotelId === hotelId);
+
+  const costAmount = parseFloat(hotel.cost);
+  if (hotel.cost && costAmount > 0) {
+    // Hotel has cost - update or create expense
+    const hotelExpense = {
+      id: expenseIndex >= 0 ? expenses[expenseIndex].id : `expense-${Date.now()}`,
+      title: hotel.name,
+      description: "Hotel booking",
+      amount: costAmount,
+      category: "Accommodation",
+      date: hotel.checkIn,
+      paidBy: expenseIndex >= 0 ? expenses[expenseIndex].paidBy : req.user.id,
+      splits: expenseIndex >= 0 ? expenses[expenseIndex].splits : [{
+        userId: req.user.id
+      }],
+      splitMethod: expenseIndex >= 0 ? expenses[expenseIndex].splitMethod : "equal",
+      createdBy: expenseIndex >= 0 ? expenses[expenseIndex].createdBy : req.user.id,
+      createdAt: expenseIndex >= 0 ? expenses[expenseIndex].createdAt : new Date().toISOString(),
+      linkedHotelId: hotelId,
+    };
+
+    if (expenseIndex >= 0) {
+      expenses[expenseIndex] = hotelExpense;
+    } else {
+      expenses.push(hotelExpense);
+    }
+  } else if (expenseIndex >= 0) {
+    // Hotel has no cost but expense exists - remove it
+    expenses.splice(expenseIndex, 1);
+  }
+
+  const collection = getTripsCollection();
+  let updated;
+  if (collection) {
+    await collection.updateOne(
+      tripService.buildIdQuery(trip.id), {
+        $set: {
+          hotels: trip.hotels,
+          expenses: expenses,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+    updated = await tripService.findById(trip.id);
+  } else {
+    updated = memoryStore.trips.update(trip.id, {
+      hotels: trip.hotels,
+      expenses: expenses,
+    });
+  }
+
+  respondWithTimeline(res, updated, 200);
 });
 
 router.post("/:id/rides", async (req, res) => {
@@ -861,7 +1166,9 @@ router.post("/:id/rides", async (req, res) => {
   if (!trip) return;
   const ride = req.body || {};
   if (!ride.pickup || !ride.dropoff) {
-    return res.status(400).json({ error: "pickup and dropoff are required" });
+    return res.status(400).json({
+      error: "pickup and dropoff are required"
+    });
   }
   if (
     rejectIfOutsideTripRange(
@@ -879,13 +1186,21 @@ router.post("/:id/rides", async (req, res) => {
   const collection = getTripsCollection();
   let updated;
   if (collection) {
-    await collection.updateOne(
-      { id: trip.id },
-      { $set: { rides: trip.rides, updatedAt: new Date().toISOString() } }
-    );
-    updated = await collection.findOne({ id: trip.id });
+    await collection.updateOne({
+      id: trip.id
+    }, {
+      $set: {
+        rides: trip.rides,
+        updatedAt: new Date().toISOString()
+      }
+    });
+    updated = await collection.findOne({
+      id: trip.id
+    });
   } else {
-    updated = memoryStore.trips.update(trip.id, { rides: trip.rides });
+    updated = memoryStore.trips.update(trip.id, {
+      rides: trip.rides
+    });
   }
 
   respondWithTimeline(res, updated, 201);
@@ -896,7 +1211,9 @@ router.post("/:id/attractions", async (req, res) => {
   if (!trip) return;
   const attraction = req.body || {};
   if (!attraction.name) {
-    return res.status(400).json({ error: "name is required" });
+    return res.status(400).json({
+      error: "name is required"
+    });
   }
 
   // When scheduled, block overlaps with flights / other attractions unless the
@@ -945,16 +1262,17 @@ router.post("/:id/attractions", async (req, res) => {
   const collection = getTripsCollection();
   let updated;
   if (collection) {
-    await collection.updateOne(
-      { id: trip.id },
-      {
-        $set: {
-          attractions: trip.attractions,
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-    updated = await collection.findOne({ id: trip.id });
+    await collection.updateOne({
+      id: trip.id
+    }, {
+      $set: {
+        attractions: trip.attractions,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    updated = await collection.findOne({
+      id: trip.id
+    });
   } else {
     updated = memoryStore.trips.update(trip.id, {
       attractions: trip.attractions,
@@ -967,31 +1285,50 @@ router.post("/:id/attractions", async (req, res) => {
 router.delete("/:id/:type/:idx", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
-  const { type, idx } = req.params;
+  const {
+    type,
+    idx
+  } = req.params;
   const valid = ["flights", "hotels", "rides", "attractions"];
   if (!valid.includes(type))
-    return res.status(400).json({ error: "Invalid type" });
+    return res.status(400).json({
+      error: "Invalid type"
+    });
   const i = parseInt(idx, 10);
   if (Number.isNaN(i) || i < 0 || i >= trip[type].length)
-    return res.status(400).json({ error: "Invalid index" });
+    return res.status(400).json({
+      error: "Invalid index"
+    });
+
+  // If deleting a hotel, also remove its linked expense
+  const expenses = trip.expenses || [];
+  if (type === "hotels" && trip.hotels[i].id) {
+    const hotelId = trip.hotels[i].id;
+    const expenseIndex = expenses.findIndex(e => e.linkedHotelId === hotelId);
+    if (expenseIndex >= 0) {
+      expenses.splice(expenseIndex, 1);
+    }
+  }
+
   trip[type].splice(i, 1);
 
   const collection = getTripsCollection();
   let updated;
   if (collection) {
     await collection.updateOne(
-      { id: trip.id },
-      {
+      tripService.buildIdQuery(trip.id), {
         $set: {
           [type]: trip[type],
+          expenses: expenses,
           updatedAt: new Date().toISOString(),
         },
       }
     );
-    updated = await collection.findOne({ id: trip.id });
+    updated = await tripService.findById(trip.id);
   } else {
     updated = memoryStore.trips.update(trip.id, {
       [type]: trip[type],
+      expenses: expenses,
     });
   }
 
@@ -1004,9 +1341,13 @@ router.delete("/:id/:type/:idx", async (req, res) => {
 router.post("/:id/expenses", async (req, res) => {
   try {
     const collection = getTripsCollection();
-    const { expense } = req.body;
+    const {
+      expense
+    } = req.body;
 
-    const trip = await loadTrip(req, res, { requireEdit: true });
+    const trip = await loadTrip(req, res, {
+      requireEdit: true
+    });
     if (!trip) return;
 
     // Add expense with metadata
@@ -1023,24 +1364,35 @@ router.post("/:id/expenses", async (req, res) => {
     let updated;
     if (collection) {
       const result = await collection.updateOne(tripService.buildIdQuery(trip.id), {
-        $set: { expenses, updatedAt: new Date().toISOString() },
+        $set: {
+          expenses,
+          updatedAt: new Date().toISOString()
+        },
       });
       if (result.matchedCount === 0) {
-        return res.status(404).json({ error: "Trip not found" });
+        return res.status(404).json({
+          error: "Trip not found"
+        });
       }
       updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(trip.id, { expenses });
+      updated = memoryStore.trips.update(trip.id, {
+        expenses
+      });
     }
 
     if (!updated) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     res.json(formatTripForClient(updated, req.user));
   } catch (error) {
     console.error("Error adding expense:", error);
-    res.status(500).json({ error: "Failed to add expense" });
+    res.status(500).json({
+      error: "Failed to add expense"
+    });
   }
 });
 
@@ -1048,9 +1400,13 @@ router.post("/:id/expenses", async (req, res) => {
 router.put("/:id/expenses/:expenseId", async (req, res) => {
   try {
     const collection = getTripsCollection();
-    const { expense } = req.body;
+    const {
+      expense
+    } = req.body;
 
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
     // Find the expense
@@ -1060,7 +1416,9 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
     );
 
     if (expenseIndex === -1) {
-      return res.status(404).json({ error: "Expense not found" });
+      return res.status(404).json({
+        error: "Expense not found"
+      });
     }
 
     const isCreator = expenses[expenseIndex].createdBy === req.user.id;
@@ -1068,7 +1426,9 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
     if (!trip._access.canEdit && !isCreator) {
       return res
         .status(403)
-        .json({ error: "No permission to edit this expense" });
+        .json({
+          error: "No permission to edit this expense"
+        });
     }
 
     // Update expense
@@ -1081,21 +1441,30 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
     let updated;
     if (collection) {
       await collection.updateOne(tripService.buildIdQuery(trip.id), {
-        $set: { expenses, updatedAt: new Date().toISOString() },
+        $set: {
+          expenses,
+          updatedAt: new Date().toISOString()
+        },
       });
       updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(trip.id, { expenses });
+      updated = memoryStore.trips.update(trip.id, {
+        expenses
+      });
     }
 
     if (!updated) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     res.json(formatTripForClient(updated, req.user));
   } catch (error) {
     console.error("Error updating expense:", error);
-    res.status(500).json({ error: "Failed to update expense" });
+    res.status(500).json({
+      error: "Failed to update expense"
+    });
   }
 });
 
@@ -1111,12 +1480,16 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
 
     if (!req.user) {
       console.log("No user found in request");
-      return res.status(401).json({ error: "Authentication required" });
+      return res.status(401).json({
+        error: "Authentication required"
+      });
     }
 
     const collection = getTripsCollection();
 
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
     const expenses = trip.expenses || [];
@@ -1131,7 +1504,9 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
         "Available expense IDs:",
         expenses.map((e) => e.id)
       );
-      return res.status(404).json({ error: "Expense not found" });
+      return res.status(404).json({
+        error: "Expense not found"
+      });
     }
 
     const isCreator = expenses[expenseIndex].createdBy === req.user.id;
@@ -1147,7 +1522,9 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
     if (!trip._access.canEdit && !isCreator) {
       return res
         .status(403)
-        .json({ error: "No permission to delete this expense" });
+        .json({
+          error: "No permission to delete this expense"
+        });
     }
 
     expenses.splice(expenseIndex, 1);
@@ -1155,21 +1532,30 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
     let updated;
     if (collection) {
       await collection.updateOne(tripService.buildIdQuery(trip.id), {
-        $set: { expenses, updatedAt: new Date().toISOString() },
+        $set: {
+          expenses,
+          updatedAt: new Date().toISOString()
+        },
       });
       updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(trip.id, { expenses });
+      updated = memoryStore.trips.update(trip.id, {
+        expenses
+      });
     }
 
     if (!updated) {
-      return res.status(404).json({ error: "Trip not found" });
+      return res.status(404).json({
+        error: "Trip not found"
+      });
     }
 
     res.json(formatTripForClient(updated, req.user));
   } catch (error) {
     console.error("Error deleting expense:", error);
-    res.status(500).json({ error: "Failed to delete expense" });
+    res.status(500).json({
+      error: "Failed to delete expense"
+    });
   }
 });
 
@@ -1177,15 +1563,21 @@ router.delete("/:id/expenses/:expenseId", async (req, res) => {
 router.put("/:id/participants/:userId/permission", async (req, res) => {
   try {
     const collection = getTripsCollection();
-    const { permission } = req.body;
+    const {
+      permission
+    } = req.body;
 
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
     if (!trip._access.canShare) {
       return res
         .status(403)
-        .json({ error: "Only trip owner can update permissions" });
+        .json({
+          error: "Only trip owner can update permissions"
+        });
     }
 
     // Update shared user permission
@@ -1195,7 +1587,9 @@ router.put("/:id/participants/:userId/permission", async (req, res) => {
     );
 
     if (userIndex === -1) {
-      return res.status(404).json({ error: "User not found in shared list" });
+      return res.status(404).json({
+        error: "User not found in shared list"
+      });
     }
 
     sharedWith[userIndex].expensePermission = permission;
@@ -1203,28 +1597,39 @@ router.put("/:id/participants/:userId/permission", async (req, res) => {
     let updated;
     if (collection) {
       await collection.updateOne(tripService.buildIdQuery(trip.id), {
-        $set: { sharedWith, updatedAt: new Date().toISOString() },
+        $set: {
+          sharedWith,
+          updatedAt: new Date().toISOString()
+        },
       });
       updated = await tripService.findById(trip.id);
     } else {
-      updated = memoryStore.trips.update(trip.id, { sharedWith });
+      updated = memoryStore.trips.update(trip.id, {
+        sharedWith
+      });
     }
 
     res.json(updated);
   } catch (error) {
     console.error("Error updating permission:", error);
-    res.status(500).json({ error: "Failed to update permission" });
+    res.status(500).json({
+      error: "Failed to update permission"
+    });
   }
 });
 
 // Calculate balances
 router.get("/:id/expenses/balances", async (req, res) => {
   try {
-    const trip = await loadTrip(req, res, { requireEdit: false });
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
     if (!trip) return;
 
     if (!trip._access.canEdit) {
-      return res.status(403).json({ error: "No access to expenses" });
+      return res.status(403).json({
+        error: "No access to expenses"
+      });
     }
 
     // Calculate balances
@@ -1303,6 +1708,8 @@ router.get("/:id/expenses/balances", async (req, res) => {
     });
   } catch (error) {
     console.error("Error calculating balances:", error);
-    res.status(500).json({ error: "Failed to calculate balances" });
+    res.status(500).json({
+      error: "Failed to calculate balances"
+    });
   }
 });
