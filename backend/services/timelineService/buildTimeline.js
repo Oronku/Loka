@@ -147,6 +147,7 @@ export function buildTimeline(trip) {
   });
 
   (trip.hotels || []).forEach((hotel, sourceIndex) => {
+    if (hotel.isIdea || !hotel.checkIn || !hotel.checkOut) return;
     // checkIn is a date ("2026-06-07"); arrivalTime is a time of day ("15:00").
     // Combine them so the check-in has a real timestamp and is not "unscheduled".
     const checkInTime = hotel.arrivalTime || hotel.checkInTime || null;

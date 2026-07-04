@@ -977,27 +977,43 @@ router.post("/:id/hotels", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
   const hotel = req.body || {};
+
   if (!hotel.name || !hotel.checkIn || !hotel.checkOut) {
     return res
       .status(400)
       .json({
         error: "name, checkIn and checkOut are required"
       });
+
   }
-  if (
-    rejectIfOutsideTripRange(
-      res,
-      trip,
-      [hotel.checkIn, hotel.checkOut],
-      "Hotel"
+
+  if (hotel.isIdea) {
+    trip.hotels.push({
+      ...hotel,
+      isIdea: true,
+      checkIn: hotel.checkIn || "",
+      checkOut: hotel.checkOut || "",
+    });
+  } else {
+    if (!hotel.checkIn || !hotel.checkOut) {
+      return res
+        .status(400)
+        .json({ error: "name, checkIn and checkOut are required" });
+    }
+    if (
+      rejectIfOutsideTripRange(
+        res,
+        trip,
+        [hotel.checkIn, hotel.checkOut],
+        "Hotel"
+      )
     )
-  )
-    return;
+      return;
+  }
 
   // Generate hotel ID for linking with expenses
   if (!hotel.id) hotel.id = `hotel-${Date.now()}`;
 
-  trip.hotels.push(hotel);
 
   // If hotel has a cost, create a corresponding expense
   const expenses = trip.expenses || [];
