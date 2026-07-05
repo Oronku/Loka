@@ -9,7 +9,8 @@ import {
   rebuildTripTimeline,
   ensureTripTimeline,
   scheduleTimelineRebuild,
-} from "../services/timelineService/index.js";
+  TIMELINE_SNAPSHOT_VERSION,
+} from "../services/timeline/index.js";
 import { buildTimelineSnapshot } from "../services/timeline.service.js";
 import {
   detectAttractionConflicts,
@@ -53,7 +54,10 @@ function formatTripForClient(trip, user) {
 async function withTimelineSnapshot(trip) {
   if (!trip) return trip;
   const snapshot = trip.timelineSnapshot;
-  const needsRebuild = !snapshot || snapshot.pending || snapshot.version === 0;
+  const needsRebuild =
+    !snapshot ||
+    snapshot.pending ||
+    snapshot.version !== TIMELINE_SNAPSHOT_VERSION;
   if (!needsRebuild) return trip;
 
   const id = tripIdOf(trip);
@@ -244,7 +248,7 @@ router.get("/:id/timeline", async (req, res) => {
       refresh ||
       !snapshot ||
       snapshot.pending ||
-      snapshot.version === 0 ||
+      snapshot.version !== TIMELINE_SNAPSHOT_VERSION ||
       snapshot.mode !== mode;
 
     const timeline = needsRebuild
