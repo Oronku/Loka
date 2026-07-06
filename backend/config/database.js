@@ -82,6 +82,11 @@ export async function connectToDatabase() {
       .createIndex({ userId: 1, read: 1, createdAt: -1 });
 
     await db
+      .collection("push_tokens")
+      .createIndex({ userId: 1, expoPushToken: 1 }, { unique: true });
+    await db.collection("push_tokens").createIndex({ userId: 1 });
+
+    await db
       .collection("flight_price_history")
       .createIndex({ tripId: 1, flightId: 1, checkedAt: -1 });
 
