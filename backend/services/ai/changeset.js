@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { ObjectId } from "mongodb";
 import * as tripService from "../trip.service.js";
-import { scheduleTimelineRebuild } from "../timelineService/rebuildTripTimeline.js";
+import { scheduleTimelineRebuild } from "../timeline/index.js";
 
 export const PROPOSALS_COLLECTION = "ai_proposals";
 

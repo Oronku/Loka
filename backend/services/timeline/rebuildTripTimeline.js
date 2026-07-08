@@ -1,39 +1,9 @@
 import { memoryStore } from "../../config/memoryStore.js";
 import { findById, getTripsCollection } from "../trip.service.js";
 import { buildTimeline } from "./buildTimeline.js";
-import {
-  calculateTravelLegs,
-  calculateArrivalTransfers,
-} from "./calculateTravelLegs.js";
+import { recalculateTimeline } from "./engine/TimelineEngine.js";
 
-export const TIMELINE_SNAPSHOT_VERSION = 1;
 const DEFAULT_MODE = "driving";
-
-/**
- * Build a full timeline snapshot for a trip (events + travel legs).
- * Does NOT persist. May perform external (cached) travel-time calls.
- * @param {object} trip
- * @param {{ mode?: string }} [opts]
- */
-export async function buildTripTimeline(trip, opts = {}) {
-  const mode = opts.mode || DEFAULT_MODE;
-  const { events, unscheduled } = buildTimeline(trip);
-  const [legs, transfers] = await Promise.all([
-    calculateTravelLegs(trip, events, { mode }),
-    calculateArrivalTransfers(trip, events, { mode }),
-  ]);
-
-  return {
-    version: TIMELINE_SNAPSHOT_VERSION,
-    mode,
-    events,
-    unscheduled,
-    legs,
-    transfers,
-    generatedAt: new Date().toISOString(),
-    pending: false,
-  };
-}
 
 /**
  * Cheap, instant snapshot: correct event ordering but no travel times yet.
@@ -52,6 +22,7 @@ export function buildPendingSnapshot(trip, opts = {}) {
     unscheduled,
     legs: [],
     transfers: [],
+    departureTransfers: [],
     generatedAt: new Date().toISOString(),
     pending: true,
   };
@@ -98,7 +69,7 @@ export async function rebuildTripTimeline(tripId, opts = {}) {
   const trip = await findById(tripId);
   if (!trip) return null;
 
-  const snapshot = await buildTripTimeline(trip, opts);
+  const snapshot = await recalculateTimeline(trip, opts);
   await persistSnapshot(tripId, snapshot);
   return snapshot;
 }
