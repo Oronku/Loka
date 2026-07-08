@@ -22,6 +22,7 @@ import adminRoutes from './routes/admin.js';
 import agentRoutes from './routes/agent.js';
 import agencyRoutes from './routes/agency.js';
 import organizedTripsRoutes from './routes/organizedTrips.js';
+import notificationRoutes from './routes/notifications.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -95,6 +96,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/agency', agencyRoutes); // Agency management for agency admins
 app.use('/api/organized-trips', organizedTripsRoutes); // Public organized trips
+app.use('/api/notifications', notificationRoutes); // Push notification token registration
 
 // Health check
 app.get('/api/health', (req, res) => {
