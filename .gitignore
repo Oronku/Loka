@@ -28,3 +28,7 @@ dist-ssr
 backend/.env
 backend/data/instagram-cookies.txt
 .env
+
+# Apple Sign In Private Keys (DO NOT COMMIT!)
+*.p8
+backend/config/*.p8
