@@ -6,6 +6,7 @@ import { getDatabase } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
 import { OAuth2Client } from "google-auth-library";
+import appleSignin from "apple-signin-auth";
 
 const router = express.Router();
 const JWT_SECRET =
@@ -152,6 +153,76 @@ router.post("/google", async (req, res) => {
   } catch (error) {
     console.error("Google auth error:", error);
     res.status(401).json({ error: "Google authentication failed" });
+  }
+});
+
+// Apple Sign In
+router.post("/apple", async (req, res) => {
+  try {
+    const { identityToken } = req.body;
+
+    if (!identityToken) {
+      return res.status(400).json({ error: "Identity token is required" });
+    }
+
+    const collection = getUsersCollection();
+    if (!collection) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    // Verify token with Apple
+    const appleResponse = await appleSignin.verifyIdToken(identityToken, {
+      audience: process.env.APPLE_CLIENT_ID,
+      ignoreExpiration: false,
+    });
+
+    const { email, sub: appleId } = appleResponse;
+
+    // Convert email to lowercase
+    const normalizedEmail = email.toLowerCase();
+
+    // Find or create user
+    let user = await collection.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      // Create new user (same structure as /register)
+      const newUser = {
+        id: `user-${Date.now()}`,
+        email: normalizedEmail,
+        password: null,
+        name: email.split("@")[0],
+        picture: null,
+        provider: "apple",
+        appleId: appleId,
+        emailVerified: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await collection.insertOne(newUser);
+      user = newUser;
+    }
+
+    const linkedTripsCount = 0;
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: user.id, email: user.email, name: user.name },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
+
+    res.status(201).json({
+      user: userWithoutPassword,
+      token,
+      linkedTripsCount,
+    });
+  } catch (error) {
+    console.error("Apple auth error:", error);
+    res.status(401).json({ error: "Apple authentication failed" });
   }
 });
 
