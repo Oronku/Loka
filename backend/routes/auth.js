@@ -5,6 +5,11 @@ import { ObjectId } from "mongodb";
 import { getDatabase } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
+import {
+  generateAndSendOtp,
+  resendOtp,
+  verifyOtp,
+} from "../services/otp.service.js";
 import { OAuth2Client } from "google-auth-library";
 import appleSignin from "apple-signin-auth";
 
@@ -21,7 +26,8 @@ function getUsersCollection() {
 // Register new user
 router.post("/register", async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, preferredCurrency, onboardingPreferences } =
+      req.body;
 
     if (!email || !password || !name) {
       return res
@@ -54,28 +60,25 @@ router.post("/register", async (req, res) => {
       name,
       picture: null,
       provider: "email",
+      emailVerified: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
+    if (preferredCurrency) {
+      newUser.preferredCurrency = preferredCurrency;
+    }
+    if (onboardingPreferences) {
+      newUser.onboardingPreferences = onboardingPreferences;
+    }
+
     await collection.insertOne(newUser);
 
-    const linkedTripsCount = 0;
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: newUser.id, email: newUser.email, name: newUser.name },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    // Remove password from response
-    const { password: _, ...userWithoutPassword } = newUser;
+    await generateAndSendOtp(normalizedEmail, "register");
 
     res.status(201).json({
-      user: userWithoutPassword,
-      token,
-      linkedTripsCount,
+      otpRequired: true,
+      email: normalizedEmail,
     });
   } catch (error) {
     console.error("Registration error:", error);
@@ -277,6 +280,110 @@ router.post("/login", async (req, res) => {
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Failed to login" });
+  }
+});
+
+// Verify OTP (register or login)
+router.post("/verify-otp", async (req, res) => {
+  try {
+    const { email, code, purpose } = req.body;
+
+    if (!email || !code || !purpose) {
+      return res
+        .status(400)
+        .json({ error: "Email, code, and purpose are required" });
+    }
+
+    if (purpose !== "register" && purpose !== "login") {
+      return res
+        .status(400)
+        .json({ error: "Purpose must be 'register' or 'login'" });
+    }
+
+    const collection = getUsersCollection();
+    if (!collection) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const user = await collection.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(400).json({ error: "Invalid or expired code" });
+    }
+
+    const isValid = await verifyOtp(normalizedEmail, code, purpose);
+    if (!isValid) {
+      return res.status(400).json({ error: "Invalid or expired code" });
+    }
+
+    await collection.updateOne(
+      { email: normalizedEmail },
+      {
+        $set: {
+          emailVerified: true,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+
+    const updatedUser = await collection.findOne({ email: normalizedEmail });
+
+    const token = jwt.sign(
+      {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    const linkedTripsCount = 0;
+    const { password: _, ...userWithoutPassword } = updatedUser;
+
+    res.json({
+      user: userWithoutPassword,
+      token,
+      linkedTripsCount,
+    });
+  } catch (error) {
+    console.error("Verify OTP error:", error);
+    res.status(500).json({ error: "Failed to verify code" });
+  }
+});
+
+// Resend OTP
+router.post("/resend-otp", async (req, res) => {
+  try {
+    const { email, purpose } = req.body;
+
+    if (!email || !purpose) {
+      return res.status(400).json({ error: "Email and purpose are required" });
+    }
+
+    if (purpose !== "register" && purpose !== "login") {
+      return res
+        .status(400)
+        .json({ error: "Purpose must be 'register' or 'login'" });
+    }
+
+    const collection = getUsersCollection();
+    if (!collection) {
+      return res.status(503).json({ error: "Database not available" });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const user = await collection.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(400).json({ error: "User not found" });
+    }
+
+    await resendOtp(normalizedEmail, purpose);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Resend OTP error:", error);
+    res.status(500).json({ error: "Failed to resend code" });
   }
 });
 
