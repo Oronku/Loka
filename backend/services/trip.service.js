@@ -426,6 +426,70 @@ export async function removeParticipant(tripId, participantUserId) {
 }
 
 /**
+ * Leave a trip (owner or participant). Solo trips cannot be left — use delete instead.
+ * Owner leaving transfers ownership to the first sharedWith participant.
+ */
+export async function leaveTrip(tripId, userId) {
+  const trip = normalizeDocument(await findById(tripId));
+  if (!trip) {
+    return { ok: false, status: 404, error: "Trip not found" };
+  }
+
+  const sharedWith = trip.sharedWith || [];
+  const totalParticipants = 1 + sharedWith.length;
+  if (totalParticipants <= 1) {
+    return { ok: false, status: 400, error: "Cannot leave a solo trip" };
+  }
+
+  const owner = isOwner(trip, userId);
+  const participant = isParticipant(trip, userId);
+  if (!owner && !participant) {
+    return { ok: false, status: 403, error: "Not a trip member" };
+  }
+
+  let nextUserId = trip.userId;
+  let nextSharedWith = sharedWith;
+  let userChecklists = trip.userChecklists || [];
+
+  if (owner) {
+    const newOwner = sharedWith[0];
+    nextUserId = newOwner.userId;
+    nextSharedWith = sharedWith.slice(1);
+    userChecklists = userChecklists.filter((uc) => uc.userId !== userId);
+  } else {
+    nextSharedWith = sharedWith.filter((s) => s.userId !== userId);
+    userChecklists = userChecklists.filter((uc) => uc.userId !== userId);
+  }
+
+  const collection = getTripsCollection();
+  const updatePayload = {
+    userId: nextUserId,
+    sharedWith: nextSharedWith,
+    userChecklists,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (collection) {
+    await collection.updateOne(buildIdQuery(trip.id), { $set: updatePayload });
+
+    const db = getDatabase();
+    if (db) {
+      await db.collection("chats").updateMany(
+        { contextType: "trip", contextId: trip.id },
+        {
+          $pull: { participants: { userId } },
+          $set: { updatedAt: new Date() },
+        },
+      );
+    }
+  } else {
+    memoryStore.trips.update(trip.id, updatePayload);
+  }
+
+  return { ok: true };
+}
+
+/**
  * Remove a pending email invite (owner only — enforced in route).
  */
 export async function removePendingInvite(tripId, email) {

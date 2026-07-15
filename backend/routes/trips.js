@@ -848,6 +848,28 @@ router.post("/:id/invitations/decline", async (req, res) => {
   }
 });
 
+// Leave a trip (owner or participant; requires at least one other member)
+router.post("/:id/leave", async (req, res) => {
+  try {
+    const result = await tripService.leaveTrip(req.params.id, req.user.id);
+
+    if (!result.ok) {
+      return res.status(result.status).json({
+        error: result.error
+      });
+    }
+
+    res.json({
+      success: true
+    });
+  } catch (error) {
+    console.error("Error leaving trip:", error);
+    res.status(500).json({
+      error: "Failed to leave trip"
+    });
+  }
+});
+
 export default router;
 
 /**
