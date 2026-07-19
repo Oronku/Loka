@@ -35,6 +35,17 @@ router.post("/register", async (req, res) => {
         .json({ error: "Email, password, and name are required" });
     }
 
+    if (
+      password.length < 8 ||
+      !/[A-Z]/.test(password) ||
+      !/\d/.test(password)
+    ) {
+      return res.status(400).json({
+        error:
+          "Password must be at least 8 characters with one uppercase letter and one number",
+      });
+    }
+
     const collection = getUsersCollection();
     if (!collection) {
       return res.status(503).json({ error: "Database not available" });
