@@ -43,38 +43,58 @@ router.post("/register", async (req, res) => {
     // Convert email to lowercase
     const normalizedEmail = email.toLowerCase();
 
-    // Check if user already exists
     const existingUser = await collection.findOne({ email: normalizedEmail });
-    if (existingUser) {
+    if (existingUser?.emailVerified) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
+    const now = new Date().toISOString();
 
-    // Create user
-    const newUser = {
-      id: `user-${Date.now()}`,
-      email: normalizedEmail,
+    const userFields = {
       password: hashedPassword,
       name,
       picture: null,
       provider: "email",
       emailVerified: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
 
     if (preferredCurrency) {
-      newUser.preferredCurrency = preferredCurrency;
+      userFields.preferredCurrency = preferredCurrency;
     }
     if (onboardingPreferences) {
-      newUser.onboardingPreferences = onboardingPreferences;
+      userFields.onboardingPreferences = onboardingPreferences;
     }
 
-    await collection.insertOne(newUser);
+    let createdNewUser = false;
 
-    await generateAndSendOtp(normalizedEmail, "register");
+    if (existingUser) {
+      await collection.updateOne(
+        { email: normalizedEmail, emailVerified: false },
+        { $set: userFields }
+      );
+    } else {
+      await collection.insertOne({
+        id: `user-${Date.now()}`,
+        email: normalizedEmail,
+        ...userFields,
+        createdAt: now,
+      });
+      createdNewUser = true;
+    }
+
+    try {
+      await generateAndSendOtp(normalizedEmail, "register");
+    } catch (otpError) {
+      if (createdNewUser) {
+        await collection.deleteOne({
+          email: normalizedEmail,
+          emailVerified: false,
+        });
+      }
+      throw otpError;
+    }
 
     res.status(201).json({
       otpRequired: true,
@@ -82,6 +102,9 @@ router.post("/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Registration error:", error);
+    if (error.code === 11000) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
     res.status(500).json({ error: "Failed to register user" });
   }
 });
