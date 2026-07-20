@@ -98,6 +98,11 @@ export async function connectToDatabase() {
     await db.collection("users").createIndex({ email: 1 }, { unique: true });
     await db.collection("users").createIndex({ name: "text", email: "text" });
 
+    await db
+      .collection("email_otps")
+      .createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+    await db.collection("email_otps").createIndex({ email: 1, purpose: 1 });
+
     // Create indexes for Explore (collections + saved places)
     await db
       .collection("explore_collections")

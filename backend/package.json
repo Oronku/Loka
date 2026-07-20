@@ -10,6 +10,7 @@
     "build:airports": "node scripts/buildAirportsJson.js"
   },
   "dependencies": {
+    "@getbrevo/brevo": "^6.0.2",
     "@google/generative-ai": "^0.24.1",
     "apple-signin-auth": "^2.0.0",
     "axios": "^1.6.2",
