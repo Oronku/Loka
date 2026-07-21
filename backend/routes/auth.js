@@ -134,12 +134,18 @@ router.post("/google", async (req, res) => {
       return res.status(503).json({ error: "Database not available" });
     }
 
-    // Verify token with Google
-    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    // Verify token with Google - support multiple client IDs for Web/iOS/Android
+    const validAudiences = [
+      process.env.GOOGLE_WEB_CLIENT_ID,
+      process.env.GOOGLE_IOS_CLIENT_ID,
+      process.env.GOOGLE_ANDROID_CLIENT_ID,
+    ].filter(Boolean); // Remove undefined values
+
+    const client = new OAuth2Client();
     
     const ticket = await client.verifyIdToken({
       idToken: idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: validAudiences, // Accept tokens from any configured platform
     });
 
     const payload = ticket.getPayload();
