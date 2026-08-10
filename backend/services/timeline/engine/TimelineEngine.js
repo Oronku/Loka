@@ -3,7 +3,7 @@ import { travelLegGenerator } from "../generators/travelLegGenerator.js";
 import { arrivalTransferGenerator } from "../generators/arrivalTransferGenerator.js";
 import { departureTransferGenerator } from "../generators/departureTransferGenerator.js";
 
-export const TIMELINE_SNAPSHOT_VERSION = 3;
+export const TIMELINE_SNAPSHOT_VERSION = 5;
 const DEFAULT_MODE = "driving";
 
 /**

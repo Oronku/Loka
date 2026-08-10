@@ -1,72 +1,20 @@
-export function toTime(value) {
-  if (!value) return NaN;
-  const t = new Date(value).getTime();
-  return Number.isNaN(t) ? NaN : t;
-}
+import {
+  DEFAULT_AIRPORT_ARRIVAL_BUFFER_SECONDS,
+} from "./shared/constants.js";
+import {
+  airportQuery,
+  extractLocation,
+  resolveAirportLabel,
+} from "./shared/location.js";
+import { combineDateAndTime, toTime } from "./shared/wallClock.js";
+import { applyHotelOrdering, buildHotelEvents } from "../hotels.js";
 
-/** Best-effort location string usable by Google APIs: "lat,lng" or an address. */
-export function extractLocation(raw) {
-  if (!raw || typeof raw !== "object") return null;
-
-  const coords =
-    raw.coordinates || raw.location?.coordinates || raw.geometry?.location;
-  if (coords && coords.lat != null && coords.lng != null) {
-    return `${coords.lat},${coords.lng}`;
-  }
-
-  if (typeof raw.location === "string" && raw.location.trim()) {
-    return raw.location.trim();
-  }
-  if (typeof raw.address === "string" && raw.address.trim()) {
-    return raw.address.trim();
-  }
-  if (
-    typeof raw.formatted_address === "string" &&
-    raw.formatted_address.trim()
-  ) {
-    return raw.formatted_address.trim();
-  }
-  return null;
-}
-
-/**
- * Turn an airport value into a geocodable query. A bare IATA code like "CDG"
- * becomes "CDG airport"; anything else (a full name/address) is used as-is.
- */
-export function airportQuery(value) {
-  if (!value || typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (/^[A-Za-z]{3}$/.test(trimmed)) {
-    return `${trimmed.toUpperCase()} airport`;
-  }
-  return trimmed;
-}
-
-/**
- * Combine a date with a separate time-of-day into one datetime string.
- * Many items store a date ("2026-06-07") and a time ("15:00") separately;
- * timelining needs them merged so the event has a real sort key.
- */
-export function combineDateAndTime(dateValue, timeValue) {
-  if (!dateValue) return timeValue || null;
-  const dateStr = String(dateValue).trim();
-
-  // Already a full datetime — use as-is.
-  if (/T\d{1,2}:\d{2}/.test(dateStr) || /\d{1,2}:\d{2}/.test(dateStr.slice(10))) {
-    return dateStr;
-  }
-
-  if (timeValue && /^\d{1,2}:\d{2}/.test(String(timeValue).trim())) {
-    const datePart = dateStr.slice(0, 10);
-    const [h, m] = String(timeValue).trim().split(":");
-    const hh = h.padStart(2, "0");
-    const mm = (m || "00").slice(0, 2).padStart(2, "0");
-    return `${datePart}T${hh}:${mm}`;
-  }
-
-  return dateStr;
-}
+export { toTime, combineDateAndTime } from "./shared/wallClock.js";
+export {
+  extractLocation,
+  airportQuery,
+  resolveAirportLabel,
+} from "./shared/location.js";
 
 const DEFAULT_ATTRACTION_DURATION_MIN = 120;
 const RESTAURANT_DURATION_MIN = 90;
@@ -168,24 +116,31 @@ export function buildTimeline(trip) {
   (trip.flights || []).forEach((flight, sourceIndex) => {
     // Flights store airports under several possible field names depending on
     // the source (flight search uses departureAirportCode/arrivalAirportCode).
-    const departureAirport =
-      flight.departureAirportCode ||
-      flight.departureAirport ||
-      flight.from ||
-      null;
-    const arrivalAirport =
-      flight.arrivalAirportCode || flight.arrivalAirport || flight.to || null;
+    // Collapse "" / whitespace to null so labels never reach the client blank.
+    const departureAirport = resolveAirportLabel(
+      flight.departureAirportCode,
+      flight.departureAirport,
+      flight.from
+    );
+    const arrivalAirport = resolveAirportLabel(
+      flight.arrivalAirportCode,
+      flight.arrivalAirport,
+      flight.to
+    );
+
+    const departLabel = resolveAirportLabel(
+      departureAirport,
+      flight.departureCity
+    );
+    const arriveLabel = resolveAirportLabel(arrivalAirport, flight.arrivalCity);
 
     // Fall back to the city name when no airport code is present.
     const departQuery =
       airportQuery(departureAirport) ||
-      (flight.departureCity ? `${flight.departureCity} airport` : null);
+      (departLabel ? `${departLabel} airport` : null);
     const arriveQuery =
       airportQuery(arrivalAirport) ||
-      (flight.arrivalCity ? `${flight.arrivalCity} airport` : null);
-
-    const departLabel = departureAirport || flight.departureCity || null;
-    const arriveLabel = arrivalAirport || flight.arrivalCity || null;
+      (arriveLabel ? `${arriveLabel} airport` : null);
 
     pushEvent(result, {
       id: flight.id || `flight-${sourceIndex}`,
@@ -216,45 +171,9 @@ export function buildTimeline(trip) {
   });
 
   (trip.hotels || []).forEach((hotel, sourceIndex) => {
-    if (hotel.isIdea || !hotel.checkIn || !hotel.checkOut) return;
-    // checkIn is a date ("2026-06-07"); arrivalTime is a time of day ("15:00").
-    // Combine them so the check-in has a real timestamp and is not "unscheduled".
-    const checkInTime = hotel.arrivalTime || hotel.checkInTime || null;
-    const checkInAt = combineDateAndTime(hotel.checkIn, checkInTime);
-    const checkOutAt = combineDateAndTime(
-      hotel.checkOut,
-      hotel.checkOutTime || hotel.departureTime
-    );
-    const hotelLocation = extractLocation(hotel) || hotel.name || null;
-
-    pushEvent(result, {
-      id: hotel.id || `hotel-${sourceIndex}`,
-      type: "hotel-checkin",
-      sourceIndex,
-      title: hotel.name ? `Check in: ${hotel.name}` : "Hotel check-in",
-      subtitle: hotel.name || null,
-      start: checkInAt,
-      end: checkInAt,
-      arrival: checkInAt,
-      checkInTime,
-      location: hotelLocation,
-      sortKey: toTime(checkInAt),
-      raw: hotel,
-    });
-
-    pushEvent(result, {
-      id: hotel.id || `hotel-${sourceIndex}`,
-      type: "hotel-checkout",
-      sourceIndex,
-      title: hotel.name ? `Check out: ${hotel.name}` : "Hotel check-out",
-      subtitle: hotel.name || null,
-      start: checkOutAt,
-      end: checkOutAt,
-      arrival: checkOutAt,
-      location: hotelLocation,
-      sortKey: toTime(checkOutAt),
-      raw: hotel,
-    });
+    for (const event of buildHotelEvents(hotel, sourceIndex)) {
+      pushEvent(result, event);
+    }
   });
 
   (trip.rides || []).forEach((ride, sourceIndex) => {
@@ -296,6 +215,15 @@ export function buildTimeline(trip) {
       raw: attraction,
     });
   });
+
+  const minutes = Number(trip.airportArrivalBufferMinutes);
+  const airportArrivalBufferSeconds =
+    Number.isFinite(minutes) && minutes >= 0
+      ? minutes * 60
+      : DEFAULT_AIRPORT_ARRIVAL_BUFFER_SECONDS;
+
+  // Clamp hotels against flights before sort so adjusted times land correctly.
+  applyHotelOrdering(result.events, { airportArrivalBufferSeconds });
 
   result.events = dedupeEvents(result.events);
   result.unscheduled = dedupeEvents(result.unscheduled);
