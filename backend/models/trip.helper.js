@@ -40,6 +40,43 @@ export const SERVER_MANAGED_FIELDS = ["timelineSnapshot"];
  */
 
 /**
+ * @typedef {Object} AttractionOpeningHours
+ * @property {string[]} [weekdayText]
+ * @property {unknown[]} [periods]
+ */
+
+/**
+ * Embedded attraction — schemaless and additive; clients may send extra keys.
+ *
+ * @typedef {Object} AttractionItem
+ * @property {string} id
+ * @property {string} [placeId]
+ * @property {string} [name]
+ * @property {string} [address]
+ * @property {string} [meetingPoint]
+ * @property {string} [meetingPointPlaceId]
+ * @property {number} [lat]
+ * @property {number} [lng]
+ * @property {string} [scheduledDate] YYYY-MM-DD
+ * @property {string} [scheduledTime] HH:MM
+ * @property {number} [durationMinutes]
+ * @property {'confirmed'|'guess'} [timeConfidence]
+ * @property {'idea'|'planned'|'booked'} [status]
+ * @property {string} [bookingUrl]
+ * @property {string} [confirmationRef]
+ * @property {number|string} [price]
+ * @property {string} [currency]
+ * @property {AttractionOpeningHours} [openingHours]
+ * @property {string} [website]
+ * @property {string} [notes]
+ * @property {string} [type]
+ * @property {string} [attractionType]
+ * @property {number} [rating]
+ * @property {string} [photoReference]
+ * @property {string} [imageUrl]
+ */
+
+/**
  * @typedef {Object} TripDocument
  * @property {string} id
  * @property {string} userId
@@ -48,7 +85,9 @@ export const SERVER_MANAGED_FIELDS = ["timelineSnapshot"];
  * @property {string} name
  * @property {TripParticipant[]} sharedWith
  * @property {PendingInvite[]} pendingInvites
+ * @property {Array<{ id: string, text: string, completed: boolean, categoryId?: string }>} [checklist]
  * @property {Array<{ userId: string, checklist: unknown[] }>} userChecklists
+ * @property {AttractionItem[]} [attractions]
  */
 
 export function normalizeEmail(email) {

@@ -42,6 +42,13 @@ function durationForType(type) {
   return type === "restaurant" ? RESTAURANT_DURATION_MIN : DEFAULT_ATTRACTION_DURATION_MIN;
 }
 
+function durationForAttraction(attraction) {
+  const raw = attraction?.durationMinutes;
+  const n = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
+  if (typeof n === "number" && Number.isFinite(n) && n > 0) return n;
+  return durationForType(attraction?.attractionType || attraction?.type);
+}
+
 /**
  * Scheduling window for a dated attraction.
  * @returns {{ date: string, startMin: number, endMin: number } | null}
@@ -51,7 +58,7 @@ function attractionWindow(attraction) {
   const date = datePart(attraction.scheduledDate);
   const startMin = toMinutes(attraction.scheduledTime);
   if (!date || startMin == null) return null;
-  const dur = durationForType(attraction.attractionType || attraction.type);
+  const dur = durationForAttraction(attraction);
   return { date, startMin, endMin: Math.min(startMin + dur, MINUTES_PER_DAY) };
 }
 
@@ -133,6 +140,217 @@ export function detectAttractionConflicts(trip, candidate, opts = {}) {
   });
 
   return conflicts;
+}
+
+/**
+ * @typedef {{ code: 'OUTSIDE_OPENING_HOURS'|'TIGHT_TRANSFER', message: string }} AttractionWarning
+ */
+
+function sunday0FromDate(dateStr) {
+  const m = typeof dateStr === "string" ? dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})/) : null;
+  if (!m) return null;
+  const day = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay();
+  return Number.isNaN(day) ? null : day;
+}
+
+function googleTimeToMinutes(time) {
+  if (typeof time === "number" && Number.isFinite(time)) {
+    const padded = String(Math.trunc(time)).padStart(4, "0");
+    return googleTimeToMinutes(padded);
+  }
+  if (typeof time !== "string") return null;
+  const digits = time.trim();
+  if (!/^\d{3,4}$/.test(digits)) return null;
+  const padded = digits.padStart(4, "0");
+  const h = Number(padded.slice(0, 2));
+  const min = Number(padded.slice(2, 4));
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function dayBetween(openDay, closeDay, target) {
+  let d = (openDay + 1) % 7;
+  while (d !== closeDay) {
+    if (d === target) return true;
+    d = (d + 1) % 7;
+    if (d === (openDay + 1) % 7) break;
+  }
+  return false;
+}
+
+/** @returns {Array<{ startMin: number, endMin: number, allDay?: boolean }>} */
+function windowsFromPeriod(period, targetSunday0) {
+  const open = period?.open;
+  if (!open || typeof open !== "object") return [];
+  const openDay = Number(open.day);
+  if (!Number.isInteger(openDay) || openDay < 0 || openDay > 6) return [];
+
+  const openMin =
+    googleTimeToMinutes(open.time) ??
+    (Number.isFinite(Number(open.hours))
+      ? Number(open.hours) * 60 + (Number(open.minutes) || 0)
+      : null);
+  if (openMin == null && period.close) return [];
+
+  const close = period.close;
+  if (!close) {
+    return [{ startMin: 0, endMin: MINUTES_PER_DAY, allDay: true }];
+  }
+
+  const closeDay = Number(close.day);
+  const closeMin =
+    googleTimeToMinutes(close.time) ??
+    (Number.isFinite(Number(close.hours))
+      ? Number(close.hours) * 60 + (Number(close.minutes) || 0)
+      : null);
+  if (!Number.isInteger(closeDay) || closeDay < 0 || closeDay > 6 || closeMin == null) return [];
+
+  if (openDay === closeDay) {
+    if (openDay !== targetSunday0) return [];
+    if (closeMin > openMin) return [{ startMin: openMin, endMin: closeMin }];
+    return [
+      { startMin: openMin, endMin: MINUTES_PER_DAY },
+      { startMin: 0, endMin: closeMin },
+    ];
+  }
+
+  if (openDay === targetSunday0) return [{ startMin: openMin ?? 0, endMin: MINUTES_PER_DAY }];
+  if (closeDay === targetSunday0) return [{ startMin: 0, endMin: closeMin }];
+  if (dayBetween(openDay, closeDay, targetSunday0)) {
+    return [{ startMin: 0, endMin: MINUTES_PER_DAY, allDay: true }];
+  }
+  return [];
+}
+
+function parseClockToken(hour, minute, ampm) {
+  let h = Number(hour);
+  const min = minute != null && minute !== "" ? Number(minute) : 0;
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null;
+  const ap = (ampm || "").toLowerCase().replace(/\./g, "");
+  if (ap.startsWith("p") && h < 12) h += 12;
+  if (ap.startsWith("a") && h === 12) h = 0;
+  return h * 60 + min;
+}
+
+/** @returns {{ closed?: boolean, allDay?: boolean, periods?: Array<{ startMin: number, endMin: number }> } | null} */
+function parseWeekdayTextLine(line) {
+  if (typeof line !== "string" || !line.trim()) return null;
+  const lower = line.toLowerCase();
+  if (/\bclosed\b|סגור/.test(lower)) return { closed: true };
+  if (/24\s*hours?|open\s*24|24\s*שע/.test(lower)) return { allDay: true };
+
+  const times = [];
+  const re = /(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?m\.?)?/gi;
+  let m;
+  while ((m = re.exec(line))) {
+    const min = parseClockToken(m[1], m[2], m[3]);
+    if (min != null) times.push(min);
+  }
+  if (times.length < 2) return null;
+  const periods = [];
+  for (let i = 0; i + 1 < times.length; i += 2) {
+    periods.push({ startMin: times[i], endMin: times[i + 1] });
+  }
+  return periods.length ? { periods } : null;
+}
+
+function readOpeningHours(attraction) {
+  const raw = attraction?.openingHours ?? attraction?.opening_hours;
+  if (!raw || typeof raw !== "object") return null;
+  const weekdayText = Array.isArray(raw.weekdayText)
+    ? raw.weekdayText
+    : Array.isArray(raw.weekday_text)
+      ? raw.weekday_text
+      : null;
+  const periods = Array.isArray(raw.periods) ? raw.periods : null;
+  return { weekdayText, periods };
+}
+
+function visitFitsWindows(startMin, endMin, windows) {
+  if (!windows.length) return false;
+  if (windows.some((w) => w.allDay || (w.startMin <= 0 && w.endMin >= MINUTES_PER_DAY))) {
+    return true;
+  }
+  const spanEnd = endMin < startMin ? endMin + MINUTES_PER_DAY : endMin;
+  return windows.some((w) => {
+    const wEnd = w.endMin <= w.startMin ? w.endMin + MINUTES_PER_DAY : w.endMin;
+    return startMin >= w.startMin && startMin < wEnd && spanEnd <= wEnd;
+  });
+}
+
+function hoursMessage(attraction, weekdayLine) {
+  const time = attraction.scheduledTime || "this time";
+  if (typeof weekdayLine === "string" && weekdayLine.trim()) {
+    return `${time} is outside opening hours (${weekdayLine.trim()}).`;
+  }
+  return `${time} is outside the place's opening hours.`;
+}
+
+/**
+ * Non-blocking warnings for a scheduled attraction. Never throws.
+ * TIGHT_TRANSFER is reserved for the shared contract; this function emits
+ * OUTSIDE_OPENING_HOURS only.
+ *
+ * @param {object} [_trip]
+ * @param {object} candidate
+ * @returns {AttractionWarning[]}
+ */
+export function detectAttractionWarnings(_trip, candidate) {
+  try {
+    if (!candidate) return [];
+    const date = datePart(candidate.scheduledDate);
+    const startMin = toMinutes(candidate.scheduledTime);
+    if (!date || startMin == null) return [];
+
+    const hours = readOpeningHours(candidate);
+    if (!hours) return [];
+
+    const sunday0 = sunday0FromDate(date);
+    if (sunday0 == null) return [];
+
+    const win = attractionWindow(candidate);
+    const endMin = win ? win.endMin : startMin;
+    let windows = [];
+    let weekdayLine = null;
+
+    let periodsAuthoritative = false;
+    if (hours.periods && hours.periods.length > 0) {
+      for (const period of hours.periods) {
+        const openDay = Number(period?.open?.day);
+        if (!Number.isInteger(openDay) || openDay < 0 || openDay > 6) continue;
+        periodsAuthoritative = true;
+        windows.push(...windowsFromPeriod(period, sunday0));
+      }
+    }
+
+    const monday0 = (sunday0 + 6) % 7;
+    if (hours.weekdayText && hours.weekdayText.length > monday0) {
+      weekdayLine = hours.weekdayText[monday0];
+    }
+
+    if (!periodsAuthoritative && hours.weekdayText) {
+      const parsed = parseWeekdayTextLine(weekdayLine);
+      if (!parsed) return [];
+      if (parsed.closed) {
+        return [{ code: "OUTSIDE_OPENING_HOURS", message: hoursMessage(candidate, weekdayLine) }];
+      }
+      if (parsed.allDay) return [];
+      windows = (parsed.periods || []).map((p) => ({
+        startMin: p.startMin,
+        endMin: p.endMin <= p.startMin ? p.endMin + MINUTES_PER_DAY : p.endMin,
+      }));
+    }
+
+    if (periodsAuthoritative && windows.length === 0) {
+      return [{ code: "OUTSIDE_OPENING_HOURS", message: hoursMessage(candidate, weekdayLine) }];
+    }
+
+    if (windows.length === 0) return [];
+    if (visitFitsWindows(startMin, endMin, windows)) return [];
+    return [{ code: "OUTSIDE_OPENING_HOURS", message: hoursMessage(candidate, weekdayLine) }];
+  } catch {
+    return [];
+  }
 }
 
 /**
