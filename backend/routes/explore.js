@@ -267,6 +267,21 @@ async function buildSavedPlace(db, userId, input, fallbackCollectionId) {
 
 /* ----------------------------- Collections ----------------------------- */
 
+function formatCollection(doc, placeCount = 0) {
+  const id = doc._id.toString();
+  return {
+    id,
+    _id: id,
+    userId: doc.userId,
+    name: doc.name,
+    emoji: doc.emoji ?? null,
+    coverImage: doc.coverImage ?? null,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+    placeCount,
+  };
+}
+
 // List collections (with saved-place counts)
 router.get("/collections", async (req, res) => {
   try {
@@ -289,10 +304,9 @@ router.get("/collections", async (req, res) => {
     const countMap = Object.fromEntries(counts.map((c) => [c._id, c.count]));
 
     res.json(
-      collections.map((c) => ({
-        ...c,
-        placeCount: countMap[c._id.toString()] || 0,
-      }))
+      collections.map((c) =>
+        formatCollection(c, countMap[c._id.toString()] || 0)
+      )
     );
   } catch (error) {
     console.error("Error fetching collections:", error);
@@ -322,7 +336,7 @@ router.post("/collections", async (req, res) => {
     };
 
     const result = await db.collection(COLLECTIONS).insertOne(collection);
-    res.status(201).json({ ...collection, _id: result.insertedId });
+    res.status(201).json(formatCollection({ ...collection, _id: result.insertedId }));
   } catch (error) {
     console.error("Error creating collection:", error);
     res.status(500).json({ error: "Failed to create collection" });
@@ -355,7 +369,7 @@ router.patch("/collections/:id", async (req, res) => {
     if (!updated) {
       return res.status(404).json({ error: "Collection not found" });
     }
-    res.json(updated);
+    res.json(formatCollection(updated));
   } catch (error) {
     console.error("Error updating collection:", error);
     res.status(500).json({ error: "Failed to update collection" });

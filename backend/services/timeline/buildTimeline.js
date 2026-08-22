@@ -68,6 +68,66 @@ export function combineDateAndTime(dateValue, timeValue) {
   return dateStr;
 }
 
+const DEFAULT_ATTRACTION_DURATION_MIN = 120;
+const RESTAURANT_DURATION_MIN = 90;
+
+function durationMinutesForAttraction(attraction) {
+  const raw = attraction?.durationMinutes;
+  const n = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
+  if (typeof n === "number" && Number.isFinite(n) && n > 0) return n;
+  const type = attraction?.attractionType || attraction?.type;
+  return type === "restaurant" ? RESTAURANT_DURATION_MIN : DEFAULT_ATTRACTION_DURATION_MIN;
+}
+
+function clockTime(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return /^\d{1,2}:\d{2}/.test(trimmed) ? trimmed : null;
+}
+
+function hasWallClock(value) {
+  return typeof value === "string" && /T\d{1,2}:\d{2}/.test(value);
+}
+
+/** Naive wall-clock add. Never emits a `Z` or offset. */
+function addWallClockMinutes(dateTimeValue, minutes) {
+  const s = String(dateTimeValue).trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})/.exec(s);
+  if (!m || !Number.isFinite(minutes)) return s;
+  const total = Number(m[4]) * 60 + Number(m[5]) + minutes;
+  const dayShift = Math.floor(total / 1440);
+  const mins = ((total % 1440) + 1440) % 1440;
+  const next = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + dayShift));
+  const yyyy = String(next.getUTCFullYear()).padStart(4, "0");
+  const mm = String(next.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(next.getUTCDate()).padStart(2, "0");
+  const hh = String(Math.floor(mins / 60)).padStart(2, "0");
+  const mi = String(mins % 60).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+function attractionBounds(attraction) {
+  const explicitStart = attraction.scheduledDateTime || null;
+  const explicitEnd = attraction.endDateTime || null;
+  const date = attraction.scheduledDate || null;
+  const time = clockTime(attraction.scheduledTime);
+
+  let start = null;
+  if (explicitStart) {
+    start = explicitStart;
+  } else if (date && time) {
+    start = combineDateAndTime(date, time);
+  } else if (date) {
+    start = date;
+  }
+
+  if (explicitEnd) return { start, end: explicitEnd };
+  if (start && hasWallClock(start)) {
+    return { start, end: addWallClockMinutes(start, durationMinutesForAttraction(attraction)) };
+  }
+  return { start, end: start };
+}
+
 function pushEvent(target, event) {
   if (Number.isNaN(event.sortKey)) {
     target.unscheduled.push({ ...event, sortKey: null });
@@ -209,19 +269,20 @@ export function buildTimeline(trip) {
   });
 
   (trip.attractions || []).forEach((attraction, sourceIndex) => {
-    const when =
-      attraction.scheduledDateTime || attraction.scheduledDate || null;
+    const { start, end } = attractionBounds(attraction);
+    const sortSource =
+      attraction.scheduledDateTime || attraction.scheduledDate || start;
     pushEvent(result, {
       id: attraction.id || `attraction-${sourceIndex}`,
       type: "attraction",
       sourceIndex,
       title: attraction.name || "Attraction",
       subtitle: attraction.category || null,
-      start: when,
-      end: attraction.endDateTime || when,
-      arrival: when,
+      start,
+      end,
+      arrival: start,
       location: extractLocation(attraction) || attraction.name || null,
-      sortKey: toTime(when),
+      sortKey: toTime(sortSource),
       raw: attraction,
     });
   });

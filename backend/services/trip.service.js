@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { ObjectId } from "mongodb";
 import { getDatabase } from "../config/database.js";
 import { memoryStore } from "../config/memoryStore.js";
@@ -83,6 +84,31 @@ export function filterChecklistsForResponse(trip, userId) {
   return response;
 }
 
+function namedChecklistCategoryId(value) {
+  if (typeof value !== "string") return undefined;
+  const categoryId = value.trim();
+  if (!categoryId || categoryId === "custom") return undefined;
+  return categoryId;
+}
+
+function categoryIdFromItemId(id) {
+  if (typeof id !== "string") return undefined;
+  const sep = id.indexOf(":");
+  if (sep <= 0) return undefined;
+  return namedChecklistCategoryId(id.slice(0, sep));
+}
+
+/** Keep categoryId on the same object so PUT /trips/:id { checklist } survives as-is. */
+function persistChecklistCategoryId(item, fallbackCategoryId) {
+  if (!item || typeof item !== "object") return item;
+  const categoryId =
+    namedChecklistCategoryId(item.categoryId) ||
+    namedChecklistCategoryId(fallbackCategoryId) ||
+    categoryIdFromItemId(item.id);
+  if (!categoryId) return item;
+  return { ...item, categoryId };
+}
+
 export function sanitizeUpdatePayload(body, access) {
   const updateData = { ...body, updatedAt: new Date().toISOString() };
   delete updateData._id;
@@ -95,7 +121,55 @@ export function sanitizeUpdatePayload(body, access) {
     delete updateData[field];
   }
 
+  if (Array.isArray(updateData.checklist)) {
+    updateData.checklist = normalizeSharedChecklist(updateData.checklist);
+  }
+
   return updateData;
+}
+
+export function ensureChecklistIds(checklist) {
+  if (!Array.isArray(checklist)) return [];
+  return checklist.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    if (Array.isArray(item.items)) {
+      return {
+        ...item,
+        id: item.id || randomUUID(),
+        items: item.items.map((sub) =>
+          sub && typeof sub === "object" && !sub.id
+            ? { ...sub, id: randomUUID() }
+            : sub,
+        ),
+      };
+    }
+    if (!item.id) return { ...item, id: randomUUID() };
+    return item;
+  });
+}
+
+/** Shared packing list: keep extra fields (including categoryId) on each item. */
+export function normalizeSharedChecklist(checklist) {
+  return ensureChecklistIds(checklist).map((item) => {
+    if (!item || typeof item !== "object") return item;
+    if (Array.isArray(item.items)) {
+      return {
+        ...item,
+        items: item.items.map((sub) => persistChecklistCategoryId(sub, item.id)),
+      };
+    }
+    return persistChecklistCategoryId(item);
+  });
+}
+
+export function isFlatChecklist(checklist) {
+  if (!Array.isArray(checklist) || checklist.length === 0) return false;
+  return checklist.every(
+    (item) =>
+      item &&
+      typeof item === "object" &&
+      !Array.isArray(item.items),
+  );
 }
 
 export function hasPendingInvite(trip, email) {
@@ -321,19 +395,30 @@ export async function deleteById(tripId) {
   return memoryStore.trips.delete(tripId);
 }
 
+export async function updateSharedChecklist(tripId, checklist) {
+  const trip = normalizeDocument(await findById(tripId));
+  if (!trip) return null;
+
+  return updateById(trip.id, {
+    checklist: normalizeSharedChecklist(checklist),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 export async function updateChecklist(tripId, userId, checklist) {
   const trip = normalizeDocument(await findById(tripId));
   if (!trip) return null;
 
+  const withIds = ensureChecklistIds(checklist);
   const userChecklists = trip.userChecklists || [];
   const index = userChecklists.findIndex((uc) => uc.userId === userId);
 
   let updatedUserChecklists;
   if (index >= 0) {
     updatedUserChecklists = [...userChecklists];
-    updatedUserChecklists[index] = { userId, checklist };
+    updatedUserChecklists[index] = { userId, checklist: withIds };
   } else {
-    updatedUserChecklists = [...userChecklists, { userId, checklist }];
+    updatedUserChecklists = [...userChecklists, { userId, checklist: withIds }];
   }
 
   return updateById(trip.id, {

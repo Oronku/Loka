@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { ObjectId } from "mongodb";
 import * as tripService from "../trip.service.js";
 import { scheduleTimelineRebuild } from "../timeline/index.js";
+import { skipDuplicateProposal } from "./proposalDedup.js";
 
 export const PROPOSALS_COLLECTION = "ai_proposals";
 
@@ -61,7 +62,11 @@ export function summarizeChangeSet(operations = [], { createsTrip = false, tripN
 
 /**
  * Persist a new ChangeSet (status: pending).
- * @returns {Promise<object>} the stored changeset with a string `_id`
+ * Skips (returns null) when an equivalent proposal is already pending,
+ * already applied / present on the item, or — for background sources —
+ * recently rejected. Logs a short server-side reason; never user-facing.
+ *
+ * @returns {Promise<object|null>} the stored changeset with a string `_id`, or null if skipped
  */
 export async function createChangeSet(db, {
   tripId = null,
@@ -75,7 +80,20 @@ export async function createChangeSet(db, {
   rationale = "",
   operations = [],
   target = null,
+  skipDedup = false,
+  now = new Date(),
 }) {
+  if (!skipDedup && operations.length > 0) {
+    const skip = await skipDuplicateProposal(db, {
+      userId,
+      tripId,
+      operations,
+      source,
+      now,
+    });
+    if (skip) return null;
+  }
+
   const doc = {
     tripId,
     tripName,
@@ -110,39 +128,87 @@ function canonicalTripId(trip) {
   return trip?.id || trip?._id?.toString() || null;
 }
 
-async function pushItem(db, trip, entity, item) {
-  const field = ENTITY_FIELD[entity];
-  if (!field) return;
-  await db.collection("trips").updateOne(tripService.buildIdQuery(canonicalTripId(trip)), {
-    $push: { [field]: item },
-    $set: { updatedAt: new Date().toISOString() },
-  });
+function ensureItemId(item) {
+  const payload = item && typeof item === "object" ? item : {};
+  if (!payload.id) payload.id = randomUUID();
+  return payload;
 }
 
+function itemExistsOnTrip(trip, entity, itemId) {
+  const field = ENTITY_FIELD[entity];
+  if (!field || !itemId) return false;
+  return (trip?.[field] || []).some((el) => el && el.id === itemId);
+}
+
+/** @returns {{ matched: number, modified: number }} */
+async function pushItem(db, trip, entity, item) {
+  const field = ENTITY_FIELD[entity];
+  if (!field) return { matched: 0, modified: 0 };
+  const payload = ensureItemId(item);
+  const result = await db.collection("trips").updateOne(tripService.buildIdQuery(canonicalTripId(trip)), {
+    $push: { [field]: payload },
+    $set: { updatedAt: new Date().toISOString() },
+  });
+  return { matched: result.matchedCount ?? 0, modified: result.modifiedCount ?? 0 };
+}
+
+/**
+ * Query includes the embedded item id so matchedCount is 0 when no element matches.
+ * @returns {{ matched: number, modified: number }}
+ */
 async function updateItem(db, trip, entity, itemId, changes) {
   const field = ENTITY_FIELD[entity];
-  if (!field || !itemId) return;
+  if (!field || !itemId) return { matched: 0, modified: 0 };
   const setFields = {};
   for (const [k, v] of Object.entries(changes || {})) {
     if (k === "id") continue;
     setFields[`${field}.$[el].${k}`] = v;
   }
-  if (Object.keys(setFields).length === 0) return;
   setFields.updatedAt = new Date().toISOString();
-  await db.collection("trips").updateOne(
-    tripService.buildIdQuery(canonicalTripId(trip)),
+  const result = await db.collection("trips").updateOne(
+    { ...tripService.buildIdQuery(canonicalTripId(trip)), [`${field}.id`]: itemId },
     { $set: setFields },
     { arrayFilters: [{ "el.id": itemId }] },
   );
+  return { matched: result.matchedCount ?? 0, modified: result.modifiedCount ?? 0 };
 }
 
+/**
+ * @returns {{ matched: number, modified: number }}
+ */
 async function removeItem(db, trip, entity, itemId) {
   const field = ENTITY_FIELD[entity];
-  if (!field || !itemId) return;
-  await db.collection("trips").updateOne(tripService.buildIdQuery(canonicalTripId(trip)), {
-    $pull: { [field]: { id: itemId } },
-    $set: { updatedAt: new Date().toISOString() },
-  });
+  if (!field || !itemId) return { matched: 0, modified: 0 };
+  const result = await db.collection("trips").updateOne(
+    { ...tripService.buildIdQuery(canonicalTripId(trip)), [`${field}.id`]: itemId },
+    {
+      $pull: { [field]: { id: itemId } },
+      $set: { updatedAt: new Date().toISOString() },
+    },
+  );
+  return { matched: result.matchedCount ?? 0, modified: result.modifiedCount ?? 0 };
+}
+
+/** @returns {string[]} operation ids that cannot match a row */
+function preflightFailedOps(trip, operations) {
+  const added = new Set();
+  const failed = [];
+  for (const op of operations || []) {
+    if (!op || op.entity === "trip") continue;
+    if (!ENTITY_FIELD[op.entity]) continue;
+    if (op.op === "add") {
+      const payload = ensureItemId(op.after);
+      op.after = payload;
+      if (payload.id) added.add(`${op.entity}:${payload.id}`);
+      continue;
+    }
+    if (op.op !== "update" && op.op !== "remove") continue;
+    const exists =
+      itemExistsOnTrip(trip, op.entity, op.itemId) ||
+      (op.itemId && added.has(`${op.entity}:${op.itemId}`));
+    if (!exists) failed.push(op.id);
+  }
+  return failed;
 }
 
 /**
@@ -153,7 +219,7 @@ async function removeItem(db, trip, entity, itemId) {
  * @param {object} db
  * @param {string} id changeset id
  * @param {{ id: string, email: string, name?: string }} user
- * @returns {Promise<{ ok: boolean, status?: number, error?: string, trip?: object, changeSet?: object }>}
+ * @returns {Promise<{ ok: boolean, status?: number, error?: string, code?: string, failedOps?: string[], trip?: object, changeSet?: object, deleted?: boolean }>}
  */
 export async function applyChangeSet(db, id, user) {
   const changeSet = await getChangeSet(db, id);
@@ -190,6 +256,25 @@ export async function applyChangeSet(db, id, user) {
   // 1. Resolve (or create) the target trip.
   let trip = null;
   const createOp = changeSet.operations.find((o) => o.entity === "trip" && o.op === "add");
+  if (!createOp && changeSet.tripId) {
+    trip = await tripService.findById(changeSet.tripId);
+  }
+
+  if (!trip && !createOp) {
+    return { ok: false, status: 404, error: "Target trip not found" };
+  }
+
+  const noOpIds = preflightFailedOps(trip, changeSet.operations);
+  if (noOpIds.length > 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Nothing was written — an item in this change is no longer on the trip.",
+      code: "APPLY_NO_OP",
+      failedOps: noOpIds,
+    };
+  }
+
   if (createOp) {
     const data = createOp.after || {};
     trip = await tripService.createTrip(
@@ -205,12 +290,6 @@ export async function applyChangeSet(db, id, user) {
       },
       { id: user.id, email: user.email, name: user.name },
     );
-  } else if (changeSet.tripId) {
-    trip = await tripService.findById(changeSet.tripId);
-  }
-
-  if (!trip && !createOp) {
-    return { ok: false, status: 404, error: "Target trip not found" };
   }
 
   if (updateTripOp && trip) {
@@ -226,12 +305,28 @@ export async function applyChangeSet(db, id, user) {
   }
 
   // 2. Apply each embedded-item operation in order.
+  const failedOps = [];
   for (const op of changeSet.operations) {
     if (op.entity === "trip") continue; // already handled
     if (!trip) continue;
-    if (op.op === "add") await pushItem(db, trip, op.entity, op.after);
-    else if (op.op === "update") await updateItem(db, trip, op.entity, op.itemId, op.after);
-    else if (op.op === "remove") await removeItem(db, trip, op.entity, op.itemId);
+    if (!ENTITY_FIELD[op.entity]) continue;
+    let write = { matched: 1, modified: 0 };
+    if (op.op === "add") write = await pushItem(db, trip, op.entity, op.after);
+    else if (op.op === "update") write = await updateItem(db, trip, op.entity, op.itemId, op.after);
+    else if (op.op === "remove") write = await removeItem(db, trip, op.entity, op.itemId);
+    if ((op.op === "add" || op.op === "update" || op.op === "remove") && write.matched === 0) {
+      failedOps.push(op.id);
+    }
+  }
+
+  if (failedOps.length > 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Nothing was written — an item in this change is no longer on the trip.",
+      code: "APPLY_NO_OP",
+      failedOps,
+    };
   }
 
   // 3. Mark applied and reload the fresh trip.

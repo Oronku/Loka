@@ -17,9 +17,9 @@ import {
   scheduleTimelineRebuild,
   TIMELINE_SNAPSHOT_VERSION,
 } from "../services/timeline/index.js";
-import { buildTimelineSnapshot } from "../services/timeline.service.js";
 import {
   detectAttractionConflicts,
+  detectAttractionWarnings,
   findAttractionIndex,
 } from "../services/timeline.service.js";
 import {
@@ -27,6 +27,19 @@ import {
   buildPriceResponse,
   findFlightById,
 } from "../services/flightPriceTracker.js";
+import {
+  expenseCurrency,
+  isSettlementExpense,
+  persistResolvedSplits,
+  resolveExpenseShares,
+  round2,
+} from "../utils/expenseMath.js";
+import {
+  hasPaidBy,
+  isDraftExpenseInput,
+  removeLinkedDraftExpense,
+  upsertDraftItemExpense,
+} from "../utils/draftItemExpense.js";
 
 const router = express.Router();
 
@@ -38,6 +51,26 @@ function getTripsCollection() {
 
 function tripIdOf(trip) {
   return trip?.id || trip?._id?.toString() || null;
+}
+
+function isValidPaidBy(paidBy) {
+  if (typeof paidBy === "string") return paidBy.length > 0;
+  if (!Array.isArray(paidBy) || paidBy.length === 0) return false;
+  return paidBy.every(
+    (payer) => payer && typeof payer.userId === "string" && payer.userId.length > 0
+  );
+}
+
+function inferHotelExpenseCurrency(trip, hotel, existingExpense) {
+  const fromHotel =
+    typeof hotel?.currency === "string" && hotel.currency.trim();
+  if (fromHotel) return fromHotel.trim().toUpperCase();
+  if (existingExpense?.currency) {
+    return String(existingExpense.currency).trim().toUpperCase();
+  }
+  const sibling = (trip.expenses || []).find((e) => e?.currency);
+  if (sibling?.currency) return String(sibling.currency).trim().toUpperCase();
+  return "USD";
 }
 
 /** Normalize and attach access flags before returning a trip from expense mutations. */
@@ -85,7 +118,7 @@ async function withTimelineSnapshot(trip) {
  * the rebuild window reflects the latest items (never stale) and is clearly
  * flagged as still calculating; clients re-fetch until `pending` is false.
  */
-function respondWithTimeline(res, trip, status = 200) {
+function respondWithTimeline(res, trip, status = 200, extra) {
   const id = tripIdOf(trip);
   const snapshot = buildPendingSnapshot(trip);
   if (id) {
@@ -95,8 +128,33 @@ function respondWithTimeline(res, trip, status = 200) {
   }
   return res.status(status).json({
     ...trip,
-    timelineSnapshot: snapshot
+    timelineSnapshot: snapshot,
+    ...extra,
   });
+}
+
+const CLEARABLE_ATTRACTION_FIELDS = [
+  "scheduledDate",
+  "scheduledTime",
+  "meetingPoint",
+  "meetingPointPlaceId",
+];
+
+function mergeAttractionPatch(prev, patch) {
+  const stored = {
+    ...prev,
+    ...patch,
+    id: prev.id,
+  };
+  for (const key of CLEARABLE_ATTRACTION_FIELDS) {
+    if (patch[key] === "") {
+      delete stored[key];
+    }
+  }
+  if (patch.scheduledDate === "" || patch.scheduledTime === "") {
+    delete stored.scheduledDateTime;
+  }
+  return stored;
 }
 
 const MS_PER_DAY = 86400000;
@@ -390,7 +448,15 @@ router.put("/:id", async (req, res) => {
       console.log("✓ Trip updated in memory:", existingTrip.id);
     }
 
-    scheduleTimelineRebuild(existingTrip.id);
+    const bodyKeys = Object.keys(req.body || {}).filter(
+      (key) => key !== "_id" && key !== "updatedAt"
+    );
+    const checklistOnly =
+      bodyKeys.length === 0 ||
+      (bodyKeys.length === 1 && bodyKeys[0] === "checklist");
+    if (!checklistOnly) {
+      scheduleTimelineRebuild(existingTrip.id);
+    }
     res.json(tripService.normalizeDocument(updated));
   } catch (error) {
     console.error("Error updating trip:", error);
@@ -403,73 +469,39 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Update user's personal checklist (owner + participants only)
+// Update trip checklist (owner + participants). Flat
+// {id,text,completed,categoryId?} items are the shared packing list;
+// category-shaped payloads stay personal.
 router.put("/:id/checklist", async (req, res) => {
   try {
-    const collection = getTripsCollection();
-    const {
-      checklist
-    } = req.body;
+    const { checklist } = req.body;
+    if (!Array.isArray(checklist)) {
+      return res.status(400).json({
+        error: "Checklist must be an array",
+      });
+    }
 
     const existingTrip = await loadTrip(req, res, {
       requireEdit: true
     });
     if (!existingTrip) return;
 
-    const userChecklists = existingTrip.userChecklists || [];
-    const userChecklistIndex = userChecklists.findIndex(
-      (uc) => uc.userId === req.user.id
-    );
+    const withIds = tripService.ensureChecklistIds(checklist);
+    const updated = tripService.isFlatChecklist(withIds)
+      ? await tripService.updateSharedChecklist(existingTrip.id, withIds)
+      : await tripService.updateChecklist(
+          existingTrip.id,
+          req.user.id,
+          withIds
+        );
 
-    let updatedUserChecklists;
-    if (userChecklistIndex >= 0) {
-      updatedUserChecklists = [...userChecklists];
-      updatedUserChecklists[userChecklistIndex] = {
-        userId: req.user.id,
-        checklist: checklist,
-      };
-    } else {
-      updatedUserChecklists = [
-        ...userChecklists,
-        {
-          userId: req.user.id,
-          checklist: checklist
-        },
-      ];
-    }
-
-    let updated;
-    if (collection) {
-      const result = await collection.findOneAndUpdate(
-        tripService.buildIdQuery(existingTrip.id), {
-          $set: {
-            userChecklists: updatedUserChecklists,
-            updatedAt: new Date().toISOString(),
-          },
-        }, {
-          returnDocument: "after"
-        }
-      );
-
-      if (!result) {
-        return res.status(404).json({
-          error: "Trip not found"
-        });
-      }
-      updated = result;
-    } else {
-      updated = memoryStore.trips.update(existingTrip.id, {
-        userChecklists: updatedUserChecklists,
-        updatedAt: new Date().toISOString(),
+    if (!updated) {
+      return res.status(404).json({
+        error: "Trip not found"
       });
     }
 
-    res.json(
-      tripService.filterChecklistsForResponse(
-        tripService.attachAccessFlags(tripService.normalizeDocument(updated), req.user.id),
-        req.user.id
-      )
-    );
+    res.json(formatTripForClient(updated, req.user));
   } catch (error) {
     console.error("Error updating user checklist:", error);
     res
@@ -878,8 +910,9 @@ export default router;
  * POST /api/trips/:id/flights       -> add a flight segment
  * POST /api/trips/:id/hotels        -> add a hotel booking
  * POST /api/trips/:id/rides         -> add a ride leg
- * POST /api/trips/:id/attractions   -> add an attraction visit
- * DELETE /api/trips/:id/:type/:idx  -> remove by index (type in flights|hotels|rides|attractions)
+ * POST /api/trips/:id/attractions              -> add an attraction visit
+ * PATCH /api/trips/:id/attractions/:itemId     -> partial-update an attraction by id
+ * DELETE /api/trips/:id/:type/:idx             -> remove by index (type in flights|hotels|rides|attractions)
  */
 
 router.post("/:id/flights", async (req, res) => {
@@ -1044,22 +1077,24 @@ router.post("/:id/hotels", async (req, res) => {
   const costAmount = parseFloat(hotel.cost);
   
   if (hotel.cost && costAmount > 0) {
-    const hotelExpense = {
+    const hotelExpense = persistResolvedSplits({
       id: `expense-${Date.now()}`,
       title: hotel.name,
       description: "Hotel booking",
       amount: costAmount,
-      category: "Accommodation",
+      currency: inferHotelExpenseCurrency(trip, hotel),
+      category: "hotel",
       date: hotel.checkIn,
       paidBy: req.user.id,
       splits: [{
-        userId: req.user.id
+        userId: req.user.id,
+        amount: costAmount,
       }],
       splitMethod: "equal",
       createdBy: req.user.id,
       createdAt: new Date().toISOString(),
       linkedHotelId: hotel.id,
-    };
+    });
     expenses.push(hotelExpense);
   }
 
@@ -1135,22 +1170,30 @@ router.put("/:id/hotels/:idx", async (req, res) => {
   const costAmount = parseFloat(hotel.cost);
   if (hotel.cost && costAmount > 0) {
     // Hotel has cost - update or create expense
-    const hotelExpense = {
-      id: expenseIndex >= 0 ? expenses[expenseIndex].id : `expense-${Date.now()}`,
+    const existingHotelExpense =
+      expenseIndex >= 0 ? expenses[expenseIndex] : null;
+    const hotelExpense = persistResolvedSplits({
+      id: existingHotelExpense?.id || `expense-${Date.now()}`,
       title: hotel.name,
       description: "Hotel booking",
       amount: costAmount,
-      category: "Accommodation",
+      currency: inferHotelExpenseCurrency(trip, hotel, existingHotelExpense),
+      category: ["food", "hotel", "flight", "ride", "activity", "shopping", "other"].includes(
+        existingHotelExpense?.category,
+      )
+        ? existingHotelExpense.category
+        : "hotel",
       date: hotel.checkIn,
-      paidBy: expenseIndex >= 0 ? expenses[expenseIndex].paidBy : req.user.id,
-      splits: expenseIndex >= 0 ? expenses[expenseIndex].splits : [{
-        userId: req.user.id
+      paidBy: existingHotelExpense?.paidBy || req.user.id,
+      splits: existingHotelExpense?.splits || [{
+        userId: req.user.id,
+        amount: costAmount,
       }],
-      splitMethod: expenseIndex >= 0 ? expenses[expenseIndex].splitMethod : "equal",
-      createdBy: expenseIndex >= 0 ? expenses[expenseIndex].createdBy : req.user.id,
-      createdAt: expenseIndex >= 0 ? expenses[expenseIndex].createdAt : new Date().toISOString(),
+      splitMethod: existingHotelExpense?.splitMethod || "equal",
+      createdBy: existingHotelExpense?.createdBy || req.user.id,
+      createdAt: existingHotelExpense?.createdAt || new Date().toISOString(),
       linkedHotelId: hotelId,
-    };
+    });
 
     if (expenseIndex >= 0) {
       expenses[expenseIndex] = hotelExpense;
@@ -1205,7 +1248,16 @@ router.post("/:id/rides", async (req, res) => {
     return;
   // Optional pickupDateTime/dropoffDateTime (stored as-is) let the ride be
   // ordered in the timeline; without them it falls into the unscheduled bucket.
+  if (!ride.id) ride.id = randomUUID();
   trip.rides.push(ride);
+
+  const rideDraft = upsertDraftItemExpense(trip, {
+    item: ride,
+    itemType: "ride",
+    category: "ride",
+    createdBy: req.user.id,
+  });
+  trip.expenses = rideDraft.expenses;
 
   const collection = getTripsCollection();
   let updated;
@@ -1215,6 +1267,7 @@ router.post("/:id/rides", async (req, res) => {
     }, {
       $set: {
         rides: trip.rides,
+        expenses: trip.expenses,
         updatedAt: new Date().toISOString()
       }
     });
@@ -1223,7 +1276,8 @@ router.post("/:id/rides", async (req, res) => {
     });
   } else {
     updated = memoryStore.trips.update(trip.id, {
-      rides: trip.rides
+      rides: trip.rides,
+      expenses: trip.expenses,
     });
   }
 
@@ -1244,6 +1298,7 @@ router.post("/:id/attractions", async (req, res) => {
   // client explicitly forces the save (?force=true or body.force).
   const force = req.query.force === "true" || attraction.force === true;
   delete attraction.force;
+  if (!attraction.id) attraction.id = randomUUID();
 
   // Upsert: if the same place (or name) is already on the trip, update it in
   // place instead of creating a duplicate.
@@ -1272,16 +1327,28 @@ router.post("/:id/attractions", async (req, res) => {
   )
     return;
 
+  let stored = attraction;
   if (existingIndex >= 0) {
     const prev = trip.attractions[existingIndex];
-    trip.attractions[existingIndex] = {
+    stored = {
       ...prev,
       ...attraction,
       id: prev.id || attraction.id,
     };
+    trip.attractions[existingIndex] = stored;
   } else {
     trip.attractions.push(attraction);
   }
+
+  const attractionDraft = upsertDraftItemExpense(trip, {
+    item: stored,
+    itemType: "attraction",
+    category: "activity",
+    createdBy: req.user.id,
+  });
+  trip.expenses = attractionDraft.expenses;
+
+  const warnings = detectAttractionWarnings(trip, stored);
 
   const collection = getTripsCollection();
   let updated;
@@ -1291,6 +1358,7 @@ router.post("/:id/attractions", async (req, res) => {
     }, {
       $set: {
         attractions: trip.attractions,
+        expenses: trip.expenses,
         updatedAt: new Date().toISOString(),
       },
     });
@@ -1300,10 +1368,113 @@ router.post("/:id/attractions", async (req, res) => {
   } else {
     updated = memoryStore.trips.update(trip.id, {
       attractions: trip.attractions,
+      expenses: trip.expenses,
     });
   }
 
-  respondWithTimeline(res, updated, 201);
+  respondWithTimeline(res, updated, 201, {
+    warnings
+  });
+});
+
+router.patch("/:id/attractions/:itemId", async (req, res) => {
+  const trip = await getTripOr404(req, res);
+  if (!trip) return;
+
+  const itemId = req.params.itemId;
+  const existingIndex = (trip.attractions || []).findIndex(
+    (a) => a && a.id === itemId
+  );
+  if (existingIndex < 0) {
+    return res.status(404).json({
+      error: "Attraction not found"
+    });
+  }
+
+  const patch = {
+    ...(req.body || {})
+  };
+  const force = req.query.force === "true" || patch.force === true;
+  delete patch.force;
+  delete patch.id;
+  delete patch._id;
+
+  const prev = trip.attractions[existingIndex];
+  const stored = mergeAttractionPatch(prev, patch);
+
+  if (!force) {
+    const conflicts = detectAttractionConflicts(trip, stored, {
+      excludeId: itemId,
+      excludeIndex: existingIndex,
+    });
+    if (conflicts.length > 0) {
+      return res.status(409).json({
+        error: "Schedule conflict",
+        code: "SCHEDULE_CONFLICT",
+        conflicts,
+      });
+    }
+  }
+
+  if (
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [stored.scheduledDateTime, stored.scheduledDate],
+      "Attraction"
+    )
+  )
+    return;
+
+  trip.attractions[existingIndex] = stored;
+
+  const attractionDraft = upsertDraftItemExpense(trip, {
+    item: stored,
+    itemType: "attraction",
+    category: "activity",
+    createdBy: req.user.id,
+  });
+  trip.expenses = attractionDraft.expenses;
+
+  const warnings = detectAttractionWarnings(trip, stored);
+
+  const collection = getTripsCollection();
+  let updated;
+  if (collection) {
+    await collection.updateOne({
+      id: trip.id
+    }, {
+      $set: {
+        attractions: trip.attractions,
+        expenses: trip.expenses,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    updated = await collection.findOne({
+      id: trip.id
+    });
+  } else {
+    updated = memoryStore.trips.update(trip.id, {
+      attractions: trip.attractions,
+      expenses: trip.expenses,
+    });
+  }
+
+  const snapshotTrip = updated || trip;
+  const id = tripIdOf(snapshotTrip);
+  const snapshot = buildPendingSnapshot(snapshotTrip);
+  if (id) {
+    markTripTimelinePending(snapshotTrip)
+      .catch(() => {})
+      .finally(() => scheduleTimelineRebuild(id));
+  }
+  return res.status(200).json({
+    trip: {
+      ...snapshotTrip,
+      timelineSnapshot: snapshot,
+    },
+    warnings,
+  });
 });
 
 router.delete("/:id/:type/:idx", async (req, res) => {
@@ -1325,13 +1496,23 @@ router.delete("/:id/:type/:idx", async (req, res) => {
     });
 
   // If deleting a hotel, also remove its linked expense
-  const expenses = trip.expenses || [];
+  let expenses = trip.expenses || [];
   if (type === "hotels" && trip.hotels[i].id) {
     const hotelId = trip.hotels[i].id;
     const expenseIndex = expenses.findIndex(e => e.linkedHotelId === hotelId);
     if (expenseIndex >= 0) {
       expenses.splice(expenseIndex, 1);
     }
+  }
+  if (type === "attractions" && trip.attractions[i]?.id) {
+    expenses = removeLinkedDraftExpense(
+      expenses,
+      "attraction",
+      trip.attractions[i].id,
+    );
+  }
+  if (type === "rides" && trip.rides[i]?.id) {
+    expenses = removeLinkedDraftExpense(expenses, "ride", trip.rides[i].id);
   }
 
   trip[type].splice(i, 1);
@@ -1374,13 +1555,27 @@ router.post("/:id/expenses", async (req, res) => {
     });
     if (!trip) return;
 
-    // Add expense with metadata
-    const newExpense = {
-      ...expense,
-      id: `expense-${Date.now()}`,
+    if (!expense) {
+      return res.status(400).json({
+        error: "expense is required"
+      });
+    }
+    if (!hasPaidBy(expense.paidBy) && !isDraftExpenseInput(expense)) {
+      return res.status(400).json({
+        error: "paidBy is required"
+      });
+    }
+
+    const { paidBy: incomingPaidBy, ...expenseRest } = expense;
+
+    // Add expense with metadata. Drafts omit paidBy (payment not recorded yet).
+    const newExpense = persistResolvedSplits({
+      ...expenseRest,
+      ...(hasPaidBy(incomingPaidBy) ? { paidBy: incomingPaidBy } : {}),
+      id: `expense-${randomUUID()}`,
       createdBy: req.user.id,
       createdAt: new Date().toISOString(),
-    };
+    });
 
     const expenses = trip.expenses || [];
     expenses.push(newExpense);
@@ -1455,12 +1650,24 @@ router.put("/:id/expenses/:expenseId", async (req, res) => {
         });
     }
 
-    // Update expense
-    expenses[expenseIndex] = {
+    if (
+      expense &&
+      Object.prototype.hasOwnProperty.call(expense, "paidBy") &&
+      !isValidPaidBy(expense.paidBy)
+    ) {
+      return res.status(400).json({
+        error: "paidBy is required"
+      });
+    }
+
+    expenses[expenseIndex] = persistResolvedSplits({
       ...expenses[expenseIndex],
       ...expense,
-      id: req.params.expenseId, // Keep original ID
-    };
+      paidBy: Object.prototype.hasOwnProperty.call(expense || {}, "paidBy")
+        ? expense.paidBy
+        : expenses[expenseIndex].paidBy,
+      id: req.params.expenseId,
+    });
 
     let updated;
     if (collection) {
@@ -1656,79 +1863,93 @@ router.get("/:id/expenses/balances", async (req, res) => {
       });
     }
 
-    // Calculate balances
     const expenses = trip.expenses || [];
-    const participants = {};
 
-    // Initialize participants (owner + shared users with expense access)
-    participants[trip.userId] = {
-      userId: trip.userId,
-      name: trip.userName || "Owner",
-      email: trip.userEmail || "",
-      totalPaid: 0,
-      totalOwed: 0,
-      balance: 0,
+    const emptyParticipants = () => {
+      const participants = {};
+      participants[trip.userId] = {
+        userId: trip.userId,
+        name: trip.userName || "Owner",
+        email: trip.userEmail || "",
+        totalPaid: 0,
+        totalOwed: 0,
+        balance: 0,
+      };
+      trip.sharedWith?.forEach((user) => {
+        if (user.expensePermission && user.expensePermission !== "disable") {
+          participants[user.userId] = {
+            userId: user.userId,
+            name: user.name,
+            email: user.email,
+            totalPaid: 0,
+            totalOwed: 0,
+            balance: 0,
+          };
+        }
+      });
+      return participants;
     };
 
-    trip.sharedWith?.forEach((user) => {
-      if (user.expensePermission && user.expensePermission !== "disable") {
-        participants[user.userId] = {
-          userId: user.userId,
-          name: user.name,
-          email: user.email,
-          totalPaid: 0,
-          totalOwed: 0,
-          balance: 0,
+    const byCurrency = {};
+    expenses.forEach((expense) => {
+      const currency = expenseCurrency(expense);
+      if (!byCurrency[currency]) {
+        byCurrency[currency] = {
+          currency,
+          participants: emptyParticipants(),
+          totalExpenses: 0,
         };
       }
-    });
+      const bucket = byCurrency[currency];
+      if (!isSettlementExpense(expense)) {
+        bucket.totalExpenses = round2(bucket.totalExpenses + (expense.amount || 0));
+      }
 
-    // Calculate totals from expenses
-    expenses.forEach((expense) => {
-      // Add to payer's total paid (handle single or multiple payers)
+      if (!hasPaidBy(expense.paidBy)) {
+        return;
+      }
+
       if (typeof expense.paidBy === "string") {
-        // Single payer
-        if (participants[expense.paidBy]) {
-          participants[expense.paidBy].totalPaid += expense.amount;
+        if (bucket.participants[expense.paidBy]) {
+          bucket.participants[expense.paidBy].totalPaid = round2(
+            bucket.participants[expense.paidBy].totalPaid + expense.amount,
+          );
         }
       } else if (Array.isArray(expense.paidBy)) {
-        // Multiple payers
         expense.paidBy.forEach((payer) => {
-          if (participants[payer.userId]) {
-            participants[payer.userId].totalPaid += payer.amount;
+          if (bucket.participants[payer.userId]) {
+            bucket.participants[payer.userId].totalPaid = round2(
+              bucket.participants[payer.userId].totalPaid + (payer.amount || 0),
+            );
           }
         });
       }
 
-      // Calculate split amounts
-      const splitParticipants = expense.splits;
-      const participantCount = splitParticipants.length;
-
-      splitParticipants.forEach((split) => {
-        if (!participants[split.userId]) return;
-
-        let owedAmount = 0;
-
-        if (expense.splitMethod === "equal") {
-          owedAmount = expense.amount / participantCount;
-        } else if (expense.splitMethod === "custom-amount") {
-          owedAmount = split.amount || 0;
-        } else if (expense.splitMethod === "custom-percentage") {
-          owedAmount = (expense.amount * (split.percentage || 0)) / 100;
-        }
-
-        participants[split.userId].totalOwed += owedAmount;
+      resolveExpenseShares(expense).forEach((share) => {
+        if (!bucket.participants[share.userId]) return;
+        bucket.participants[share.userId].totalOwed = round2(
+          bucket.participants[share.userId].totalOwed + share.amount,
+        );
       });
     });
 
-    // Calculate net balance for each participant
-    Object.values(participants).forEach((p) => {
-      p.balance = p.totalPaid - p.totalOwed;
-    });
+    const currencies = Object.values(byCurrency)
+      .sort((a, b) => a.currency.localeCompare(b.currency))
+      .map((bucket) => {
+        Object.values(bucket.participants).forEach((p) => {
+          p.balance = round2(p.totalPaid - p.totalOwed);
+        });
+        return {
+          currency: bucket.currency,
+          participants: Object.values(bucket.participants),
+          totalExpenses: bucket.totalExpenses,
+        };
+      });
 
     res.json({
-      participants: Object.values(participants),
-      totalExpenses: expenses.reduce((sum, e) => sum + e.amount, 0),
+      currencies,
+      participants: currencies[0]?.participants ?? [],
+      totalExpenses: currencies.length === 1 ? currencies[0].totalExpenses : 0,
     });
   } catch (error) {
     console.error("Error calculating balances:", error);
