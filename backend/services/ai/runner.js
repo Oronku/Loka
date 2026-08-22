@@ -1,9 +1,11 @@
 import { randomUUID } from "crypto";
+import { getDb } from "../../config/database.js";
 import { getOpenAI, CHAT_MODEL } from "./openaiClient.js";
-import { TOOL_DEFINITIONS } from "./tools.js";
+import { READ_ONLY_TOOLS, TOOL_DEFINITIONS } from "./tools.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { newOperation, summarizeOperations, NEW_TRIP_REF } from "./changeset.js";
-import { enrichPlace } from "./places.js";
+import { enrichPlace, normalizeOpeningHours } from "./places.js";
+import { MAX_WEB_SEARCHES_PER_TURN, webSearch } from "./webSearch.js";
 
 const ENTITY_FIELD = {
   flight: "flights",
@@ -12,6 +14,8 @@ const ENTITY_FIELD = {
   attraction: "attractions",
 };
 
+const MAX_READ_ROUNDS = 2;
+
 function nightsBetween(checkIn, checkOut) {
   const a = new Date(checkIn);
   const b = new Date(checkOut);
@@ -19,8 +23,43 @@ function nightsBetween(checkIn, checkOut) {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function resolveTime(args) {
+  const provided = typeof args.time === "string" && args.time.trim();
+  const scheduledTime = provided
+    ? args.time.trim()
+    : args.type === "restaurant"
+      ? "20:00"
+      : "10:00";
+  const timeConfidence =
+    args.timeConfidence === "confirmed" || args.timeConfidence === "guess"
+      ? args.timeConfidence
+      : provided
+        ? "confirmed"
+        : "guess";
+  return { scheduledTime, timeConfidence };
+}
+
 function attractionItem(args, place) {
-  return {
+  const { scheduledTime, timeConfidence } = resolveTime(args);
+  const openingHours =
+    place?.openingHours || normalizeOpeningHours(args.openingHours);
+  const { lat, lng } = (() => {
+    if (place?.lat != null || place?.lng != null) {
+      return { lat: place.lat ?? null, lng: place.lng ?? null };
+    }
+    const loc = place?.location;
+    return { lat: loc?.lat ?? null, lng: loc?.lng ?? null };
+  })();
+
+  const item = {
     id: randomUUID(),
     type: args.type,
     attractionType: args.type,
@@ -28,18 +67,68 @@ function attractionItem(args, place) {
     location: place?.address || args.location || "",
     address: place?.address || args.location || "",
     scheduledDate: args.date || "",
-    scheduledTime: args.time || (args.type === "restaurant" ? "20:00" : "10:00"),
+    scheduledTime,
+    timeConfidence,
+    status:
+      args.status === "planned" || args.status === "booked" ? args.status : "idea",
     notes: args.notes || "",
     rating: place?.rating ?? null,
     placeId: place?.placeId || null,
     photoReference: place?.photoReference || null,
     createdAt: new Date(),
   };
+
+  if (openingHours) item.openingHours = openingHours;
+  const website = args.website || place?.website;
+  if (website) item.website = website;
+  if (args.bookingUrl) item.bookingUrl = args.bookingUrl;
+  else if (args.sourceUrl) item.bookingUrl = args.sourceUrl;
+  if (args.price != null) item.price = args.price;
+  if (args.currency) item.currency = args.currency;
+  if (args.durationMinutes != null) item.durationMinutes = args.durationMinutes;
+  if (args.meetingPoint) item.meetingPoint = args.meetingPoint;
+  if (args.meetingPointPlaceId) item.meetingPointPlaceId = args.meetingPointPlaceId;
+  if (args.confirmationRef) item.confirmationRef = args.confirmationRef;
+  if (lat != null) item.lat = lat;
+  if (lng != null) item.lng = lng;
+
+  return item;
 }
 
 function findItem(trip, entity, itemId) {
   const field = ENTITY_FIELD[entity];
   return (trip?.[field] || []).find((it) => it.id === itemId) || null;
+}
+
+function rationaleFromOperations(operations, sourceUrl) {
+  const cited = operations.find((op) => op.after?.bookingUrl || sourceUrl);
+  const url = sourceUrl || cited?.after?.bookingUrl;
+  if (url) {
+    const name = cited?.after?.name || "this";
+    return `I found hours and a booking link for ${name} on ${hostOf(url)} — because that's their page. You can check it here: ${url}`;
+  }
+
+  const guessed = operations.filter(
+    (op) => op.entity === "attraction" && op.after?.timeConfidence === "guess",
+  );
+  if (guessed.length === 1) {
+    const time = guessed[0].after?.scheduledTime;
+    const name = guessed[0].after?.name || "this";
+    return `${time} is my guess for ${name} — because I couldn't find their hours.`;
+  }
+  return "";
+}
+
+function firstSourceUrl(toolCalls) {
+  for (const call of toolCalls) {
+    const url = call.args?.sourceUrl || call.args?.bookingUrl;
+    if (typeof url === "string" && url.trim()) return url.trim();
+    for (const act of call.args?.activities || []) {
+      const actUrl = act.sourceUrl || act.bookingUrl;
+      if (typeof actUrl === "string" && actUrl.trim()) return actUrl.trim();
+    }
+  }
+  return "";
 }
 
 /**
@@ -54,7 +143,6 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
   let targetTripId = null;
   let createDestination = null;
 
-  // Resolve the target trip id (a create_trip op makes it "new").
   for (const call of toolCalls) {
     const args = call.args;
     if (call.name === "create_trip") {
@@ -81,6 +169,8 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
         ? targetTrip.destinations[0]
         : targetTrip.destinations[0].name
       : null);
+
+  const db = getDb();
 
   for (const call of toolCalls) {
     const a = call.args || {};
@@ -205,7 +295,7 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
         );
         break;
       case "add_attraction": {
-        const place = await enrichPlace(a.name, city);
+        const place = await enrichPlace(a.name, city, db);
         const item = attractionItem(a, place);
         operations.push(
           newOperation({
@@ -219,7 +309,7 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
       }
       case "add_activities": {
         for (const act of a.activities || []) {
-          const place = await enrichPlace(act.name, city);
+          const place = await enrichPlace(act.name, city, db);
           const item = attractionItem(act, place);
           operations.push(
             newOperation({
@@ -234,14 +324,33 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
       }
       case "update_item": {
         const before = findItem(targetTrip, a.entity, a.itemId);
+        const changes = { ...(a.changes || {}) };
+        if (changes.time && !changes.scheduledTime) {
+          changes.scheduledTime = changes.time;
+        }
+        if (changes.sourceUrl && !changes.bookingUrl) {
+          changes.bookingUrl = changes.sourceUrl;
+        }
+        delete changes.sourceUrl;
+        if (
+          changes.scheduledTime &&
+          changes.timeConfidence !== "confirmed" &&
+          changes.timeConfidence !== "guess"
+        ) {
+          changes.timeConfidence = "confirmed";
+        }
+        if (changes.openingHours) {
+          const normalized = normalizeOpeningHours(changes.openingHours);
+          if (normalized) changes.openingHours = normalized;
+        }
         operations.push(
           newOperation({
             op: "update",
             entity: a.entity,
             itemId: a.itemId,
             before,
-            after: a.changes || {},
-            label: `Update ${a.entity}: ${Object.entries(a.changes || {})
+            after: changes,
+            label: `Update ${a.entity}: ${Object.entries(changes)
               .map(([k, v]) => `${k} → ${v}`)
               .join(", ")}`,
           }),
@@ -261,12 +370,69 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
         );
         break;
       }
-      default:
+      case "web_search":
         break;
+      default: {
+        const _exhaustive = call.name;
+        void _exhaustive;
+        break;
+      }
     }
   }
 
-  return { operations, createsTrip, tripName, targetTripId };
+  return {
+    operations,
+    createsTrip,
+    tripName,
+    targetTripId,
+    rationale: rationaleFromOperations(operations, firstSourceUrl(toolCalls)),
+  };
+}
+
+function toApiToolCalls(toolCalls) {
+  return toolCalls.map((t, i) => ({
+    id: t.id || `call_${i}_${t.name || "tool"}`,
+    type: "function",
+    function: {
+      name: t.name,
+      arguments: JSON.stringify(t.args || {}),
+    },
+  }));
+}
+
+async function runReadOnlyTools(toolCalls, searchesUsed) {
+  const messages = [];
+  let used = searchesUsed;
+
+  for (const call of toolCalls) {
+    const id = call.id || `call_${used}_${call.name || "tool"}`;
+    if (call.name !== "web_search") continue;
+
+    let payload;
+    if (used >= MAX_WEB_SEARCHES_PER_TURN) {
+      payload = {
+        ok: false,
+        error: "limit",
+        text: "",
+        citations: [],
+      };
+    } else {
+      used += 1;
+      try {
+        payload = await webSearch(call.args?.query);
+      } catch {
+        payload = { ok: false, error: "failed", text: "", citations: [] };
+      }
+    }
+
+    messages.push({
+      role: "tool",
+      tool_call_id: id,
+      content: JSON.stringify(payload),
+    });
+  }
+
+  return { messages, searchesUsed: used };
 }
 
 /**
@@ -282,7 +448,7 @@ async function streamCompletion(openai, messages, { tools, onToken }) {
   });
 
   let content = "";
-  const toolAcc = []; // index -> { name, arguments }
+  const toolAcc = [];
 
   for await (const chunk of stream) {
     const delta = chunk.choices?.[0]?.delta;
@@ -294,7 +460,8 @@ async function streamCompletion(openai, messages, { tools, onToken }) {
     if (delta.tool_calls) {
       for (const tc of delta.tool_calls) {
         const idx = tc.index ?? 0;
-        if (!toolAcc[idx]) toolAcc[idx] = { name: "", arguments: "" };
+        if (!toolAcc[idx]) toolAcc[idx] = { id: "", name: "", arguments: "" };
+        if (tc.id) toolAcc[idx].id = tc.id;
         if (tc.function?.name) toolAcc[idx].name = tc.function.name;
         if (tc.function?.arguments) toolAcc[idx].arguments += tc.function.arguments;
       }
@@ -303,16 +470,34 @@ async function streamCompletion(openai, messages, { tools, onToken }) {
 
   const toolCalls = toolAcc
     .filter(Boolean)
-    .map((t) => {
+    .map((t, i) => {
+      let args = {};
       try {
-        return { name: t.name, args: JSON.parse(t.arguments || "{}") };
+        args = JSON.parse(t.arguments || "{}");
       } catch {
-        return { name: t.name, args: {} };
+        args = {};
       }
+      return {
+        id: t.id || `call_${i}_${t.name || "tool"}`,
+        name: t.name,
+        args,
+      };
     });
 
   return { content, toolCalls };
 }
+
+function splitToolCalls(toolCalls) {
+  const reads = [];
+  const writes = [];
+  for (const call of toolCalls) {
+    if (READ_ONLY_TOOLS.has(call.name)) reads.push(call);
+    else writes.push(call);
+  }
+  return { reads, writes };
+}
+
+const UNCONFIGURED_TEXT = "I lost my signal for a sec — try me again?";
 
 /**
  * Run one assistant turn.
@@ -323,7 +508,7 @@ async function streamCompletion(openai, messages, { tools, onToken }) {
  * @param {object|null} args.profile  user memory/profile (Milestone 2)
  * @param {string|null} args.activeTripId  trip the user is viewing
  * @param {(delta: string) => void} [args.onToken]  streaming callback
- * @returns {Promise<{ text: string, operations: object[], summary: string, createsTrip: boolean, tripName: string, targetTripId: string|null }>}
+ * @returns {Promise<{ text: string, operations: object[], summary: string, rationale: string, createsTrip: boolean, tripName: string, targetTripId: string|null }>}
  */
 export async function runAssistant({
   history = [],
@@ -337,9 +522,10 @@ export async function runAssistant({
   const openai = getOpenAI();
   if (!openai) {
     return {
-      text: "AI is not configured right now. Please add an OpenAI API key.",
+      text: UNCONFIGURED_TEXT,
       operations: [],
       summary: "",
+      rationale: "",
       createsTrip: false,
       tripName: "",
       targetTripId: null,
@@ -353,50 +539,80 @@ export async function runAssistant({
     isGroupChat,
     groupParticipants,
   });
-  const baseMessages = [{ role: "system", content: system }, ...history];
+  let messages = [{ role: "system", content: system }, ...history];
 
-  // First pass: stream with tools. Text streams live; tool calls accumulate.
-  const first = await streamCompletion(openai, baseMessages, {
+  let last = await streamCompletion(openai, messages, {
     tools: TOOL_DEFINITIONS,
     onToken,
   });
 
-  if (first.toolCalls.length === 0) {
+  let searchesUsed = 0;
+  for (let round = 0; round < MAX_READ_ROUNDS; round += 1) {
+    const { reads } = splitToolCalls(last.toolCalls);
+    if (reads.length === 0) break;
+
+    const apiCalls = toApiToolCalls(reads);
+    messages = [
+      ...messages,
+      {
+        role: "assistant",
+        content: last.content || null,
+        tool_calls: apiCalls,
+      },
+    ];
+
+    const executed = await runReadOnlyTools(
+      reads.map((call, i) => ({ ...call, id: apiCalls[i].id })),
+      searchesUsed,
+    );
+    searchesUsed = executed.searchesUsed;
+    messages = [...messages, ...executed.messages];
+
+    last = await streamCompletion(openai, messages, {
+      tools: TOOL_DEFINITIONS,
+      onToken,
+    });
+  }
+
+  const { writes } = splitToolCalls(last.toolCalls);
+  if (writes.length === 0) {
     return {
-      text: first.content || "How can I help with your trip?",
+      text: last.content || "How can I help with your trip?",
       operations: [],
       summary: "",
+      rationale: "",
       createsTrip: false,
       tripName: "",
       targetTripId: activeTripId,
     };
   }
 
-  // Tools were called: build the proposed changeset, then produce a natural
-  // language reply that references the proposal (second streaming pass).
-  const built = await buildOperations(first.toolCalls, { trips, activeTripId });
+  const built = await buildOperations(writes, { trips, activeTripId });
 
-  const toolEcho = first.toolCalls
+  const toolEcho = writes
     .map((c) => `${c.name}(${JSON.stringify(c.args)})`)
     .join("; ");
 
   const followupMessages = [
-    ...baseMessages,
+    ...messages,
     {
       role: "system",
       content:
-        `You proposed these changes (they are now shown to the user as a reviewable diff card with Apply/Reject): ${toolEcho}. ` +
+        `You proposed these changes (they are now shown to the user as a reviewable card with Apply/Reject): ${toolEcho}. ` +
+        (built.rationale ? `Card note: ${built.rationale} ` : "") +
         `Write a short, friendly natural-language reply (1-3 sentences) describing what you proposed. ` +
-        `Do NOT ask for confirmation — the diff card handles that. Do not list every field; the card shows details.`,
+        `One idea, with a because. If a time is a guess, say so. If you used a web page, name it so they can check. ` +
+        `Do NOT ask for confirmation — the card handles that. Do not list every field; the card shows details.`,
     },
   ];
 
   const second = await streamCompletion(openai, followupMessages, { tools: null, onToken });
 
   return {
-    text: second.content || "Here's what I'd change — review the diff and apply when ready.",
+    text: second.content || "Here's what I'd change — review the card and apply when ready.",
     operations: built.operations,
     summary: summarizeOperations(built.operations),
+    rationale: built.rationale || "",
     createsTrip: built.createsTrip,
     tripName: built.tripName,
     targetTripId: built.targetTripId,

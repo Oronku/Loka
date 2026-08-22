@@ -1,10 +1,11 @@
 import { ObjectId } from "mongodb";
+import { buildIdQuery, isOwner, isParticipant } from "../trip.service.js";
 import { runAssistant } from "./runner.js";
 import { createChangeSet, PROPOSALS_COLLECTION } from "./changeset.js";
 import { getUserProfile, maybeUpdateProfile } from "./memory.js";
 import { messageToContextLine, messageToGroupHistoryLine, sanitizeLokaReplyText } from "./messageFormat.js";
 
-const AI_WELCOME = `Hey! I'm Loka 👋
+export const AI_WELCOME = `Hey! I'm Loka 👋
 
 Tell me where you want to go (or what to change about a trip) and I'll handle the rest — flights, hotels, places to eat, the lot. I'll show you exactly what I'm changing before anything sticks.
 
@@ -308,6 +309,7 @@ export async function generateAiReply(db, {
       chatId,
       userId,
       source: "chat",
+      rationale: result.rationale,
       operations: result.operations,
     });
   }
@@ -410,6 +412,157 @@ export async function listAiTripConversations(db, userId, tripId) {
   }));
 }
 
+const TITLE_MAX = 60;
+
+function isWelcomeText(text) {
+  return String(text).trim() === AI_WELCOME.trim();
+}
+
+function truncateTitle(text) {
+  const trimmed = String(text).trim();
+  if (trimmed.length <= TITLE_MAX) return trimmed;
+  return `${trimmed.slice(0, TITLE_MAX).trim()}…`;
+}
+
+function titleFromHistory(history, providedTitle) {
+  if (providedTitle && String(providedTitle).trim()) {
+    return String(providedTitle).trim();
+  }
+  const firstUser = (history || []).find(
+    (item) => item?.role === "user" && String(item.content || "").trim(),
+  );
+  if (!firstUser) return "New chat";
+  return truncateTitle(firstUser.content);
+}
+
+function parseHistoryTimestamp(value, fallback) {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
+/**
+ * Persist an ephemeral (no-trip) Loka conversation onto a trip as a new
+ * `ai_assistant_trip` thread. Relinks orphan proposals for that user+trip.
+ *
+ * @param {object} db
+ * @param {{ id: string, email?: string, name?: string }} user
+ * @param {object} opts
+ * @param {string} opts.tripId
+ * @param {{ role: "user"|"assistant", content: string, timestamp?: string }[]} [opts.history]
+ * @param {string} [opts.title]
+ * @returns {Promise<
+ *   | { ok: true, chatId: string, title: string, tripId: string, conversation: object }
+ *   | { ok: false, status: number, error: string }
+ * >}
+ */
+export async function attachEphemeralToTrip(db, user, { tripId, history = [], title } = {}) {
+  if (!tripId) {
+    return { ok: false, status: 400, error: "tripId is required" };
+  }
+
+  const trip = await db.collection("trips").findOne(buildIdQuery(tripId));
+  if (!trip) {
+    return { ok: false, status: 404, error: "Trip not found" };
+  }
+  if (!isOwner(trip, user.id) && !isParticipant(trip, user.id)) {
+    return { ok: false, status: 403, error: "Not a trip member" };
+  }
+
+  const items = Array.isArray(history) ? history : [];
+  const chat = await createAiTripConversation(db, user.id, tripId);
+  const chatId = chat._id.toString();
+  const resolvedTitle = titleFromHistory(items, title);
+
+  const welcomeAt =
+    chat.lastMessageAt instanceof Date ? chat.lastMessageAt.getTime() : Date.now();
+  let nextMs = welcomeAt + 1;
+  let sawFirstAssistant = false;
+  const toInsert = [];
+
+  for (const item of items) {
+    const role = item?.role;
+    const content = typeof item?.content === "string" ? item.content : "";
+    if (!content.trim()) continue;
+    if (role !== "user" && role !== "assistant") continue;
+
+    if (role === "assistant" && !sawFirstAssistant) {
+      sawFirstAssistant = true;
+      if (isWelcomeText(content)) continue;
+    }
+
+    const fallback = new Date(nextMs);
+    let timestamp = parseHistoryTimestamp(item.timestamp, fallback);
+    if (timestamp.getTime() < nextMs) timestamp = fallback;
+    nextMs = timestamp.getTime() + 1;
+
+    if (role === "user") {
+      toInsert.push({
+        chatId,
+        senderId: user.id,
+        senderEmail: user.email,
+        senderName: user.name,
+        text: content,
+        timestamp,
+        readBy: [{ userId: user.id, readAt: timestamp }],
+      });
+    } else {
+      toInsert.push({
+        chatId,
+        senderId: "loka-bot",
+        senderName: "Loka",
+        text: content,
+        timestamp,
+        readBy: [],
+      });
+    }
+  }
+
+  if (toInsert.length > 0) {
+    await db.collection("messages").insertMany(toInsert);
+  }
+
+  const lastInserted = toInsert[toInsert.length - 1];
+  const lastMessage = lastInserted
+    ? String(lastInserted.text || "").slice(0, 120)
+    : chat.lastMessage;
+  const lastMessageAt = lastInserted ? lastInserted.timestamp : chat.lastMessageAt;
+  const updatedAt = lastMessageAt || new Date();
+
+  await db.collection("chats").updateOne(
+    { _id: chat._id },
+    {
+      $set: {
+        lastMessage,
+        lastMessageAt,
+        updatedAt,
+        title: resolvedTitle,
+      },
+    },
+  );
+
+  await db.collection(PROPOSALS_COLLECTION).updateMany(
+    {
+      userId: user.id,
+      tripId,
+      $or: [{ chatId: null }, { chatId: { $exists: false } }],
+    },
+    { $set: { chatId } },
+  );
+
+  const conversation = {
+    _id: chatId,
+    tripId,
+    title: resolvedTitle,
+    createdAt: chat.createdAt,
+    updatedAt,
+    lastMessage,
+    lastMessageAt,
+  };
+
+  return { ok: true, chatId, title: resolvedTitle, tripId, conversation };
+}
+
 /**
  * Ownership-checked lookup for a user's AI chat (global or per-trip).
  *
@@ -483,6 +636,7 @@ export async function generateEphemeralAiReply(db, { user, userMessage, history 
       chatId: null,
       userId,
       source: "chat",
+      rationale: result.rationale,
       operations: result.operations,
     });
   }

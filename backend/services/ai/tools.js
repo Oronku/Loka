@@ -12,6 +12,26 @@ const tripIdParam = {
     "Target trip id. Use the literal string \"__new__\" when the item belongs to a trip being created in this same turn.",
 };
 
+export const READ_ONLY_TOOLS = new Set(["web_search"]);
+
+const timeConfidenceParam = {
+  type: "string",
+  enum: ["confirmed", "guess"],
+  description:
+    "confirmed = the user said this time, or you looked it up from a real page or opening hours. guess = you are inferring a typical hour. Omit time and set this to guess when you do not actually know.",
+};
+
+const bookingUrlParam = {
+  type: "string",
+  description: "Official booking or ticket URL when you found one.",
+};
+
+const sourceUrlParam = {
+  type: "string",
+  description:
+    "The page you used to confirm hours, prices, or booking. Must be a real URL from web_search citations — never invent it.",
+};
+
 export const TOOL_DEFINITIONS = [
   {
     type: "function",
@@ -143,7 +163,18 @@ export const TOOL_DEFINITIONS = [
           name: { type: "string" },
           location: { type: "string" },
           date: { type: "string", description: "YYYY-MM-DD" },
-          time: { type: "string", description: "HH:MM" },
+          time: {
+            type: "string",
+            description:
+              "HH:MM. Omit if you do not know a real time — a default will be proposed and marked as a guess.",
+          },
+          timeConfidence: timeConfidenceParam,
+          bookingUrl: bookingUrlParam,
+          sourceUrl: sourceUrlParam,
+          price: { type: "number", description: "Price amount when you found one" },
+          currency: { type: "string", description: "ISO currency code, e.g. HUF, EUR" },
+          durationMinutes: { type: "number" },
+          website: { type: "string" },
           notes: { type: "string" },
         },
         required: ["tripId", "type", "name"],
@@ -169,7 +200,18 @@ export const TOOL_DEFINITIONS = [
                 name: { type: "string" },
                 location: { type: "string" },
                 date: { type: "string", description: "YYYY-MM-DD" },
-                time: { type: "string", description: "HH:MM" },
+                time: {
+                  type: "string",
+                  description:
+                    "HH:MM. Omit if you do not know a real time — a default will be proposed and marked as a guess.",
+                },
+                timeConfidence: timeConfidenceParam,
+                bookingUrl: bookingUrlParam,
+                sourceUrl: sourceUrlParam,
+                price: { type: "number" },
+                currency: { type: "string" },
+                durationMinutes: { type: "number" },
+                website: { type: "string" },
                 notes: { type: "string" },
               },
               required: ["type", "name"],
@@ -194,7 +236,8 @@ export const TOOL_DEFINITIONS = [
           itemId: { type: "string", description: "id of the existing item to edit" },
           changes: {
             type: "object",
-            description: "Key/value fields to change, e.g. { \"scheduledTime\": \"21:00\" }",
+            description:
+              "Key/value fields to change, e.g. { \"scheduledTime\": \"21:00\", \"timeConfidence\": \"confirmed\", \"bookingUrl\": \"https://…\" }",
             additionalProperties: true,
           },
         },
@@ -215,6 +258,25 @@ export const TOOL_DEFINITIONS = [
           itemId: { type: "string", description: "id of the existing item to remove" },
         },
         required: ["tripId", "entity", "itemId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description:
+        "Look up live tour operating hours, available dates, prices, and official booking links. Read-only — does not change the trip. Use the citations to propose add_attraction or update_item with a real time (timeConfidence confirmed), bookingUrl, and the source page.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Search query, e.g. \"Hungarian Parliament tour hours prices booking\".",
+          },
+        },
+        required: ["query"],
       },
     },
   },

@@ -2,6 +2,7 @@ import express from "express";
 import { getDb } from "../config/database.js";
 import { verifyGoogleToken } from "../middleware/auth.js";
 import {
+  attachEphemeralToTrip,
   createAiTripConversation,
   listAiTripConversations,
   getAiChatForUser,
@@ -211,6 +212,37 @@ router.get("/conversations", async (req, res) => {
   }
 });
 
+/**
+ * Promote an ephemeral (no-trip) conversation onto a trip as a persisted thread.
+ * Body: { tripId: string, history?: Array<{ role, content, timestamp? }>, title?: string }
+ */
+router.post("/conversations/attach", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  const { tripId, history, title } = req.body || {};
+  if (!tripId) return res.status(400).json({ error: "tripId is required" });
+
+  try {
+    const result = await attachEphemeralToTrip(db, req.user, {
+      tripId,
+      history: Array.isArray(history) ? history : [],
+      title,
+    });
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.status(201).json({
+      chatId: result.chatId,
+      title: result.title,
+      tripId: result.tripId,
+      conversation: result.conversation,
+    });
+  } catch (error) {
+    console.error("[assistant/conversations/attach] error:", error);
+    res.status(500).json({ error: "Failed to attach conversation" });
+  }
+});
+
 /** Delete a per-trip AI conversation thread. */
 router.delete("/conversations/:chatId", async (req, res) => {
   const db = getDb();
@@ -230,7 +262,12 @@ router.post("/proposals/:id/apply", async (req, res) => {
   const db = getDb();
   try {
     const result = await applyChangeSet(db, req.params.id, req.user);
-    if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+    if (!result.ok) {
+      const body = { error: result.error };
+      if (result.code) body.code = result.code;
+      if (result.failedOps) body.failedOps = result.failedOps;
+      return res.status(result.status || 400).json(body);
+    }
     await syncEmbeddedChangeSetStatus(db, req.params.id, "applied");
     res.json({ trip: result.trip, changeSet: result.changeSet });
   } catch (error) {

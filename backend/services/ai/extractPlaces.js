@@ -128,6 +128,8 @@ export async function enrichCandidates(places, primaryCity = null) {
         placeId: enriched?.placeId || null,
         address: enriched?.address || null,
         location: enriched?.location || null,
+        lat: enriched?.lat ?? enriched?.location?.lat ?? null,
+        lng: enriched?.lng ?? enriched?.location?.lng ?? null,
         photoReference: enriched?.photoReference || null,
         imageUrl: enriched?.photoReference
           ? googleApi.getPhotoUrl(enriched.photoReference, 800)

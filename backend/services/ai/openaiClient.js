@@ -5,6 +5,7 @@ let client = null;
 /**
  * Lazily construct a single shared OpenAI client. Returns null when no API key
  * is configured so callers can degrade gracefully instead of crashing.
+ * Shared by chat completions and hosted web search (`client.responses.create`).
  * @returns {OpenAI|null}
  */
 export function getOpenAI() {
