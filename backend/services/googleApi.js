@@ -65,6 +65,7 @@ class GoogleAPIService {
       "opening_hours",
       "photos",
       "reviews",
+      "current_opening_hours",
     ],
     language = "en"
   ) {

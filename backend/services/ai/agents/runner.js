@@ -8,8 +8,9 @@ import {
 } from "../changeset.js";
 import { createNotification } from "../notifications.js";
 import { AGENTS } from "./registry.js";
+import { AGENT_RUNS_COLLECTION } from "./locks.js";
 
-export const AGENT_RUNS_COLLECTION = "ai_agent_runs";
+export { AGENT_RUNS_COLLECTION };
 
 /** A trip is "active" for agents if it hasn't ended yet (string ISO compare). */
 function isActiveTrip(trip, now) {
