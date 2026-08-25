@@ -118,7 +118,7 @@ async function withTimelineSnapshot(trip) {
  * the rebuild window reflects the latest items (never stale) and is clearly
  * flagged as still calculating; clients re-fetch until `pending` is false.
  */
-function respondWithTimeline(res, trip, status = 200, extra) {
+function respondWithTimeline(req, res, trip, status = 200, extra) {
   const id = tripIdOf(trip);
   const snapshot = buildPendingSnapshot(trip);
   if (id) {
@@ -126,8 +126,13 @@ function respondWithTimeline(res, trip, status = 200, extra) {
       .catch(() => {})
       .finally(() => scheduleTimelineRebuild(id));
   }
+  const withAccess = tripService.attachAccessFlags(
+    trip,
+    req.user.id,
+    req.user.email,
+  );
   return res.status(status).json({
-    ...trip,
+    ...withAccess,
     timelineSnapshot: snapshot,
     ...extra,
   });
@@ -963,7 +968,7 @@ router.post("/:id/flights", async (req, res) => {
     });
   }
 
-  respondWithTimeline(res, updated, 201);
+  respondWithTimeline(req, res, updated, 201);
 });
 
 router.get("/:id/flights/:flightId/price", async (req, res) => {
@@ -1118,7 +1123,7 @@ router.post("/:id/hotels", async (req, res) => {
     });
   }
 
-  respondWithTimeline(res, updated, 201);
+  respondWithTimeline(req, res, updated, 201);
 });
 
 router.put("/:id/hotels/:idx", async (req, res) => {
@@ -1225,7 +1230,7 @@ router.put("/:id/hotels/:idx", async (req, res) => {
     });
   }
 
-  respondWithTimeline(res, updated, 200);
+  respondWithTimeline(req, res, updated, 200);
 });
 
 router.post("/:id/rides", async (req, res) => {
@@ -1281,7 +1286,7 @@ router.post("/:id/rides", async (req, res) => {
     });
   }
 
-  respondWithTimeline(res, updated, 201);
+  respondWithTimeline(req, res, updated, 201);
 });
 
 router.post("/:id/attractions", async (req, res) => {
@@ -1372,7 +1377,7 @@ router.post("/:id/attractions", async (req, res) => {
     });
   }
 
-  respondWithTimeline(res, updated, 201, {
+  respondWithTimeline(req, res, updated, 201, {
     warnings
   });
 });
@@ -1537,7 +1542,7 @@ router.delete("/:id/:type/:idx", async (req, res) => {
     });
   }
 
-  respondWithTimeline(res, updated, 200);
+  respondWithTimeline(req, res, updated, 200);
 });
 
 // ============= EXPENSE MANAGEMENT ENDPOINTS =============
