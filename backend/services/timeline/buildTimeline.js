@@ -128,6 +128,15 @@ function attractionBounds(attraction) {
   return { start, end: start };
 }
 
+/** Ideas / notes stay on the trip document but never become itinerary events. */
+function isIdeaAttraction(attraction) {
+  if (!attraction || typeof attraction !== "object") return false;
+  if (attraction.type === "note" || attraction.attractionType === "note") return true;
+  if (attraction.status === "idea") return true;
+  if (!attraction.status && !attraction.scheduledDate) return true;
+  return false;
+}
+
 function pushEvent(target, event) {
   if (Number.isNaN(event.sortKey)) {
     target.unscheduled.push({ ...event, sortKey: null });
@@ -269,6 +278,7 @@ export function buildTimeline(trip) {
   });
 
   (trip.attractions || []).forEach((attraction, sourceIndex) => {
+    if (isIdeaAttraction(attraction)) return;
     const { start, end } = attractionBounds(attraction);
     const sortSource =
       attraction.scheduledDateTime || attraction.scheduledDate || start;

@@ -367,6 +367,15 @@ export function findAttractionIndex(trip, candidate) {
   });
 }
 
+/** Ideas / notes stay on the trip document but never become itinerary events. */
+function isIdeaAttraction(attraction) {
+  if (!attraction || typeof attraction !== "object") return false;
+  if (attraction.type === "note" || attraction.attractionType === "note") return true;
+  if (attraction.status === "idea") return true;
+  if (!attraction.status && !attraction.scheduledDate) return true;
+  return false;
+}
+
 function isoFromDateAndClock(date, hhmm) {
   const min = toMinutes(hhmm);
   if (!date) return undefined;
@@ -426,6 +435,7 @@ export function buildTimelineSnapshot(trip) {
   });
 
   (trip.attractions || []).forEach((attraction, sourceIndex) => {
+    if (isIdeaAttraction(attraction)) return;
     const win = attractionWindow(attraction);
     if (!win) {
       unscheduled.push({
