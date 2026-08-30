@@ -6,17 +6,13 @@
  */
 
 import { buildIdQuery } from "../trip.service.js";
+import { ARRAY_ENTITY_FIELD } from "./entityFields.js";
 
 const PROPOSALS_COLLECTION = "ai_proposals";
 
 export const REJECTED_DEDUP_MS = 7 * 24 * 60 * 60 * 1000;
 
-const ENTITY_FIELD = {
-  flight: "flights",
-  hotel: "hotels",
-  ride: "rides",
-  attraction: "attractions",
-};
+const ENTITY_FIELD = ARRAY_ENTITY_FIELD;
 
 const VOLATILE_AFTER_KEYS = new Set(["id", "createdAt", "updatedAt"]);
 
@@ -79,6 +75,10 @@ export function fieldSetKey(after) {
   return Object.keys(stripVolatileAfter(after) || {}).sort().join(",");
 }
 
+function normalizeChecklistText(text) {
+  return typeof text === "string" ? text.trim().replace(/\s+/g, " ").toLowerCase() : "";
+}
+
 export function opAnchors(op) {
   const ids = new Set();
   if (!op) return ids;
@@ -89,6 +89,13 @@ export function opAnchors(op) {
   if (before.placeId) ids.add(String(before.placeId));
   if (op.op !== "add" && after.id) ids.add(String(after.id));
   if (before.id) ids.add(String(before.id));
+  if (after.text) ids.add(`text:${normalizeChecklistText(after.text)}`);
+  if (after.isPlaceholder && after.scheduledDate && after.scheduledTime) {
+    ids.add(`slot:${after.scheduledDate}|${after.scheduledTime}`);
+  }
+  if (after.placeholder && after.scheduledDate && after.scheduledTime) {
+    ids.add(`slot:${after.scheduledDate}|${after.scheduledTime}`);
+  }
   return ids;
 }
 
@@ -144,6 +151,18 @@ export function afterAlreadyPresent(current, after) {
 export function operationFingerprint(tripId, op) {
   const entity = op?.entity || "";
   const kind = op?.op || "";
+  if (entity === "checklist" && kind === "add") {
+    const text = normalizeChecklistText(op?.after?.text);
+    return `${tripId || ""}|checklist|add|${text}`;
+  }
+  if (entity === "budget" && kind === "update") {
+    return `${tripId || ""}|budget|update|${stableSerialize(stripVolatileAfter(op.after))}`;
+  }
+  if (entity === "attraction" && kind === "add" && (op?.after?.isPlaceholder || op?.after?.placeholder)) {
+    const date = op.after.scheduledDate || "";
+    const time = op.after.scheduledTime || "";
+    return `${tripId || ""}|attraction|add|slot|${date}|${time}`;
+  }
   if (kind === "add" && !op?.itemId) {
     return `${tripId || ""}|${entity}|add|${stableSerialize(stripVolatileAfter(op.after))}`;
   }
@@ -165,9 +184,85 @@ function findTripItem(trip, entity, anchors) {
       if (el.id && anchors.has(String(el.id))) return true;
       if (el._id != null && anchors.has(String(el._id))) return true;
       if (el.placeId && anchors.has(String(el.placeId))) return true;
+      if (el.text && anchors.has(`text:${normalizeChecklistText(el.text)}`)) return true;
       return false;
     }) || null
   );
+}
+
+function tripHasPlaceholderSlot(trip, after) {
+  if (!trip || !after?.scheduledDate || !after?.scheduledTime) return false;
+  return (trip.attractions || []).some(
+    (el) =>
+      el?.scheduledDate === after.scheduledDate &&
+      el?.scheduledTime === after.scheduledTime,
+  );
+}
+
+export function isSkeletonProposal(operations = [], grouping = null) {
+  if (grouping === "byDay") return true;
+  const ops = operations || [];
+  return ops.length >= 3 && ops.every((op) => op?.entity === "attraction" && op?.op === "add" && op?.groupKey);
+}
+
+/**
+ * Reject older pending skeleton plans for the same trip so they do not stack.
+ */
+export async function supersedePendingSkeleton(db, { userId, tripId, now = new Date() }) {
+  if (!db || !userId || !tripId) return 0;
+  const pending = await findProposals(db, { userId, tripId, status: "pending", grouping: "byDay" }, {
+    sort: { createdAt: -1 },
+    limit: 20,
+  });
+  if (pending.length === 0) return 0;
+  const result = await db.collection(PROPOSALS_COLLECTION).updateMany(
+    { userId, tripId, status: "pending", grouping: "byDay" },
+    { $set: { status: "rejected", rejectedAt: now, supersededAt: now } },
+  );
+  return result.modifiedCount ?? pending.length;
+}
+
+function tripHasChecklistText(trip, after) {
+  const text = normalizeChecklistText(after?.text);
+  if (!text) return false;
+  return (trip.checklist || []).some(
+    (item) => normalizeChecklistText(item?.text) === text,
+  );
+}
+
+function mergeBudgetForDedup(current, patch) {
+  const base =
+    current && typeof current === "object"
+      ? { ...current, categories: [...(current.categories || [])] }
+      : { totalBudget: 0, currency: "USD", categories: [] };
+  const incoming = patch && typeof patch === "object" ? patch : {};
+  const merged = { ...base };
+  if (typeof incoming.totalBudget === "number" && incoming.totalBudget >= 0) {
+    merged.totalBudget = incoming.totalBudget;
+  }
+  if (typeof incoming.currency === "string" && incoming.currency.trim()) {
+    merged.currency = incoming.currency.trim();
+  }
+  if (Array.isArray(incoming.categories)) {
+    const byName = new Map((merged.categories || []).map((cat) => [cat.name, { ...cat }]));
+    for (const cat of incoming.categories) {
+      if (!cat || typeof cat !== "object" || typeof cat.name !== "string") continue;
+      const name = cat.name.trim();
+      if (!name) continue;
+      const prev = byName.get(name) || { name, budgeted: 0, spent: 0 };
+      if (typeof cat.budgeted === "number" && cat.budgeted >= 0) prev.budgeted = cat.budgeted;
+      if (typeof cat.spent === "number" && cat.spent >= 0) prev.spent = cat.spent;
+      byName.set(name, prev);
+    }
+    merged.categories = [...byName.values()];
+  }
+  return merged;
+}
+
+function tripBudgetMatchesPatch(trip, after) {
+  if (!after || typeof after !== "object") return true;
+  const merged = mergeBudgetForDedup(trip?.budget, after);
+  return valuesEqual(trip?.budget || {}, merged);
 }
 
 function opsAreSameItemUpdate(existingOp, incomingOp) {
@@ -215,6 +310,16 @@ function tripHasIncomingValues(trip, operations) {
       if (op.op === "remove") return false;
       return afterAlreadyPresent(trip, op.after);
     }
+    if (op.entity === "budget") {
+      if (op.op !== "update") return false;
+      return tripBudgetMatchesPatch(trip, op.after);
+    }
+    if (op.entity === "checklist" && op.op === "add") {
+      return tripHasChecklistText(trip, op.after);
+    }
+    if (op.entity === "attraction" && op.op === "add" && (op.after?.isPlaceholder || op.after?.placeholder)) {
+      return tripHasPlaceholderSlot(trip, op.after);
+    }
     if (op.op === "add") {
       const field = ENTITY_FIELD[op.entity];
       if (!field) return false;
@@ -259,6 +364,7 @@ export async function findSkipReason(db, {
   tripId = null,
   operations = [],
   source = "chat",
+  grouping = null,
   now = new Date(),
 } = {}) {
   if (!db || !userId || !operations.length) return null;
@@ -266,14 +372,18 @@ export async function findSkipReason(db, {
 
   const key = proposalDedupKey(tripId, operations);
   const firstItem = primaryAnchor(operations[0]);
+  const resolvedGrouping = grouping || (isSkeletonProposal(operations) ? "byDay" : null);
 
   const pending = await findProposals(db, { userId, tripId, status: "pending" }, {
     sort: { createdAt: -1 },
     limit: 80,
   });
-  const pendingHit = pending.find((doc) => pendingBlocksIncoming(doc, { operations }));
-  if (pendingHit) {
-    return { reason: "pending_same_item", key, itemId: firstItem, existingId: pendingHit._id };
+
+  if (resolvedGrouping !== "byDay") {
+    const pendingHit = pending.find((doc) => pendingBlocksIncoming(doc, { operations }));
+    if (pendingHit) {
+      return { reason: "pending_same_item", key, itemId: firstItem, existingId: pendingHit._id };
+    }
   }
 
   const trip = await loadTrip(db, tripId);

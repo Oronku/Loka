@@ -2,17 +2,12 @@ import { randomUUID } from "crypto";
 import { ObjectId } from "mongodb";
 import * as tripService from "../trip.service.js";
 import { scheduleTimelineRebuild } from "../timeline/index.js";
-import { skipDuplicateProposal } from "./proposalDedup.js";
+import { ARRAY_ENTITY_FIELD } from "./entityFields.js";
+import { skipDuplicateProposal, supersedePendingSkeleton } from "./proposalDedup.js";
 
 export const PROPOSALS_COLLECTION = "ai_proposals";
 
-/** entity name -> embedded array field on the trip document */
-const ENTITY_FIELD = {
-  flight: "flights",
-  hotel: "hotels",
-  ride: "rides",
-  attraction: "attractions",
-};
+const ENTITY_FIELD = ARRAY_ENTITY_FIELD;
 
 /** Placeholder tripId the assistant uses for items belonging to a not-yet-created trip. */
 export const NEW_TRIP_REF = "__new__";
@@ -21,15 +16,46 @@ export const NEW_TRIP_REF = "__new__";
  * @typedef {Object} ChangeOperation
  * @property {string} id
  * @property {'add'|'update'|'remove'} op
- * @property {'trip'|'flight'|'hotel'|'ride'|'attraction'} entity
+ * @property {'trip'|'flight'|'hotel'|'ride'|'attraction'|'checklist'|'budget'} entity
  * @property {string|null} itemId  id of the embedded item (update/remove)
  * @property {object|null} before
  * @property {object|null} after
  * @property {string} label  human one-liner for the diff UI
+ * @property {string|null} [groupKey]  YYYY-MM-DD day key for grouped diff sections
  */
 
-export function newOperation({ op, entity, itemId = null, before = null, after = null, label = "" }) {
-  return { id: randomUUID(), op, entity, itemId, before, after, label };
+/**
+ * @typedef {Object} ChangeSet
+ * @property {string} _id
+ * @property {string|null} tripId
+ * @property {string} status
+ * @property {ChangeOperation[]} operations
+ * @property {'byDay'|null} [grouping]  when set, frontend renders ops grouped by groupKey
+ */
+
+export function newOperation({
+  op,
+  entity,
+  itemId = null,
+  before = null,
+  after = null,
+  label = "",
+  groupKey = null,
+}) {
+  const opDoc = { id: randomUUID(), op, entity, itemId, before, after, label };
+  if (groupKey) opDoc.groupKey = groupKey;
+  return opDoc;
+}
+
+function resolveGrouping(operations, explicitGrouping) {
+  if (explicitGrouping) return explicitGrouping;
+  if (
+    operations.length > 0 &&
+    operations.every((op) => typeof op.groupKey === "string" && op.groupKey)
+  ) {
+    return "byDay";
+  }
+  return null;
 }
 
 /** Build a short human summary from a list of operations. */
@@ -80,9 +106,12 @@ export async function createChangeSet(db, {
   rationale = "",
   operations = [],
   target = null,
+  grouping = null,
   skipDedup = false,
   now = new Date(),
 }) {
+  const resolvedGrouping = resolveGrouping(operations, grouping);
+
   if (!skipDedup && operations.length > 0) {
     const skip = await skipDuplicateProposal(db, {
       userId,
@@ -90,8 +119,13 @@ export async function createChangeSet(db, {
       operations,
       source,
       now,
+      grouping: resolvedGrouping,
     });
     if (skip) return null;
+  }
+
+  if (resolvedGrouping === "byDay" && tripId && userId) {
+    await supersedePendingSkeleton(db, { userId, tripId, now });
   }
 
   const doc = {
@@ -108,6 +142,7 @@ export async function createChangeSet(db, {
       summarizeChangeSet(operations, { createsTrip, tripName }),
     rationale,
     target: target || null,
+    grouping: resolvedGrouping,
     operations,
     createdAt: new Date(),
     appliedAt: null,
@@ -189,12 +224,93 @@ async function removeItem(db, trip, entity, itemId) {
   return { matched: result.matchedCount ?? 0, modified: result.modifiedCount ?? 0 };
 }
 
+/**
+ * Deep-merge a budget patch into the current trip budget.
+ * Categories merge by `name`; unmentioned categories are preserved.
+ */
+export function mergeBudgetPatch(current, patch) {
+  const base =
+    current && typeof current === "object"
+      ? { ...current, categories: [...(current.categories || [])] }
+      : { totalBudget: 0, currency: "USD", categories: [] };
+  const incoming = patch && typeof patch === "object" ? patch : {};
+  const merged = { ...base };
+
+  if (typeof incoming.totalBudget === "number" && incoming.totalBudget >= 0) {
+    merged.totalBudget = incoming.totalBudget;
+  }
+  if (typeof incoming.currency === "string" && incoming.currency.trim()) {
+    merged.currency = incoming.currency.trim();
+  }
+  if (Array.isArray(incoming.categories)) {
+    const byName = new Map((merged.categories || []).map((cat) => [cat.name, { ...cat }]));
+    for (const cat of incoming.categories) {
+      if (!cat || typeof cat !== "object" || typeof cat.name !== "string") continue;
+      const name = cat.name.trim();
+      if (!name) continue;
+      const prev = byName.get(name) || { name, budgeted: 0, spent: 0 };
+      if (typeof cat.budgeted === "number" && cat.budgeted >= 0) prev.budgeted = cat.budgeted;
+      if (typeof cat.spent === "number" && cat.spent >= 0) prev.spent = cat.spent;
+      byName.set(name, prev);
+    }
+    merged.categories = [...byName.values()];
+  }
+
+  return merged;
+}
+
+/** @returns {{ matched: number, modified: number }} */
+async function updateBudget(db, trip, patch) {
+  const merged = mergeBudgetPatch(trip?.budget, patch);
+  const result = await db.collection("trips").updateOne(tripService.buildIdQuery(canonicalTripId(trip)), {
+    $set: { budget: merged, updatedAt: new Date().toISOString() },
+  });
+  return { matched: result.matchedCount ?? 0, modified: result.modifiedCount ?? 0 };
+}
+
+/**
+ * Apply embedded-item operations against a trip document (used by applyChangeSet).
+ * Exported for unit tests.
+ *
+ * @returns {Promise<string[]>} failed operation ids
+ */
+export async function applyEmbeddedOperations(db, trip, operations = []) {
+  const failedOps = [];
+  for (const op of operations) {
+    if (op.entity === "trip") continue;
+
+    if (op.entity === "budget") {
+      let write = { matched: 0, modified: 0 };
+      if (op.op === "update") write = await updateBudget(db, trip, op.after);
+      else failedOps.push(op.id);
+      if (op.op === "update" && write.matched === 0) failedOps.push(op.id);
+      continue;
+    }
+
+    if (!ENTITY_FIELD[op.entity]) continue;
+    let write = { matched: 1, modified: 0 };
+    if (op.op === "add") write = await pushItem(db, trip, op.entity, op.after);
+    else if (op.op === "update") write = await updateItem(db, trip, op.entity, op.itemId, op.after);
+    else if (op.op === "remove") write = await removeItem(db, trip, op.entity, op.itemId);
+    if ((op.op === "add" || op.op === "update" || op.op === "remove") && write.matched === 0) {
+      failedOps.push(op.id);
+    }
+  }
+  return failedOps;
+}
+
 /** @returns {string[]} operation ids that cannot match a row */
 function preflightFailedOps(trip, operations) {
   const added = new Set();
   const failed = [];
   for (const op of operations || []) {
     if (!op || op.entity === "trip") continue;
+
+    if (op.entity === "budget") {
+      if (op.op !== "update") failed.push(op.id);
+      continue;
+    }
+
     if (!ENTITY_FIELD[op.entity]) continue;
     if (op.op === "add") {
       const payload = ensureItemId(op.after);
@@ -209,6 +325,10 @@ function preflightFailedOps(trip, operations) {
     if (!exists) failed.push(op.id);
   }
   return failed;
+}
+
+export function preflightFailedOpsForTest(trip, operations) {
+  return preflightFailedOps(trip, operations);
 }
 
 /**
@@ -305,19 +425,7 @@ export async function applyChangeSet(db, id, user) {
   }
 
   // 2. Apply each embedded-item operation in order.
-  const failedOps = [];
-  for (const op of changeSet.operations) {
-    if (op.entity === "trip") continue; // already handled
-    if (!trip) continue;
-    if (!ENTITY_FIELD[op.entity]) continue;
-    let write = { matched: 1, modified: 0 };
-    if (op.op === "add") write = await pushItem(db, trip, op.entity, op.after);
-    else if (op.op === "update") write = await updateItem(db, trip, op.entity, op.itemId, op.after);
-    else if (op.op === "remove") write = await removeItem(db, trip, op.entity, op.itemId);
-    if ((op.op === "add" || op.op === "update" || op.op === "remove") && write.matched === 0) {
-      failedOps.push(op.id);
-    }
-  }
+  const failedOps = await applyEmbeddedOperations(db, trip, changeSet.operations);
 
   if (failedOps.length > 0) {
     return {

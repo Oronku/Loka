@@ -7,6 +7,7 @@ export const PLACES_CACHE_COLLECTION = "places_cache";
 
 const MAX_IMAGES = 6;
 const CACHE_REFRESH_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+export { CACHE_REFRESH_MS };
 const SUMMARY_STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 const PLACE_DETAILS_FIELDS = [
@@ -19,11 +20,38 @@ const PLACE_DETAILS_FIELDS = [
   "website",
   "url",
   "opening_hours",
+  "current_opening_hours",
   "photos",
   "reviews",
   "types",
   "price_level",
   "editorial_summary",
+  "formatted_phone_number",
+  "user_ratings_total",
+  "business_status",
+  "utc_offset",
+];
+
+/** Fields requested only for GET /api/places/details (same long-cache refresh). */
+const PLACE_DETAILS_API_FIELDS = [
+  "place_id",
+  "name",
+  "formatted_address",
+  "rating",
+  "geometry",
+  "formatted_phone_number",
+  "website",
+  "opening_hours",
+  "current_opening_hours",
+  "photos",
+  "reviews",
+  "price_level",
+  "types",
+  "editorial_summary",
+  "user_ratings_total",
+  "business_status",
+  "url",
+  "utc_offset",
 ];
 
 /** @param {import('mongodb').Db} db */
@@ -65,6 +93,66 @@ function buildImagesFromPhotos(photos = [], maxWidth = 800) {
     .slice(0, MAX_IMAGES)
     .map((p) => googleApi.getPhotoUrl(p.photo_reference, maxWidth))
     .filter(Boolean);
+}
+
+function buildPhotosMeta(photos = []) {
+  if (!Array.isArray(photos) || photos.length === 0) return [];
+  return photos.slice(0, 10).map((photo) => ({
+    photoReference: photo.photo_reference,
+    width: photo.width,
+    height: photo.height,
+  }));
+}
+
+/**
+ * Parse Google HHMM time string to minutes since midnight.
+ * @param {string|undefined} time
+ */
+function parseHHMM(time) {
+  if (!time || typeof time !== "string") return 0;
+  const h = parseInt(time.slice(0, 2), 10);
+  const m = parseInt(time.slice(2, 4), 10);
+  return h * 60 + m;
+}
+
+/**
+ * Compute whether a place is open now from cached weekday periods and utc_offset.
+ * Does not handle special/holiday hours (date-keyed periods are skipped).
+ *
+ * @param {{ periods?: Array<{ open?: { day?: number, time?: string, date?: string }, close?: { day?: number, time?: string, date?: string } }> }|null|undefined} hours
+ * @param {number|null|undefined} utcOffsetMinutes
+ * @returns {boolean|null}
+ */
+export function computeOpenNow(hours, utcOffsetMinutes) {
+  if (!hours?.periods?.length || utcOffsetMinutes == null) return null;
+
+  const local = new Date(Date.now() + utcOffsetMinutes * 60_000);
+  const day = local.getUTCDay();
+  const nowMinutes = day * 1440 + local.getUTCHours() * 60 + local.getUTCMinutes();
+
+  for (const period of hours.periods) {
+    if (!period.open || period.open.date || period.close?.date) continue;
+
+    const openDay = period.open.day ?? 0;
+    const openMinutes = openDay * 1440 + parseHHMM(period.open.time);
+    let closeMinutes;
+
+    if (!period.close) {
+      if (day === openDay) return true;
+      continue;
+    }
+
+    const closeDay = period.close.day ?? openDay;
+    closeMinutes = closeDay * 1440 + parseHHMM(period.close.time);
+    if (closeMinutes <= openMinutes) closeMinutes += 7 * 1440;
+
+    let adjustedNow = nowMinutes;
+    if (adjustedNow < openMinutes) adjustedNow += 7 * 1440;
+
+    if (adjustedNow >= openMinutes && adjustedNow < closeMinutes) return true;
+  }
+
+  return false;
 }
 
 function inferCategory(types = []) {
@@ -124,7 +212,23 @@ function buildCacheDoc(googlePlace, existing = null) {
     summaryModel: editorial ? "google_editorial" : existing?.summaryModel || null,
     tags: existing?.tags || [],
     sources: existing?.sources || [],
-    openingHours: googlePlace.opening_hours || existing?.openingHours || null,
+    openingHours:
+      googlePlace.current_opening_hours ||
+      googlePlace.opening_hours ||
+      existing?.openingHours ||
+      null,
+    formattedPhoneNumber:
+      googlePlace.formatted_phone_number ?? existing?.formattedPhoneNumber ?? null,
+    userRatingsTotal:
+      googlePlace.user_ratings_total ?? existing?.userRatingsTotal ?? 0,
+    businessStatus:
+      googlePlace.business_status ?? existing?.businessStatus ?? null,
+    utcOffsetMinutes:
+      googlePlace.utc_offset ?? existing?.utcOffsetMinutes ?? null,
+    photosMeta:
+      buildPhotosMeta(googlePlace.photos).length > 0
+        ? buildPhotosMeta(googlePlace.photos)
+        : existing?.photosMeta || [],
     reviews: googlePlace.reviews || existing?.reviews || null,
     enrichedAt: existing?.enrichedAt || null,
     createdAt: existing?.createdAt || now,
@@ -132,12 +236,12 @@ function buildCacheDoc(googlePlace, existing = null) {
   };
 }
 
-async function fetchGooglePlace({ placeId, name, cityContext }) {
+async function fetchGooglePlace({ placeId, name, cityContext, fields = PLACE_DETAILS_FIELDS, language = "en" }) {
   if (!googleApi.apiKey) return null;
 
   try {
     if (placeId) {
-      const details = await googleApi.getPlaceDetails(placeId, PLACE_DETAILS_FIELDS);
+      const details = await googleApi.getPlaceDetails(placeId, fields, language);
       return details || null;
     }
 
@@ -148,7 +252,8 @@ async function fetchGooglePlace({ placeId, name, cityContext }) {
       if (!searchResult?.placeId) return null;
       const details = await googleApi.getPlaceDetails(
         searchResult.placeId,
-        PLACE_DETAILS_FIELDS
+        fields,
+        language
       );
       return details || null;
     }
@@ -300,6 +405,114 @@ export async function ensurePlaceSummary(db, placeDoc, captionHint = null) {
     enrichedAt: now,
     updatedAt: now,
   };
+}
+
+/**
+ * Map a places_cache document to the GET /api/places/details response place object.
+ *
+ * @param {object|null} cacheDoc
+ * @param {{ stale?: boolean }} [options]
+ */
+export function formatPlaceDetailsFromCache(cacheDoc, { stale = false } = {}) {
+  if (!cacheDoc) return null;
+
+  const hours = cacheDoc.openingHours;
+  const openNow = computeOpenNow(hours, cacheDoc.utcOffsetMinutes);
+
+  const place = {
+    placeId: cacheDoc.placeId,
+    name: cacheDoc.name,
+    formattedAddress: cacheDoc.address,
+    rating: cacheDoc.rating,
+    userRatingsTotal: cacheDoc.userRatingsTotal ?? 0,
+    priceLevel: cacheDoc.priceLevel,
+    geometry: cacheDoc.location
+      ? { location: { lat: cacheDoc.location.lat, lng: cacheDoc.location.lng } }
+      : null,
+    description: cacheDoc.summary || null,
+    formattedPhoneNumber: cacheDoc.formattedPhoneNumber ?? null,
+    website: cacheDoc.website,
+    googleMapsUrl: cacheDoc.googleMapsUrl || null,
+    businessStatus: cacheDoc.businessStatus || null,
+    types: cacheDoc.types || [],
+    openingHours: hours
+      ? {
+          openNow: openNow ?? hours.open_now ?? null,
+          weekdayText: hours.weekday_text || [],
+        }
+      : null,
+    photos: cacheDoc.photosMeta || [],
+    reviews:
+      cacheDoc.reviews?.slice(0, 5).map((review) => ({
+        authorName: review.author_name,
+        rating: review.rating,
+        text: review.text,
+        time: review.time,
+      })) || [],
+  };
+
+  if (stale) place.cacheStale = true;
+
+  return place;
+}
+
+/**
+ * Resolve place details for GET /api/places/details — long-lived cache with
+ * openNow computed from cached periods + utc_offset (never served stale from cache).
+ *
+ * @param {import('mongodb').Db} db
+ * @param {string} placeId
+ * @param {string} [language]
+ * @returns {Promise<{ place: object|null, fromCache: boolean, stale: boolean }|null>}
+ */
+export async function getPlaceDetailsForApi(db, placeId, language = "en") {
+  if (!db || !placeId) return null;
+
+  const trimmedId = placeId.trim();
+  let existing = await placesCache(db).findOne({ placeId: trimmedId });
+  const needsRefresh = !existing || cacheNeedsRefresh(existing);
+
+  if (!needsRefresh) {
+    return {
+      place: formatPlaceDetailsFromCache(existing, { stale: false }),
+      fromCache: true,
+      stale: false,
+    };
+  }
+
+  const googlePlace = await fetchGooglePlace({
+    placeId: trimmedId,
+    fields: PLACE_DETAILS_API_FIELDS,
+    language,
+  });
+
+  if (googlePlace) {
+    const doc = buildCacheDoc(googlePlace, existing);
+    if (doc.placeId) {
+      const { createdAt, ...setFields } = doc;
+      await placesCache(db).updateOne(
+        { placeId: doc.placeId },
+        { $set: setFields, $setOnInsert: { createdAt } },
+        { upsert: true },
+      );
+      existing = await placesCache(db).findOne({ placeId: doc.placeId });
+    }
+    return {
+      place: formatPlaceDetailsFromCache(existing, { stale: false }),
+      fromCache: false,
+      stale: false,
+    };
+  }
+
+  if (existing) {
+    return {
+      place: formatPlaceDetailsFromCache(existing, { stale: true }),
+      fromCache: true,
+      stale: true,
+    };
+  }
+
+  return null;
 }
 
 /** Denormalized fields copied onto saved_places for fast list reads. */

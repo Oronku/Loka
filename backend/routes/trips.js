@@ -9,6 +9,7 @@ import {
   verifyGoogleToken
 } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
+import { computeTripReadiness } from "../services/trip/readiness.js";
 import {
   buildPendingSnapshot,
   markTripTimelinePending,
@@ -326,6 +327,29 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Trip readiness — deterministic, no LLM
+router.get("/:id/readiness", async (req, res) => {
+  try {
+    const trip = await loadTrip(req, res, {
+      requireEdit: false
+    });
+    if (!trip) return;
+
+    const readiness = computeTripReadiness(trip, {
+      now: new Date(),
+      viewerId: req.user.id,
+    });
+
+    res.json({ readiness });
+  } catch (error) {
+    console.error("Error computing trip readiness:", error);
+    res.status(500).json({
+      error: "Failed to compute trip readiness",
+      message: error.message,
+    });
+  }
+});
+
 // Return the trip's timeline snapshot (events + cached travel legs).
 // Returns the stored snapshot as-is; rebuilds synchronously only when missing,
 // stale (cheap placeholder), a different travel mode is requested, or
@@ -375,9 +399,18 @@ router.post("/", async (req, res) => {
     const tripData = req.body;
     const collection = getTripsCollection();
 
+    let onboardingPreferences = null;
+    if (tripData?.intent === undefined && collection) {
+      const db = collection.db;
+      const userDoc = await db.collection("users").findOne({ id: req.user.id });
+      onboardingPreferences = userDoc?.onboardingPreferences || null;
+    }
+
     let createdTrip;
     if (collection) {
-      const newTrip = await tripService.createTrip(tripData, req.user);
+      const newTrip = await tripService.createTrip(tripData, req.user, {
+        onboardingPreferences,
+      });
       createdTrip = newTrip;
       console.log(
         "✓ Trip saved to MongoDB:",
@@ -389,7 +422,9 @@ router.post("/", async (req, res) => {
       );
     } else {
       // Fallback to memory store
-      createdTrip = await tripService.createTrip(tripData, req.user);
+      createdTrip = await tripService.createTrip(tripData, req.user, {
+        onboardingPreferences: null,
+      });
       console.log(
         "✓ Trip saved to memory:",
         createdTrip.id,
@@ -425,6 +460,14 @@ router.put("/:id", async (req, res) => {
       req.body,
       existingTrip._access
     );
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "intent")) {
+      updateData.intent = tripService.mergeTripIntent(
+        existingTrip.intent,
+        req.body.intent,
+        { source: "user" },
+      );
+    }
 
     let updated;
     if (collection) {
