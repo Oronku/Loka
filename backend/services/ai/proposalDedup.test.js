@@ -4,8 +4,10 @@ import { createChangeSet, newOperation } from "./changeset.js";
 import {
   afterAlreadyPresent,
   findSkipReason,
+  isSkeletonProposal,
   proposalDedupKey,
   stableSerialize,
+  supersedePendingSkeleton,
 } from "./proposalDedup.js";
 import autoEnrich from "./agents/autoEnrich.js";
 import {
@@ -40,6 +42,10 @@ function matchesQuery(doc, query) {
         continue;
       }
     }
+    if (key === "attractions.id") {
+      if (!(doc.attractions || []).some((row) => row.id === expected)) return false;
+      continue;
+    }
     if (doc[key] !== expected) return false;
   }
   return true;
@@ -73,11 +79,31 @@ function memoryCollection(docs, { uniqueKeys } = {}) {
       docs.push(doc);
       return { insertedId: doc._id || `id-${docs.length}` };
     },
-    updateOne: async (query, update) => {
+    updateOne: async (query, update, options = {}) => {
       const doc = docs.find((d) => matchesQuery(d, query));
       if (!doc) return { modifiedCount: 0, matchedCount: 0 };
-      Object.assign(doc, update.$set || {});
+      if (update.$set && options.arrayFilters?.length) {
+        const filterId = options.arrayFilters[0]["el.id"];
+        for (const [path, value] of Object.entries(update.$set)) {
+          if (path === "updatedAt") continue;
+          const match = path.match(/^attractions\.\$\[el\]\.(.+)$/);
+          if (!match) continue;
+          const item = (doc.attractions || []).find((row) => row.id === filterId);
+          if (item) item[match[1]] = value;
+        }
+      } else {
+        Object.assign(doc, update.$set || {});
+      }
       return { modifiedCount: 1, matchedCount: 1 };
+    },
+    updateMany: async (query, update) => {
+      let modified = 0;
+      for (const doc of docs) {
+        if (!matchesQuery(doc, query)) continue;
+        Object.assign(doc, update.$set || {});
+        modified += 1;
+      }
+      return { modifiedCount: modified };
     },
   };
 }
@@ -135,6 +161,16 @@ describe("proposalDedup key", () => {
     ]);
     const b = proposalDedupKey(TRIP_ID, [
       { op: "add", entity: "ride", after: { id: "rand-2", pickup: "BUD", dropoff: "Hotel", date: "2026-09-01", createdAt: "t2" } },
+    ]);
+    assert.equal(a, b);
+  });
+
+  it("fingerprints checklist adds by normalized text", () => {
+    const a = proposalDedupKey(TRIP_ID, [
+      { op: "add", entity: "checklist", after: { text: "  Passport  " } },
+    ]);
+    const b = proposalDedupKey(TRIP_ID, [
+      { op: "add", entity: "checklist", after: { text: "passport" } },
     ]);
     assert.equal(a, b);
   });
@@ -205,6 +241,32 @@ describe("findSkipReason + createChangeSet", () => {
       tripId: TRIP_ID,
       operations: [hoursOp()],
       source: "agent:auto_enrich",
+      now,
+    });
+    assert.equal(skip?.reason, "already_on_item");
+  });
+
+  it("skips duplicate checklist text already on the trip", async () => {
+    const db = mockDb({
+      trips: [
+        {
+          id: TRIP_ID,
+          checklist: [{ id: "c-1", text: "Passport", completed: false }],
+        },
+      ],
+    });
+    const skip = await findSkipReason(db, {
+      userId: USER_ID,
+      tripId: TRIP_ID,
+      operations: [
+        newOperation({
+          op: "add",
+          entity: "checklist",
+          after: { text: "  passport " },
+          label: 'Add "passport" to packing',
+        }),
+      ],
+      source: "chat",
       now,
     });
     assert.equal(skip?.reason, "already_on_item");
@@ -292,12 +354,86 @@ describe("findSkipReason + createChangeSet", () => {
   });
 });
 
+describe("skeleton proposal superseding", () => {
+  const now = new Date("2026-08-22T12:00:00.000Z");
+
+  it("detects skeleton proposals by grouping and groupKey ops", () => {
+    const ops = [
+      newOperation({
+        op: "add",
+        entity: "attraction",
+        after: { name: "Coffee" },
+        groupKey: "2026-09-01",
+      }),
+      newOperation({
+        op: "add",
+        entity: "attraction",
+        after: { name: "Museum" },
+        groupKey: "2026-09-01",
+      }),
+      newOperation({
+        op: "add",
+        entity: "attraction",
+        after: { name: "Dinner" },
+        groupKey: "2026-09-02",
+      }),
+    ];
+    assert.equal(isSkeletonProposal(ops, "byDay"), true);
+  });
+
+  it("rejects older pending skeletons when a new one is created", async () => {
+    const proposals = [
+      {
+        userId: USER_ID,
+        tripId: TRIP_ID,
+        status: "pending",
+        grouping: "byDay",
+        operations: [],
+      },
+    ];
+    const db = mockDb({ proposals });
+    const count = await supersedePendingSkeleton(db, { userId: USER_ID, tripId: TRIP_ID, now });
+    assert.equal(count, 1);
+    assert.equal(proposals[0].status, "rejected");
+  });
+
+  it("createChangeSet supersedes an older pending skeleton for the same trip", async () => {
+    const proposals = [
+      {
+        userId: USER_ID,
+        tripId: TRIP_ID,
+        status: "pending",
+        grouping: "byDay",
+        operations: [],
+      },
+    ];
+    const db = mockDb({ proposals });
+    const created = await createChangeSet(db, {
+      userId: USER_ID,
+      tripId: TRIP_ID,
+      grouping: "byDay",
+      skipDedup: true,
+      operations: [
+        newOperation({
+          op: "add",
+          entity: "attraction",
+          after: { name: "New plan block", placeholder: true },
+          groupKey: "2026-09-02",
+        }),
+      ],
+    });
+    assert.ok(created);
+    assert.equal(proposals[0].status, "rejected");
+    assert.equal(proposals[1]?.grouping, "byDay");
+  });
+});
+
 describe("autoEnrich already-applied hours", () => {
   beforeEach(() => {
     resetAutoEnrichLocksForTests();
   });
 
-  it("creates 0 proposals when Parliament hours were already applied", async () => {
+  it("silently fills missing hours without creating proposals", async () => {
     const db = mockDb({
       trips: [
         {
@@ -353,8 +489,9 @@ describe("autoEnrich already-applied hours", () => {
       },
     });
 
-    assert.deepEqual(effects, []);
     assert.equal(db._proposals.filter((p) => p.status === "pending").length, 0);
+    const item = db._trips[0].attractions[0];
+    assert.equal(item.openingHours, HOURS);
   });
 });
 

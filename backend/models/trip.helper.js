@@ -68,12 +68,29 @@ export const SERVER_MANAGED_FIELDS = ["timelineSnapshot"];
  * @property {string} [currency]
  * @property {AttractionOpeningHours} [openingHours]
  * @property {string} [website]
+ * @property {string} [placeFactsFetchedAt] ISO timestamp when address/openingHours/website
+ *   were last fetched from Google Places. Single cache marker for all place facts on
+ *   this attraction (not per-field). Missing means stale if any place facts exist.
  * @property {string} [notes]
  * @property {string} [type]
  * @property {string} [attractionType]
  * @property {number} [rating]
  * @property {string} [photoReference]
  * @property {string} [imageUrl]
+ */
+
+/**
+ * Optional per-trip intent — what the user wants from this trip.
+ *
+ * @typedef {Object} TripIntent
+ * @property {'freedom'|'relax'|'optimize'|'fullDayOfPlans'|null} [pace]
+ * @property {string[]} [vibes]
+ * @property {string[]} [priorities]
+ * @property {'budget'|'moderate'|'comfortable'|'splurge'|null} [budgetLevel]
+ * @property {('justMe'|'spousePartner'|'friendsFamily'|'familyWithKids')[]} [companions]
+ * @property {string|null} [notes]
+ * @property {'onboarding'|'user'|'loka'|null} [source]
+ * @property {string|null} [updatedAt]
  */
 
 /**
@@ -88,6 +105,7 @@ export const SERVER_MANAGED_FIELDS = ["timelineSnapshot"];
  * @property {Array<{ id: string, text: string, completed: boolean, categoryId?: string }>} [checklist]
  * @property {Array<{ userId: string, checklist: unknown[] }>} userChecklists
  * @property {AttractionItem[]} [attractions]
+ * @property {TripIntent} [intent]
  */
 
 export function normalizeEmail(email) {
@@ -131,11 +149,13 @@ export function buildPendingInvite(email, invitedBy, name = null) {
   };
 }
 
-/** @param {object} tripData @param {{ id: string, email: string, name?: string }} owner */
-export function buildTripDocument(tripData, owner) {
+/** @param {object} tripData @param {{ id: string, email: string, name?: string }} owner @param {{ intent?: object }} [options] */
+export function buildTripDocument(tripData, owner, { intent } = {}) {
   const now = new Date().toISOString();
+  const { intent: _ignoredIntent, ...rest } = tripData || {};
   return {
-    ...tripData,
+    ...rest,
+    ...(intent !== undefined ? { intent } : {}),
     id: tripData.id || randomUUID(),
     userId: owner.id,
     userEmail: owner.email,

@@ -4,15 +4,35 @@ import { getOpenAI, CHAT_MODEL } from "./openaiClient.js";
 import { READ_ONLY_TOOLS, TOOL_DEFINITIONS } from "./tools.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { newOperation, summarizeOperations, NEW_TRIP_REF } from "./changeset.js";
+import { ARRAY_ENTITY_FIELD } from "./entityFields.js";
 import { enrichPlace, normalizeOpeningHours } from "./places.js";
 import { MAX_WEB_SEARCHES_PER_TURN, webSearch } from "./webSearch.js";
+import { mergeTripIntent } from "../trip.service.js";
 
-const ENTITY_FIELD = {
-  flight: "flights",
-  hotel: "hotels",
-  ride: "rides",
-  attraction: "attractions",
-};
+const ENTITY_FIELD = ARRAY_ENTITY_FIELD;
+
+const PLACEHOLDER_KINDS = new Set(["meal", "activity", "travel", "rest", "other"]);
+const VALID_INTENT_PACE = new Set(["freedom", "relax", "optimize", "packed"]);
+const PLAN_SKELETON_MAX_BLOCKS = 60;
+
+/**
+ * plan_trip_skeleton operation labels use this prefix so the frontend can group by day:
+ *   "{Weekday} {Mon} {D} — {title}"
+ * Example: "Tue Sep 3 — Lunch somewhere near the Colosseum"
+ * Locale: en-US (short weekday, short month, day without zero-padding).
+ */
+export function formatDayLabelPrefix(dateStr) {
+  const d = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return String(dateStr);
+  const weekday = d.toLocaleDateString("en-US", { weekday: "short" });
+  const month = d.toLocaleDateString("en-US", { month: "short" });
+  const day = d.getDate();
+  return `${weekday} ${month} ${day}`;
+}
+
+export function dayPrefixedLabel(dateStr, title) {
+  return `${formatDayLabelPrefix(dateStr)} — ${title}`;
+}
 
 const MAX_READ_ROUNDS = 2;
 
@@ -100,6 +120,154 @@ function findItem(trip, entity, itemId) {
   return (trip?.[field] || []).find((it) => it.id === itemId) || null;
 }
 
+function normalizeChecklistText(text) {
+  return typeof text === "string" ? text.trim().replace(/\s+/g, " ").toLowerCase() : "";
+}
+
+function checklistTextExists(trip, text, extraTexts = []) {
+  const needle = normalizeChecklistText(text);
+  if (!needle) return true;
+  const seen = new Set(
+    [...(trip?.checklist || []), ...extraTexts].map((item) =>
+      normalizeChecklistText(typeof item === "string" ? item : item?.text),
+    ),
+  );
+  return seen.has(needle);
+}
+
+function generateChecklistItemId(categoryId) {
+  const cat =
+    typeof categoryId === "string" && categoryId.trim() && categoryId.trim() !== "custom"
+      ? categoryId.trim()
+      : null;
+  return cat ? `${cat}:${randomUUID()}` : randomUUID();
+}
+
+function formatBudgetAmount(amount, currency = "USD") {
+  const symbols = { EUR: "€", USD: "$", GBP: "£" };
+  const sym = symbols[currency] || `${currency} `;
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return `${sym}0`;
+  return `${sym}${n.toLocaleString("en-US")}`;
+}
+
+function buildBudgetPatch(args) {
+  const patch = {};
+  if (typeof args.totalBudget === "number" && args.totalBudget >= 0) {
+    patch.totalBudget = args.totalBudget;
+  }
+  if (typeof args.currency === "string" && args.currency.trim()) {
+    patch.currency = args.currency.trim();
+  }
+  if (Array.isArray(args.categories)) {
+    patch.categories = args.categories
+      .filter((cat) => cat && typeof cat === "object")
+      .map((cat) => ({
+        name: typeof cat.name === "string" ? cat.name.trim() : "",
+        budgeted: typeof cat.budgeted === "number" ? cat.budgeted : NaN,
+      }))
+      .filter((cat) => cat.name && Number.isFinite(cat.budgeted) && cat.budgeted >= 0);
+  }
+  return patch;
+}
+
+function budgetOpLabel(patch, beforeBudget = {}) {
+  const currency = patch.currency || beforeBudget.currency || "USD";
+  const parts = [];
+  if (patch.totalBudget != null) {
+    parts.push(`Set budget to ${formatBudgetAmount(patch.totalBudget, currency)}`);
+  }
+  if (Array.isArray(patch.categories)) {
+    for (const cat of patch.categories) {
+      parts.push(`Raise ${cat.name} budget to ${formatBudgetAmount(cat.budgeted, currency)}`);
+    }
+  }
+  return parts.join("; ") || "Update trip budget";
+}
+
+function normalizePlaceholderKind(kind) {
+  if (typeof kind !== "string" || !kind.trim()) return "other";
+  const trimmed = kind.trim();
+  if (PLACEHOLDER_KINDS.has(trimmed)) return trimmed;
+  if (trimmed === "restaurant") return "meal";
+  return "other";
+}
+
+function defaultTimeForKind(kind) {
+  switch (kind) {
+    case "meal":
+      return "19:00";
+    case "travel":
+      return "09:00";
+    case "rest":
+      return "15:00";
+    case "activity":
+    case "other":
+    default:
+      return "10:00";
+  }
+}
+
+function placeholderEventItem({ title, date, time, durationMinutes, kind = "other" }) {
+  const validKind = normalizePlaceholderKind(kind);
+  const scheduledTime =
+    typeof time === "string" && time.trim() ? time.trim() : defaultTimeForKind(validKind);
+  const item = {
+    id: randomUUID(),
+    type: "event",
+    attractionType: "event",
+    name: String(title).trim(),
+    placeholder: true,
+    placeholderKind: validKind,
+    scheduledDate: typeof date === "string" ? date.slice(0, 10) : "",
+    scheduledTime,
+    timeConfidence: "guess",
+    status: date ? "planned" : "idea",
+    notes: "",
+    createdAt: new Date(),
+  };
+  if (durationMinutes != null && Number.isFinite(Number(durationMinutes))) {
+    item.durationMinutes = Number(durationMinutes);
+  }
+  return item;
+}
+
+function isSlotOccupied(trip, date, time, pendingOps = []) {
+  if (!date || !time) return false;
+  const occupiedOnTrip = (trip?.attractions || []).some(
+    (a) => a?.scheduledDate === date && a?.scheduledTime === time,
+  );
+  if (occupiedOnTrip) return true;
+  return pendingOps.some(
+    (op) =>
+      op.entity === "attraction" &&
+      op.op === "add" &&
+      op.after?.scheduledDate === date &&
+      op.after?.scheduledTime === time,
+  );
+}
+
+function dateInTripRange(date, trip) {
+  if (!date || !trip?.startDate || !trip?.endDate) return true;
+  const d = String(date).slice(0, 10);
+  return d >= String(trip.startDate).slice(0, 10) && d <= String(trip.endDate).slice(0, 10);
+}
+
+function buildIntentPatch(args) {
+  const patch = {};
+  if (typeof args.pace === "string" && VALID_INTENT_PACE.has(args.pace)) patch.pace = args.pace;
+  if (Array.isArray(args.vibes)) {
+    patch.vibes = args.vibes.filter((v) => typeof v === "string" && v.trim()).map((v) => v.trim());
+  }
+  if (Array.isArray(args.priorities)) {
+    patch.priorities = args.priorities
+      .filter((v) => typeof v === "string" && v.trim())
+      .map((v) => v.trim());
+  }
+  if (typeof args.notes === "string" && args.notes.trim()) patch.notes = args.notes.trim();
+  return patch;
+}
+
 function rationaleFromOperations(operations, sourceUrl) {
   const cited = operations.find((op) => op.after?.bookingUrl || sourceUrl);
   const url = sourceUrl || cited?.after?.bookingUrl;
@@ -136,12 +304,14 @@ function firstSourceUrl(toolCalls) {
  * Enriches attractions with Google Places. Returns the resolved target trip
  * metadata so the caller can persist the proposal.
  */
-async function buildOperations(toolCalls, { trips, activeTripId }) {
+export async function buildOperations(toolCalls, { trips, activeTripId }) {
   const operations = [];
   let createsTrip = false;
   let tripName = "";
   let targetTripId = null;
   let createDestination = null;
+  let skeletonNotes = [];
+  let grouping = null;
 
   for (const call of toolCalls) {
     const args = call.args;
@@ -370,22 +540,243 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
         );
         break;
       }
-      case "web_search":
-        break;
-      default: {
-        const _exhaustive = call.name;
-        void _exhaustive;
+      case "add_checklist_items": {
+        if (!Array.isArray(a.items)) break;
+        const batchTexts = [];
+        for (const raw of a.items) {
+          if (!raw || typeof raw !== "object") continue;
+          const text = typeof raw.text === "string" ? raw.text.trim() : "";
+          if (!text) continue;
+          if (checklistTextExists(targetTrip, text, batchTexts)) continue;
+          batchTexts.push({ text });
+          const categoryId =
+            typeof raw.categoryId === "string" && raw.categoryId.trim()
+              ? raw.categoryId.trim()
+              : undefined;
+          const item = {
+            id: generateChecklistItemId(categoryId),
+            text,
+            completed: false,
+            ...(categoryId ? { categoryId } : {}),
+          };
+          operations.push(
+            newOperation({
+              op: "add",
+              entity: "checklist",
+              after: item,
+              label: `Add "${text}" to packing`,
+            }),
+          );
+        }
         break;
       }
+      case "remove_checklist_item": {
+        const itemId = typeof a.itemId === "string" ? a.itemId.trim() : "";
+        if (!itemId) break;
+        const before = findItem(targetTrip, "checklist", itemId);
+        operations.push(
+          newOperation({
+            op: "remove",
+            entity: "checklist",
+            itemId,
+            before,
+            label: before?.text
+              ? `Remove "${before.text}" from packing`
+              : "Remove item from packing",
+          }),
+        );
+        break;
+      }
+      case "set_trip_budget": {
+        const patch = buildBudgetPatch(a);
+        if (
+          patch.totalBudget == null &&
+          !patch.currency &&
+          (!patch.categories || patch.categories.length === 0)
+        ) {
+          break;
+        }
+        operations.push(
+          newOperation({
+            op: "update",
+            entity: "budget",
+            before: targetTrip?.budget || null,
+            after: patch,
+            label: budgetOpLabel(patch, targetTrip?.budget),
+          }),
+        );
+        break;
+      }
+      case "add_placeholder_event": {
+        const title = typeof a.title === "string" ? a.title.trim() : "";
+        if (!title) break;
+        const kind = normalizePlaceholderKind(a.kind);
+        const date = typeof a.date === "string" ? a.date.slice(0, 10) : "";
+        const explicitTime = typeof a.time === "string" && a.time.trim() ? a.time.trim() : null;
+        const time = explicitTime || defaultTimeForKind(kind);
+        if (date && isSlotOccupied(targetTrip, date, time, operations)) break;
+        const item = placeholderEventItem({
+          title,
+          date,
+          time: explicitTime,
+          durationMinutes: a.durationMinutes,
+          kind,
+        });
+        operations.push(
+          newOperation({
+            op: "add",
+            entity: "attraction",
+            after: item,
+            label: date
+              ? dayPrefixedLabel(date, title)
+              : `${title} (unscheduled placeholder)`,
+            groupKey: date || null,
+          }),
+        );
+        break;
+      }
+      case "plan_trip_skeleton": {
+        if (!Array.isArray(a.days)) break;
+        grouping = "byDay";
+        const sortedDays = [...a.days]
+          .filter((day) => day && typeof day === "object" && typeof day.date === "string")
+          .sort((left, right) => String(left.date).localeCompare(String(right.date)));
+
+        let blockCount = 0;
+        const skippedDates = [];
+
+        for (const day of sortedDays) {
+          const date = day.date.slice(0, 10);
+          if (!dateInTripRange(date, targetTrip)) {
+            skippedDates.push(date);
+            continue;
+          }
+          const blocks = Array.isArray(day.blocks) ? day.blocks : [];
+          const sortedBlocks = [...blocks].sort((left, right) => {
+            const lt = typeof left?.time === "string" ? left.time : "99:99";
+            const rt = typeof right?.time === "string" ? right.time : "99:99";
+            return lt.localeCompare(rt);
+          });
+
+          for (const block of sortedBlocks) {
+            if (blockCount >= PLAN_SKELETON_MAX_BLOCKS) break;
+            if (!block || typeof block !== "object") continue;
+            const title = typeof block.title === "string" ? block.title.trim() : "";
+            if (!title) continue;
+
+            const kind = normalizePlaceholderKind(block.kind);
+            const explicitTime = typeof block.time === "string" && block.time.trim() ? block.time.trim() : null;
+            const time = explicitTime || defaultTimeForKind(kind);
+            if (isSlotOccupied(targetTrip, date, time, operations)) continue;
+
+
+            const placeName =
+              typeof block.placeName === "string" ? block.placeName.trim() : "";
+            if (placeName) {
+              const place = await enrichPlace(placeName, city, db);
+              const item = attractionItem(
+                {
+                  type: "attraction",
+                  name: placeName,
+                  date,
+                  time: explicitTime,
+                  durationMinutes: block.durationMinutes,
+                  status: "planned",
+                },
+                place,
+              );
+              operations.push(
+                newOperation({
+                  op: "add",
+                  entity: "attraction",
+                  after: item,
+                  label: dayPrefixedLabel(date, item.name),
+                  groupKey: date,
+                }),
+              );
+            } else {
+              const item = placeholderEventItem({
+                title,
+                date,
+                time: explicitTime,
+                durationMinutes: block.durationMinutes,
+                kind,
+              });
+              operations.push(
+                newOperation({
+                  op: "add",
+                  entity: "attraction",
+                  after: item,
+                  label: dayPrefixedLabel(date, title),
+                  groupKey: date,
+                }),
+              );
+            }
+            blockCount += 1;
+          }
+          if (blockCount >= PLAN_SKELETON_MAX_BLOCKS) break;
+        }
+
+        if (operations.length === 0 && skippedDates.length > 0) {
+          skeletonNotes.push(
+            `All ${skippedDates.length} day(s) were outside the trip dates (${skippedDates.join(", ")}). Pick dates between ${targetTrip?.startDate} and ${targetTrip?.endDate}.`,
+          );
+        } else if (skippedDates.length > 0) {
+          skeletonNotes.push(
+            `Skipped ${skippedDates.length} day(s) outside the trip dates (${skippedDates.join(", ")}).`,
+          );
+        }
+        if (blockCount >= PLAN_SKELETON_MAX_BLOCKS) {
+          skeletonNotes.push(
+            `Too many blocks — capped at ${PLAN_SKELETON_MAX_BLOCKS}. Split the plan or trim blocks and try again.`,
+          );
+        }
+        if (typeof a.summary === "string" && a.summary.trim()) {
+          skeletonNotes.unshift(a.summary.trim());
+        }
+        if (operations.filter((op) => op.groupKey).length === 0) {
+          grouping = null;
+        }
+        break;
+      }
+      case "set_trip_intent": {
+        const patch = buildIntentPatch(a);
+        if (Object.keys(patch).length === 0) break;
+        const merged = mergeTripIntent(targetTrip?.intent, { ...patch, source: "loka" }, {
+          source: "loka",
+        });
+        if (!merged) break;
+        operations.push(
+          newOperation({
+            op: "update",
+            entity: "trip",
+            before: { intent: targetTrip?.intent || null },
+            after: { intent: merged },
+            label: "Update trip preferences",
+          }),
+        );
+        break;
+      }
+      case "web_search":
+        break;
+      default:
+        throw new Error(`Unknown tool: ${call.name}`);
     }
   }
+
+  const baseRationale = rationaleFromOperations(operations, firstSourceUrl(toolCalls));
+  const rationale =
+    skeletonNotes.length > 0
+      ? [baseRationale, ...skeletonNotes].filter(Boolean).join(" ")
+      : baseRationale;
 
   return {
     operations,
     createsTrip,
     tripName,
     targetTripId,
-    rationale: rationaleFromOperations(operations, firstSourceUrl(toolCalls)),
+    rationale,
+    grouping,
   };
 }
 

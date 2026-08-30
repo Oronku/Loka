@@ -14,8 +14,170 @@ import {
   isValidEmail,
   parseParticipantEmail,
 } from "../models/trip.helper.js";
+import { buildIntentPatchFromOnboarding } from "./trip/intentFromOnboarding.js";
 
 export { COLLECTION_NAME };
+
+const VALID_INTENT_PACE = new Set(["freedom", "relax", "optimize", "fullDayOfPlans"]);
+const VALID_INTENT_COMPANIONS = new Set([
+  "justMe",
+  "spousePartner",
+  "friendsFamily",
+  "familyWithKids",
+]);
+const VALID_INTENT_BUDGET_LEVEL = new Set([
+  "budget",
+  "moderate",
+  "comfortable",
+  "splurge",
+]);
+const VALID_INTENT_SOURCE = new Set(["onboarding", "user", "loka"]);
+const MAX_INTENT_LIST = 12;
+const MAX_INTENT_STRING = 80;
+
+/** @param {unknown} value @returns {string[]} */
+function coerceIntentStringList(value) {
+  if (!value) return [];
+  const raw = Array.isArray(value) ? value : [value];
+  const seen = new Set();
+  /** @type {string[]} */
+  const out = [];
+  for (const entry of raw) {
+    const trimmed = typeof entry === "string" ? entry.trim() : "";
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed.slice(0, MAX_INTENT_STRING));
+    if (out.length >= MAX_INTENT_LIST) break;
+  }
+  return out;
+}
+
+/** @param {unknown} value @returns {('justMe'|'spousePartner'|'friendsFamily'|'familyWithKids')[]} */
+function coerceIntentCompanions(value) {
+  if (!value) return [];
+  const raw = Array.isArray(value) ? value : String(value).split(",");
+  const seen = new Set();
+  /** @type {('justMe'|'spousePartner'|'friendsFamily'|'familyWithKids')[]} */
+  const out = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (!VALID_INTENT_COMPANIONS.has(trimmed) || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+    if (out.length >= MAX_INTENT_LIST) break;
+  }
+  return out;
+}
+
+/**
+ * Normalize a trip intent patch/object — strips unknown keys.
+ * @param {unknown} raw
+ * @param {{ source?: 'onboarding'|'user'|'loka', now?: string }} [options]
+ * @returns {import('../models/trip.helper.js').TripIntent|undefined}
+ */
+export function normalizeTripIntent(raw, { source, now } = {}) {
+  if (!raw || typeof raw !== "object") return undefined;
+
+  /** @type {import('../models/trip.helper.js').TripIntent} */
+  const intent = {};
+
+  if (typeof raw.pace === "string" && VALID_INTENT_PACE.has(raw.pace)) {
+    intent.pace = raw.pace;
+  }
+
+  const vibes = coerceIntentStringList(raw.vibes);
+  if (vibes.length) intent.vibes = vibes;
+
+  const priorities = coerceIntentStringList(raw.priorities);
+  if (priorities.length) intent.priorities = priorities;
+
+  if (typeof raw.budgetLevel === "string" && VALID_INTENT_BUDGET_LEVEL.has(raw.budgetLevel)) {
+    intent.budgetLevel = raw.budgetLevel;
+  }
+
+  const companions = coerceIntentCompanions(raw.companions);
+  if (companions.length) intent.companions = companions;
+
+  if (typeof raw.notes === "string" && raw.notes.trim()) {
+    intent.notes = raw.notes.trim().slice(0, 500);
+  }
+
+  const resolvedSource =
+    typeof raw.source === "string" && VALID_INTENT_SOURCE.has(raw.source)
+      ? raw.source
+      : source;
+  if (resolvedSource) intent.source = resolvedSource;
+
+  if (
+    !intent.pace &&
+    !intent.vibes?.length &&
+    !intent.priorities?.length &&
+    !intent.notes &&
+    !intent.companions?.length &&
+    !intent.budgetLevel
+  ) {
+    return undefined;
+  }
+
+  intent.updatedAt = now || new Date().toISOString();
+  return intent;
+}
+
+/**
+ * Derive trip intent from user onboarding preferences.
+ * @param {Record<string, unknown>|null|undefined} onboardingPreferences
+ * @param {string} [now]
+ * @returns {import('../models/trip.helper.js').TripIntent|undefined}
+ */
+export function intentFromOnboarding(onboardingPreferences, now) {
+  const patch = buildIntentPatchFromOnboarding(onboardingPreferences);
+  if (!patch) return undefined;
+  return normalizeTripIntent(patch, { source: "onboarding", now });
+}
+
+/**
+ * Merge-patch trip intent (unspecified subfields preserved).
+ * @param {import('../models/trip.helper.js').TripIntent|undefined|null} existing
+ * @param {unknown} patch
+ * @param {{ source?: 'onboarding'|'user'|'loka' }} [options]
+ * @returns {import('../models/trip.helper.js').TripIntent|undefined}
+ */
+export function mergeTripIntent(existing, patch, options = {}) {
+  if (patch === undefined) return existing || undefined;
+  if (patch === null) return undefined;
+
+  const merged = {
+    ...(existing && typeof existing === "object" ? existing : {}),
+    ...(patch && typeof patch === "object" ? patch : {}),
+    source:
+      options.source ||
+      (patch && typeof patch === "object" && patch.source) ||
+      existing?.source ||
+      "user",
+  };
+
+  return normalizeTripIntent(merged, {
+    source: merged.source,
+  });
+}
+
+/**
+ * Resolve intent for a new trip — explicit intent wins, else onboarding prefill.
+ * @param {object} tripData
+ * @param {Record<string, unknown>|null|undefined} onboardingPreferences
+ * @param {string} [now]
+ */
+export function resolveIntentForCreate(tripData, onboardingPreferences, now) {
+  const timestamp = now || new Date().toISOString();
+  if (tripData?.intent !== undefined) {
+    return normalizeTripIntent(tripData.intent, {
+      source: "user",
+      now: timestamp,
+    });
+  }
+  return intentFromOnboarding(onboardingPreferences, timestamp);
+}
 
 export function getTripsCollection() {
   const db = getDatabase();
@@ -123,6 +285,12 @@ export function sanitizeUpdatePayload(body, access) {
 
   if (Array.isArray(updateData.checklist)) {
     updateData.checklist = normalizeSharedChecklist(updateData.checklist);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updateData, "intent")) {
+    updateData.intent = normalizeTripIntent(updateData.intent, {
+      source: "user",
+    });
   }
 
   return updateData;
@@ -357,8 +525,15 @@ export async function getPendingInvites(email) {
   });
 }
 
-export async function createTrip(tripData, owner) {
-  const document = buildTripDocument(tripData, owner);
+export async function createTrip(tripData, owner, { onboardingPreferences } = {}) {
+  let intent;
+  try {
+    intent = resolveIntentForCreate(tripData, onboardingPreferences);
+  } catch (error) {
+    console.error("Failed to prefill trip intent from onboarding:", error);
+    intent = undefined;
+  }
+  const document = buildTripDocument(tripData, owner, { intent });
   const collection = getTripsCollection();
 
   if (collection) {

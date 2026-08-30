@@ -264,6 +264,176 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "add_checklist_items",
+      description: "Propose adding one or more items to the trip packing checklist.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: tripIdParam,
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                text: { type: "string", description: "Checklist item text, e.g. Passport" },
+                categoryId: {
+                  type: "string",
+                  description:
+                    "Optional category: documents, clothing, health, electronics, toiletries, comfort, or custom",
+                },
+              },
+              required: ["text"],
+            },
+          },
+        },
+        required: ["tripId", "items"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remove_checklist_item",
+      description: "Propose removing an item from the trip packing checklist by id.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: tripIdParam,
+          itemId: { type: "string", description: "Checklist item id from trip context" },
+        },
+        required: ["tripId", "itemId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_trip_budget",
+      description:
+        "Propose setting or updating the trip budget (total, currency, and/or category allocations).",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: tripIdParam,
+          totalBudget: { type: "number", description: "Total trip budget amount" },
+          currency: { type: "string", description: "ISO currency code, e.g. EUR, USD" },
+          categories: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Category name, e.g. Food" },
+                budgeted: { type: "number", description: "Budgeted amount for this category" },
+              },
+              required: ["name", "budgeted"],
+            },
+          },
+        },
+        required: ["tripId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_placeholder_event",
+      description:
+        "Propose a vague time slot on the itinerary (no specific place) — e.g. dinner somewhere in Trastevere.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: tripIdParam,
+          title: { type: "string", description: "Short label for the slot" },
+          date: { type: "string", description: "YYYY-MM-DD" },
+          time: { type: "string", description: "HH:MM" },
+          durationMinutes: { type: "number" },
+          kind: {
+            type: "string",
+            enum: ["meal", "activity", "travel", "rest", "other"],
+            description: "What kind of placeholder slot this is",
+          },
+        },
+        required: ["tripId", "title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "plan_trip_skeleton",
+      description:
+        "Propose a multi-day trip skeleton: scheduled blocks per day. Blocks with placeName become attractions; blocks without become placeholder events.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: tripIdParam,
+          summary: { type: "string", description: "Optional one-line overview of the plan" },
+          days: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                date: { type: "string", description: "YYYY-MM-DD" },
+                blocks: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      title: { type: "string" },
+                      kind: {
+                        type: "string",
+                        enum: ["meal", "activity", "travel", "rest", "other"],
+                      },
+                      time: { type: "string", description: "HH:MM" },
+                      durationMinutes: { type: "number" },
+                      placeName: {
+                        type: "string",
+                        description: "When set, add a real place-backed attraction instead of a placeholder",
+                      },
+                    },
+                    required: ["title"],
+                  },
+                },
+              },
+              required: ["date", "blocks"],
+            },
+          },
+        },
+        required: ["tripId", "days"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_trip_intent",
+      description:
+        "Propose updating what the user wants from this trip (pace, vibes, priorities, notes).",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: tripIdParam,
+          pace: {
+            type: "string",
+            enum: ["freedom", "relax", "optimize", "packed"],
+          },
+          vibes: {
+            type: "array",
+            items: { type: "string" },
+          },
+          priorities: {
+            type: "array",
+            items: { type: "string" },
+          },
+          notes: { type: "string" },
+        },
+        required: ["tripId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "web_search",
       description:
         "Look up live tour operating hours, available dates, prices, and official booking links. Read-only — does not change the trip. Use the citations to propose add_attraction or update_item with a real time (timeConfidence confirmed), bookingUrl, and the source page.",

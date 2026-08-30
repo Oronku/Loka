@@ -1,5 +1,7 @@
 import express from "express";
 import googleApi from "../services/googleApi.js";
+import { getDb } from "../config/database.js";
+import { getPlaceDetailsForApi } from "../services/placeCache.js";
 import {
   searchAttractions,
   searchAttractionSections,
@@ -95,68 +97,17 @@ router.get("/details", async (req, res) => {
       return res.status(400).json({ error: "place_id parameter is required" });
     }
 
-    const details = await googleApi.getPlaceDetails(
-      place_id,
-      [
-        "place_id",
-        "name",
-        "formatted_address",
-        "rating",
-        "geometry",
-        "formatted_phone_number",
-        "website",
-        "opening_hours",
-        "photos",
-        "reviews",
-        "price_level",
-        "types",
-        "editorial_summary",
-        "user_ratings_total",
-        "business_status",
-        "url",
-        "current_opening_hours",
-      ],
-      language
-    );
+    const db = getDb();
+    const result = await getPlaceDetailsForApi(db, place_id, language);
 
-    const hours = details.current_opening_hours || details.opening_hours;
+    if (!result?.place) {
+      return res.status(404).json({
+        error: "Failed to fetch place details",
+        message: "Place not found",
+      });
+    }
 
-    const placeDetails = {
-      placeId: details.place_id,
-      name: details.name,
-      formattedAddress: details.formatted_address,
-      rating: details.rating,
-      userRatingsTotal: details.user_ratings_total || 0,
-      priceLevel: details.price_level,
-      geometry: details.geometry,
-      description: details.editorial_summary?.overview || null,
-      formattedPhoneNumber: details.formatted_phone_number,
-      website: details.website,
-      googleMapsUrl: details.url || null,
-      businessStatus: details.business_status || null,
-      types: details.types || [],
-      openingHours: hours
-        ? {
-            openNow: hours.open_now,
-            weekdayText: hours.weekday_text || [],
-          }
-        : null,
-      photos:
-        details.photos?.slice(0, 10).map((photo) => ({
-          photoReference: photo.photo_reference,
-          width: photo.width,
-          height: photo.height,
-        })) || [],
-      reviews:
-        details.reviews?.slice(0, 5).map((review) => ({
-          authorName: review.author_name,
-          rating: review.rating,
-          text: review.text,
-          time: review.time,
-        })) || [],
-    };
-
-    res.json({ place: placeDetails });
+    res.json({ place: result.place });
   } catch (error) {
     console.error("Place details error:", error.message);
     res.status(500).json({

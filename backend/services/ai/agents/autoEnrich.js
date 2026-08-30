@@ -1,28 +1,31 @@
 /**
  * Auto-Enrich.
  *
- * Scans upcoming trips for scheduled attractions missing useful metadata
- * (address, placeId, photo, opening hours, website) and proposes one
- * enrichment ChangeSet per place using Google Places. Notes and unscheduled
- * ideas are skipped. Google rating is never written onto the trip.
- * Output is a reviewable card on the trip — never a chat message.
+ * Background job: scans upcoming trips for scheduled attractions missing place
+ * metadata or carrying stale cached facts, fetches from Google Places, and writes
+ * straight onto the trip — never via a proposal.
  *
- * This file is the reference implementation for the agent interface:
+ * Objective facts about a place (address, opening hours, website, coordinates,
+ * photos, placeId) belong to the place, not the user's trip. There is nothing
+ * to approve; the app displays them live. Proposals are for trip decisions only.
+ *
+ * Notes and unscheduled ideas are skipped. Google rating is never written onto
+ * the trip. Output is silent DB updates plus optional timeline rebuild — never a
+ * chat message or review card.
+ *
+ * Reference agent interface:
  *   export default { name, label, run(ctx) }
  * where ctx = { db, user, trips, allTrips, now, tools }.
  */
 
-import { hasPendingItemProposal, leftoverAfter } from "../proposalDedup.js";
+import { buildIdQuery } from "../../trip.service.js";
+import { scheduleTimelineRebuild } from "../../timeline/index.js";
 import { acquireAutoEnrichLock, releaseAutoEnrichLock } from "./locks.js";
 
 const MAX_ITEMS_PER_TRIP = 6;
 
-const USER_FIELD_LABELS = {
-  address: "address",
-  openingHours: "opening hours",
-  website: "website",
-  photoReference: "photo",
-};
+/** Place-fact cache TTL — hours change rarely but do change; 7 days balances freshness vs API cost. */
+export const PLACE_FACTS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function tripCity(trip) {
   const first = trip.destinations?.[0];
@@ -36,73 +39,110 @@ function tripCity(trip) {
  */
 function isEnrichableAttraction(a) {
   if (!a) return false;
+  if (a.placeholder === true || a.isPlaceholder === true) return false;
   if (a.attractionType === "note" || a.type === "note") return false;
   if (a.status === "idea") return false;
   if (!a.status && !a.scheduledDate && !a.scheduledTime) return false;
   return true;
 }
 
-function attractionNeedsEnrichment(a) {
+function missingPlumbingFields(a) {
+  return (
+    !a.placeId ||
+    !a.photoReference ||
+    !a.imageUrl ||
+    a.lat == null ||
+    a.lng == null
+  );
+}
+
+function missingPlaceFacts(a) {
+  return !a.address || !a.openingHours || !a.website;
+}
+
+/**
+ * @param {object} a
+ * @param {number} nowMs
+ */
+export function placeFactsAreStale(a, nowMs = Date.now()) {
+  const hasFacts = !!(a.address || a.openingHours || a.website);
+  if (!hasFacts) return false;
+  if (!a.placeFactsFetchedAt) return true;
+  return nowMs - new Date(a.placeFactsFetchedAt).getTime() > PLACE_FACTS_TTL_MS;
+}
+
+function attractionNeedsEnrichment(a, nowMs) {
   if (!isEnrichableAttraction(a)) return false;
   if (!a.name) return false;
-  return !a.placeId || !a.address || !a.openingHours || !a.website;
+  return (
+    missingPlumbingFields(a) ||
+    missingPlaceFacts(a) ||
+    placeFactsAreStale(a, nowMs)
+  );
 }
 
 function stableItemId(a) {
   return a?.id ?? a?._id?.toString() ?? null;
 }
 
-function joinFields(names) {
-  if (names.length === 0) return "";
-  if (names.length === 1) return names[0];
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
-}
-
-function userFacingFields(after) {
-  const names = [];
-  if (after.address || after.location) names.push(USER_FIELD_LABELS.address);
-  if (after.openingHours) names.push(USER_FIELD_LABELS.openingHours);
-  if (after.website) names.push(USER_FIELD_LABELS.website);
-  if (after.photoReference) names.push(USER_FIELD_LABELS.photoReference);
-  return names;
-}
-
 /**
- * @param {string} name
- * @param {string[]} fields
+ * Build silent field updates from a Google enrich result. Never includes rating.
+ *
+ * @param {object} a current attraction
+ * @param {object} place enrichPlace result
+ * @param {{ refreshStale: boolean }} options
  */
-export function enrichRationale(name, fields) {
-  const listed = joinFields(fields);
-  const reason =
-    fields.length === 1 ? "it was missing" : fields.length === 2 ? "both were missing" : "those were missing";
-  const want = fields.length === 1 ? "it" : "them";
-  return `I found the ${listed} for ${name} — because ${reason}. Want ${want} on the trip?`;
-}
+export function buildSilentEnrichmentUpdates(a, place, { refreshStale }) {
+  const updates = {};
 
-/**
- * @param {string} name
- * @param {string[]} fields
- */
-export function enrichLabel(name, fields) {
-  return `Add ${joinFields(fields)} to ${name}`;
-}
-
-async function skipItemEarly(db, userId, tripId, itemId) {
-  const pending = await hasPendingItemProposal(db, {
-    userId,
-    tripId,
-    itemId,
-    entity: "attraction",
-    op: "update",
-  });
-  if (pending) {
-    console.log(
-      `[auto_enrich] skip reason=pending_same_item trip=${tripId} item=${itemId}`,
-    );
-    return true;
+  if (!a.placeId && place.placeId) updates.placeId = place.placeId;
+  if (!a.photoReference && place.photoReference) {
+    updates.photoReference = place.photoReference;
   }
-  return false;
+  if (a.lat == null && place.lat != null) updates.lat = place.lat;
+  if (a.lng == null && place.lng != null) updates.lng = place.lng;
+
+  if ((!a.address || refreshStale) && place.address) {
+    updates.address = place.address;
+    if ((!a.location || refreshStale) && place.address) {
+      updates.location = place.address;
+    }
+  }
+  if ((!a.openingHours || refreshStale) && place.openingHours) {
+    updates.openingHours = place.openingHours;
+  }
+  if ((!a.website || refreshStale) && place.website) {
+    updates.website = place.website;
+  }
+
+  return updates;
+}
+
+/**
+ * Write silent enrichment fields directly on the trip.
+ *
+ * @returns {Promise<boolean>} whether the trip document was modified
+ */
+async function silentlyFillFields(db, tripId, itemId, updates, fetchedAt) {
+  const setFields = {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (value == null) continue;
+    setFields[`attractions.$[el].${key}`] = value;
+  }
+  if (fetchedAt) {
+    setFields["attractions.$[el].placeFactsFetchedAt"] = fetchedAt;
+  }
+  if (Object.keys(setFields).length === 0) return false;
+
+  setFields.updatedAt = new Date().toISOString();
+  const result = await db.collection("trips").updateOne(
+    { ...buildIdQuery(tripId), "attractions.id": itemId },
+    { $set: setFields },
+    { arrayFilters: [{ "el.id": itemId }] },
+  );
+  const modified = (result.modifiedCount ?? 0) > 0;
+  if (modified) scheduleTimelineRebuild(tripId);
+  return modified;
 }
 
 export default {
@@ -110,7 +150,9 @@ export default {
   label: "Auto-enrich",
 
   async run(ctx) {
-    const { trips, tools, db, user } = ctx;
+    const { trips, tools, db } = ctx;
+    const nowMs = ctx.now?.getTime?.() ?? Date.now();
+    const fetchedAt = (ctx.now ?? new Date()).toISOString();
     const effects = [];
 
     for (const trip of trips) {
@@ -126,7 +168,7 @@ export default {
       try {
         const city = tripCity(trip);
         const candidates = (trip.attractions || [])
-          .filter(attractionNeedsEnrichment)
+          .filter((a) => attractionNeedsEnrichment(a, nowMs))
           .slice(0, MAX_ITEMS_PER_TRIP);
 
         if (candidates.length === 0) continue;
@@ -135,50 +177,20 @@ export default {
           const itemId = stableItemId(a);
           if (!itemId) continue;
 
-          if (await skipItemEarly(db, user?.id, tripId, itemId)) continue;
-
           const place = await tools.enrichPlace(a.name, city, db);
           if (!place) continue;
 
-          const after = leftoverAfter(a, {
-            ...(place.address && place.address !== a.address ? { address: place.address } : {}),
-            ...(place.address && !a.location && place.address !== a.address
-              ? { location: place.address }
-              : {}),
-            ...(place.placeId && !a.placeId ? { placeId: place.placeId } : {}),
-            ...(place.photoReference && !a.photoReference
-              ? { photoReference: place.photoReference }
-              : {}),
-            ...(place.openingHours && !a.openingHours ? { openingHours: place.openingHours } : {}),
-            ...(place.website && !a.website ? { website: place.website } : {}),
-            ...(place.lat != null && a.lat == null ? { lat: place.lat } : {}),
-            ...(place.lng != null && a.lng == null ? { lng: place.lng } : {}),
-          });
+          const refreshStale = placeFactsAreStale(a, nowMs);
+          const updates = buildSilentEnrichmentUpdates(a, place, { refreshStale });
 
-          const fields = userFacingFields(after);
-          if (fields.length === 0) continue;
-
-          const op = tools.newOperation({
-            op: "update",
-            entity: "attraction",
-            itemId,
-            before: {
-              address: a.address ?? null,
-              openingHours: a.openingHours ?? null,
-              website: a.website ?? null,
-            },
-            after,
-            label: enrichLabel(a.name, fields),
-          });
-
-          const created = await tools.emitProposal({
+          const modified = await silentlyFillFields(
+            db,
             tripId,
-            tripName: trip.name,
-            source: "agent:auto_enrich",
-            operations: [op],
-            text: enrichRationale(a.name, fields),
-          });
-          if (created) effects.push({ tripId, itemId, count: 1 });
+            itemId,
+            updates,
+            fetchedAt,
+          );
+          if (modified) effects.push({ tripId, itemId, filled: true });
         }
       } finally {
         await releaseAutoEnrichLock(db, tripId);
