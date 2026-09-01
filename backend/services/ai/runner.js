@@ -1,13 +1,42 @@
 import { randomUUID } from "crypto";
 import { getDb } from "../../config/database.js";
 import { getOpenAI, CHAT_MODEL } from "./openaiClient.js";
-import { READ_ONLY_TOOLS, TOOL_DEFINITIONS } from "./tools.js";
-import { buildSystemPrompt } from "./prompt.js";
+import {
+  READ_ONLY_TOOLS,
+  THINK_TOOLS,
+  MEMORY_TOOLS,
+  ASK_USER_TOOLS,
+  MAX_REMEMBER_PER_TURN,
+  TOOL_DEFINITIONS,
+} from "./tools.js";
+import {
+  buildSystemPrompt,
+  buildTripAttentionContext,
+  TRIP_ATTENTION_CHAR_BUDGET,
+  isIdea,
+} from "./prompt.js";
+import { assessTripIntegrity, whatTripNeedsNow } from "./integrity/index.js";
 import { newOperation, summarizeOperations, NEW_TRIP_REF } from "./changeset.js";
 import { ARRAY_ENTITY_FIELD } from "./entityFields.js";
 import { enrichPlace, normalizeOpeningHours } from "./places.js";
 import { MAX_WEB_SEARCHES_PER_TURN, webSearch } from "./webSearch.js";
 import { mergeTripIntent } from "../trip.service.js";
+import { computeTripReadiness, readinessForPrompt } from "../trip/readiness.js";
+import {
+  applyRemember,
+  buildAxisBrief,
+  getAxes,
+  recallAxis,
+  selectRelevantAxes,
+} from "./axisMemory.js";
+import { sanitizeQuestionSet } from "./questions.js";
+import { buildOperationProvenance, runWriteGate } from "./writeGate.js";
+import {
+  attachDeliberationToOperations,
+  executeThinkItThrough,
+  isBroadItineraryWrite,
+  isBroadPlanningMessage,
+} from "./thinkItThrough.js";
 
 const ENTITY_FIELD = ARRAY_ENTITY_FIELD;
 
@@ -299,12 +328,40 @@ function firstSourceUrl(toolCalls) {
   return "";
 }
 
+function citationUrlsFromSearchResults(webSearchResults) {
+  const urls = new Set();
+  for (const result of webSearchResults || []) {
+    for (const cite of result?.citations || []) {
+      if (cite?.url) urls.add(String(cite.url).trim());
+    }
+  }
+  return urls;
+}
+
+function findTripIdea(trip, name) {
+  const needle = typeof name === "string" ? name.trim().toLowerCase() : "";
+  if (!needle) return null;
+  return (trip?.attractions || []).find(
+    (a) => isIdea(a) && typeof a.name === "string" && a.name.trim().toLowerCase() === needle,
+  );
+}
+
+function attractionProvenance(args, place, trip, citationUrls) {
+  return buildOperationProvenance({
+    args,
+    place,
+    citationUrls,
+    matchedIdea: findTripIdea(trip, args.name),
+    fromCache: !!place?.placeId,
+  });
+}
+
 /**
  * Convert the model's tool calls into a single ChangeSet's operations.
  * Enriches attractions with Google Places. Returns the resolved target trip
  * metadata so the caller can persist the proposal.
  */
-export async function buildOperations(toolCalls, { trips, activeTripId }) {
+export async function buildOperations(toolCalls, { trips, activeTripId, webSearchResults = [] }) {
   const operations = [];
   let createsTrip = false;
   let tripName = "";
@@ -312,6 +369,8 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
   let createDestination = null;
   let skeletonNotes = [];
   let grouping = null;
+  let fromSkeleton = false;
+  const citationUrls = citationUrlsFromSearchResults(webSearchResults);
 
   for (const call of toolCalls) {
     const args = call.args;
@@ -473,6 +532,7 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
             entity: "attraction",
             after: item,
             label: `${item.name}${item.scheduledDate ? ` (${item.scheduledDate} ${item.scheduledTime})` : ""}`,
+            provenance: attractionProvenance(a, place, targetTrip, citationUrls),
           }),
         );
         break;
@@ -487,6 +547,7 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
               entity: "attraction",
               after: item,
               label: `${item.name}${item.scheduledDate ? ` (${item.scheduledDate} ${item.scheduledTime})` : ""}`,
+              provenance: attractionProvenance(act, place, targetTrip, citationUrls),
             }),
           );
         }
@@ -523,6 +584,20 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
             label: `Update ${a.entity}: ${Object.entries(changes)
               .map(([k, v]) => `${k} → ${v}`)
               .join(", ")}`,
+            ...(a.entity === "attraction"
+              ? {
+                  provenance: buildOperationProvenance({
+                    args: { ...changes, name: changes.name || before?.name },
+                    place: {
+                      openingHours: changes.openingHours || before?.openingHours,
+                      placeId: before?.placeId,
+                    },
+                    citationUrls,
+                    matchedIdea: before && isIdea(before) ? before : null,
+                    fromCache: !!before?.placeId,
+                  }),
+                }
+              : {}),
           }),
         );
         break;
@@ -631,12 +706,19 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
               ? dayPrefixedLabel(date, title)
               : `${title} (unscheduled placeholder)`,
             groupKey: date || null,
+            provenance: {
+              origin: "model_guess",
+              verified: false,
+              sourceUrl: null,
+              note: "Open slot — no venue yet",
+            },
           }),
         );
         break;
       }
       case "plan_trip_skeleton": {
         if (!Array.isArray(a.days)) break;
+        fromSkeleton = true;
         grouping = "byDay";
         const sortedDays = [...a.days]
           .filter((day) => day && typeof day === "object" && typeof day.date === "string")
@@ -692,6 +774,17 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
                   after: item,
                   label: dayPrefixedLabel(date, item.name),
                   groupKey: date,
+                  provenance: attractionProvenance(
+                    {
+                      type: "attraction",
+                      name: placeName,
+                      date,
+                      time: explicitTime,
+                    },
+                    place,
+                    targetTrip,
+                    citationUrls,
+                  ),
                 }),
               );
             } else {
@@ -709,6 +802,12 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
                   after: item,
                   label: dayPrefixedLabel(date, title),
                   groupKey: date,
+                  provenance: {
+                    origin: "model_guess",
+                    verified: false,
+                    sourceUrl: null,
+                    note: "Skeleton slot — unverified",
+                  },
                 }),
               );
             }
@@ -758,6 +857,11 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
         break;
       }
       case "web_search":
+      case "recall":
+      case "whats_needed":
+      case "remember":
+      case "ask_user":
+      case "think_it_through":
         break;
       default:
         throw new Error(`Unknown tool: ${call.name}`);
@@ -777,6 +881,7 @@ export async function buildOperations(toolCalls, { trips, activeTripId }) {
     targetTripId,
     rationale,
     grouping,
+    fromSkeleton,
   };
 }
 
@@ -791,12 +896,132 @@ function toApiToolCalls(toolCalls) {
   }));
 }
 
-async function runReadOnlyTools(toolCalls, searchesUsed) {
+async function executeWhatsNeeded({ tripId, activeTripId, trips = [], userId, profile = null }) {
+  const targetId = tripId || activeTripId;
+  if (!targetId) {
+    return { ok: false, error: "no trip" };
+  }
+  const trip = trips.find((t) => (t.id || t._id?.toString()) === targetId);
+  if (!trip) {
+    return { ok: false, error: "trip not found" };
+  }
+  const db = getDb();
+  const axes =
+    db && userId ? await getAxes(db, targetId, userId, { trip }) : [];
+  const assessment = assessTripIntegrity(trip, {
+    axes,
+    now: new Date(),
+    profile,
+  });
+  const { findings, rationale } = whatTripNeedsNow(assessment.findings, { limit: 12 });
+  return {
+    ok: true,
+    tripId: targetId,
+    rationale,
+    summary: assessment.summary,
+    findings: findings.map((f) => ({
+      id: f.id,
+      code: f.code,
+      axisIds: f.axisIds,
+      kind: f.kind,
+      severity: f.severity,
+      blocking: f.blocking,
+      deadline: f.deadline,
+      urgency: f.urgency,
+      title: f.title,
+      detail: f.detail,
+      evidence: f.evidence,
+      entities: f.entities,
+      resolution: f.resolution,
+    })),
+  };
+}
+
+async function runThinkTools(toolCalls, {
+  tripId,
+  trips,
+  userId,
+  profile,
+  webSearchResults = [],
+}) {
   const messages = [];
+  /** @type {object|null} */
+  let outcome = null;
+  const db = getDb();
+
+  for (const call of toolCalls) {
+    const id = call.id || `call_th_${call.name || "tool"}`;
+    if (call.name !== "think_it_through") continue;
+
+    const args = call.args || {};
+    const targetId = args.tripId || tripId;
+    const trip = trips.find((t) => (t.id || t._id?.toString()) === targetId) || null;
+
+    let payload;
+    if (!targetId || !trip) {
+      payload = { ok: false, error: "trip not found" };
+    } else {
+      payload = await executeThinkItThrough(db, {
+        tripId: targetId,
+        userId,
+        trip,
+        profile,
+        args,
+        now: () => new Date(),
+      });
+      outcome = payload;
+    }
+
+    messages.push({
+      role: "tool",
+      tool_call_id: id,
+      content: JSON.stringify(payload),
+    });
+  }
+
+  return { messages, outcome, webSearchResults };
+}
+
+async function runReadOnlyTools(toolCalls, searchesUsed, { tripId, trips, userId, profile } = {}) {
+  const messages = [];
+  const webSearchResults = [];
   let used = searchesUsed;
+  const db = getDb();
 
   for (const call of toolCalls) {
     const id = call.id || `call_${used}_${call.name || "tool"}`;
+
+    if (call.name === "recall") {
+      let payload;
+      if (!tripId) {
+        payload = { ok: false, error: "no active trip" };
+      } else {
+        payload = await recallAxis(db, tripId, call.args?.axisId);
+      }
+      messages.push({
+        role: "tool",
+        tool_call_id: id,
+        content: JSON.stringify(payload),
+      });
+      continue;
+    }
+
+    if (call.name === "whats_needed") {
+      const payload = await executeWhatsNeeded({
+        tripId: call.args?.tripId,
+        activeTripId: tripId,
+        trips,
+        userId,
+        profile,
+      });
+      messages.push({
+        role: "tool",
+        tool_call_id: id,
+        content: JSON.stringify(payload),
+      });
+      continue;
+    }
+
     if (call.name !== "web_search") continue;
 
     let payload;
@@ -814,6 +1039,7 @@ async function runReadOnlyTools(toolCalls, searchesUsed) {
       } catch {
         payload = { ok: false, error: "failed", text: "", citations: [] };
       }
+      webSearchResults.push(payload);
     }
 
     messages.push({
@@ -823,7 +1049,36 @@ async function runReadOnlyTools(toolCalls, searchesUsed) {
     });
   }
 
-  return { messages, searchesUsed: used };
+  return { messages, searchesUsed: used, webSearchResults };
+}
+
+async function runMemoryTools(toolCalls, { tripId, userId, memoryUsed }) {
+  const messages = [];
+  let used = memoryUsed;
+  const db = getDb();
+
+  for (const call of toolCalls) {
+    const id = call.id || `call_mem_${used}_${call.name || "tool"}`;
+    if (call.name !== "remember") continue;
+
+    let payload;
+    if (!tripId || !userId) {
+      payload = { ok: false, error: "no active trip" };
+    } else if (used >= MAX_REMEMBER_PER_TURN) {
+      payload = { ok: false, error: "limit", max: MAX_REMEMBER_PER_TURN };
+    } else {
+      used += 1;
+      payload = await applyRemember(db, { tripId, userId, args: call.args || {} });
+    }
+
+    messages.push({
+      role: "tool",
+      tool_call_id: id,
+      content: JSON.stringify(payload),
+    });
+  }
+
+  return { messages, memoryUsed: used };
 }
 
 /**
@@ -880,12 +1135,128 @@ async function streamCompletion(openai, messages, { tools, onToken }) {
 
 function splitToolCalls(toolCalls) {
   const reads = [];
+  const thinks = [];
+  const memory = [];
+  const asks = [];
   const writes = [];
   for (const call of toolCalls) {
     if (READ_ONLY_TOOLS.has(call.name)) reads.push(call);
+    else if (THINK_TOOLS.has(call.name)) thinks.push(call);
+    else if (MEMORY_TOOLS.has(call.name)) memory.push(call);
+    else if (ASK_USER_TOOLS.has(call.name)) asks.push(call);
     else writes.push(call);
   }
-  return { reads, writes };
+  return { reads, thinks, memory, asks, writes };
+}
+
+function emptyResult(activeTripId) {
+  return {
+    text: "",
+    operations: [],
+    summary: "",
+    rationale: "",
+    createsTrip: false,
+    tripName: "",
+    targetTripId: activeTripId,
+    questionSet: null,
+    deliberation: null,
+    deferredResearch: false,
+  };
+}
+
+async function finishWithDeliberationQuestion(openai, messages, rawQuestions, deliberationOutcome, {
+  onToken,
+  tripId,
+  userId,
+}) {
+  const questionResult = await finishWithProgrammaticAsk(openai, messages, rawQuestions, {
+    onToken,
+    tripId,
+    userId,
+  });
+  return {
+    ...questionResult,
+    deliberation: deliberationOutcome,
+  };
+}
+
+async function finishWithDeferredResearch(openai, messages, deliberationOutcome, { onToken, tripId }) {
+  const intro =
+    "You started looking into a broad itinerary request asynchronously. Tell the user in one friendly sentence that you are working through the options and will ping them when ready — do not propose changes or list places yet.";
+
+  const followupMessages = [...messages, { role: "system", content: intro }];
+  const second = await streamCompletion(openai, followupMessages, { tools: null, onToken });
+
+  return {
+    ...emptyResult(tripId),
+    text:
+      second.content ||
+      "Give me a bit — I'm working through the options and will ping you when I've landed on something worth proposing.",
+    deliberation: deliberationOutcome,
+    deferredResearch: true,
+  };
+}
+
+async function finishWithProgrammaticAsk(openai, messages, rawQuestions, { onToken, tripId, userId }) {
+  const db = getDb();
+  let questionSet = null;
+
+  if (db && tripId && userId && rawQuestions?.length > 0) {
+    const sanitized = await sanitizeQuestionSet(db, rawQuestions, { tripId, userId });
+    if (sanitized.ok) {
+      questionSet = { tripId, questions: sanitized.questions };
+    }
+  }
+
+  const intro = questionSet
+    ? "You need a quick preference check before building the itinerary (question card below). Introduce it in one friendly sentence — why you need their pick. Do not list every option; the card shows them."
+    : "You tried to ask a question but it was filtered (duplicate, cooldown, or invalid). Reply briefly without re-asking.";
+
+  const followupMessages = [
+    ...messages,
+    { role: "system", content: intro },
+  ];
+
+  const second = await streamCompletion(openai, followupMessages, { tools: null, onToken });
+
+  return {
+    ...emptyResult(tripId),
+    text: second.content || (questionSet ? "Quick question for you:" : "How can I help with your trip?"),
+    questionSet,
+  };
+}
+
+async function finishWithAskUser(openai, messages, askCalls, { onToken, tripId, userId }) {
+  const rawQuestions = askCalls[0]?.args?.questions || [];
+  const db = getDb();
+  let questionSet = null;
+
+  if (db && tripId && userId && rawQuestions.length > 0) {
+    const sanitized = await sanitizeQuestionSet(db, rawQuestions, { tripId, userId });
+    if (sanitized.ok) {
+      questionSet = { tripId, questions: sanitized.questions };
+    }
+  }
+
+  const intro = questionSet
+    ? "You asked the user a short multiple-choice question card (shown below your reply). Introduce it in one friendly sentence — why you need their pick, tied to the gap it closes. Do not list every option; the card shows them."
+    : "You tried to ask a question but it was filtered (duplicate, cooldown, or invalid). Reply briefly without re-asking.";
+
+  const followupMessages = [
+    ...messages,
+    {
+      role: "system",
+      content: intro,
+    },
+  ];
+
+  const second = await streamCompletion(openai, followupMessages, { tools: null, onToken });
+
+  return {
+    ...emptyResult(tripId),
+    text: second.content || (questionSet ? "Quick question for you:" : "How can I help with your trip?"),
+    questionSet,
+  };
 }
 
 const UNCONFIGURED_TEXT = "I lost my signal for a sec — try me again?";
@@ -898,14 +1269,18 @@ const UNCONFIGURED_TEXT = "I lost my signal for a sec — try me again?";
  * @param {object[]} args.trips    the user's trips (full docs)
  * @param {object|null} args.profile  user memory/profile (Milestone 2)
  * @param {string|null} args.activeTripId  trip the user is viewing
+ * @param {string|null} [args.userId]
+ * @param {string} [args.userMessage]  latest user text (axis relevance)
  * @param {(delta: string) => void} [args.onToken]  streaming callback
- * @returns {Promise<{ text: string, operations: object[], summary: string, rationale: string, createsTrip: boolean, tripName: string, targetTripId: string|null }>}
+ * @returns {Promise<{ text: string, operations: object[], summary: string, rationale: string, createsTrip: boolean, tripName: string, targetTripId: string|null, questionSet: object|null }>}
  */
 export async function runAssistant({
   history = [],
   trips = [],
   profile = null,
   activeTripId = null,
+  userId = null,
+  userMessage = "",
   isGroupChat = false,
   groupParticipants = [],
   onToken,
@@ -920,7 +1295,41 @@ export async function runAssistant({
       createsTrip: false,
       tripName: "",
       targetTripId: null,
+      questionSet: null,
     };
+  }
+
+  const db = getDb();
+  let integrityBlock = "";
+  let axisBlock = "";
+  if (db && activeTripId && userId) {
+    const activeTrip =
+      trips.find((t) => (t.id || t._id?.toString()) === activeTripId) || null;
+    const axes = await getAxes(db, activeTripId, userId, { trip: activeTrip });
+    const readiness = activeTrip
+      ? readinessForPrompt(computeTripReadiness(activeTrip))
+      : null;
+    const integrityAssessment = activeTrip
+      ? assessTripIntegrity(activeTrip, { axes, now: new Date(), profile })
+      : null;
+    if (readiness && integrityAssessment?.findings?.length) {
+      const integrityAxes = [
+        ...new Set(integrityAssessment.findings.flatMap((f) => f.axisIds)),
+      ].slice(0, 3);
+      readiness.nextUp = [
+        ...new Set([...(readiness.nextUp || []), ...integrityAxes]),
+      ];
+    }
+    const { fullIds } = selectRelevantAxes(axes, { userMessage, readiness });
+    const axisBlockRaw = buildAxisBrief(axes, {
+      fullIds,
+      charBudget: TRIP_ATTENTION_CHAR_BUDGET,
+    });
+    ({ integrityBlock, axisBlock } = buildTripAttentionContext({
+      integrityAssessment,
+      axisBlockRaw,
+      charBudget: TRIP_ATTENTION_CHAR_BUDGET,
+    }));
   }
 
   const system = buildSystemPrompt({
@@ -929,6 +1338,8 @@ export async function runAssistant({
     activeTripId,
     isGroupChat,
     groupParticipants,
+    axisBlock,
+    integrityBlock,
   });
   let messages = [{ role: "system", content: system }, ...history];
 
@@ -938,11 +1349,37 @@ export async function runAssistant({
   });
 
   let searchesUsed = 0;
-  for (let round = 0; round < MAX_READ_ROUNDS; round += 1) {
-    const { reads } = splitToolCalls(last.toolCalls);
-    if (reads.length === 0) break;
+  let memoryUsed = 0;
+  let webSearchResults = [];
+  /** @type {object|null} */
+  let deliberationOutcome = null;
+  let thinkUsedThisTurn = false;
 
-    const apiCalls = toApiToolCalls(reads);
+  for (let round = 0; round < MAX_READ_ROUNDS; round += 1) {
+    const { reads, thinks, memory, asks } = splitToolCalls(last.toolCalls);
+    if (asks.length > 0) {
+      return finishWithAskUser(openai, messages, asks.slice(0, 1), {
+        onToken,
+        tripId: activeTripId,
+        userId,
+      });
+    }
+    if (reads.length === 0 && memory.length === 0 && thinks.length === 0) break;
+
+    const readCalls = reads.map((call, i) => ({
+      ...call,
+      id: call.id || `call_r_${round}_${i}_${call.name || "tool"}`,
+    }));
+    const thinkCalls = thinks.map((call, i) => ({
+      ...call,
+      id: call.id || `call_t_${round}_${i}_${call.name || "tool"}`,
+    }));
+    const memCalls = memory.map((call, i) => ({
+      ...call,
+      id: call.id || `call_m_${round}_${i}_${call.name || "tool"}`,
+    }));
+
+    const apiCalls = toApiToolCalls([...readCalls, ...thinkCalls, ...memCalls]);
     messages = [
       ...messages,
       {
@@ -952,12 +1389,52 @@ export async function runAssistant({
       },
     ];
 
-    const executed = await runReadOnlyTools(
-      reads.map((call, i) => ({ ...call, id: apiCalls[i].id })),
-      searchesUsed,
-    );
-    searchesUsed = executed.searchesUsed;
-    messages = [...messages, ...executed.messages];
+    const readExecuted = await runReadOnlyTools(readCalls, searchesUsed, {
+      tripId: activeTripId,
+      trips,
+      userId,
+      profile,
+    });
+    searchesUsed = readExecuted.searchesUsed;
+    webSearchResults = webSearchResults.concat(readExecuted.webSearchResults || []);
+    const thinkExecuted = await runThinkTools(thinkCalls, {
+      tripId: activeTripId,
+      trips,
+      userId,
+      profile,
+      webSearchResults,
+    });
+    if (thinkExecuted.outcome) {
+      deliberationOutcome = thinkExecuted.outcome;
+      thinkUsedThisTurn = true;
+    }
+    if (deliberationOutcome?.deferred) {
+      return finishWithDeferredResearch(openai, messages, deliberationOutcome, {
+        onToken,
+        tripId: activeTripId,
+      });
+    }
+    if (deliberationOutcome?.questions?.length) {
+      return finishWithDeliberationQuestion(
+        openai,
+        messages,
+        deliberationOutcome.questions,
+        deliberationOutcome,
+        { onToken, tripId: activeTripId, userId },
+      );
+    }
+    const memExecuted = await runMemoryTools(memCalls, {
+      tripId: activeTripId,
+      userId,
+      memoryUsed,
+    });
+    memoryUsed = memExecuted.memoryUsed;
+    messages = [
+      ...messages,
+      ...readExecuted.messages,
+      ...thinkExecuted.messages,
+      ...memExecuted.messages,
+    ];
 
     last = await streamCompletion(openai, messages, {
       tools: TOOL_DEFINITIONS,
@@ -965,8 +1442,108 @@ export async function runAssistant({
     });
   }
 
-  const { writes } = splitToolCalls(last.toolCalls);
+  const { asks, writes } = splitToolCalls(last.toolCalls);
+  if (asks.length > 0) {
+    return finishWithAskUser(openai, messages, asks.slice(0, 1), {
+      onToken,
+      tripId: activeTripId,
+      userId,
+    });
+  }
+
+  if (
+    !thinkUsedThisTurn &&
+    isBroadPlanningMessage(userMessage) &&
+    isBroadItineraryWrite(writes) &&
+    activeTripId
+  ) {
+    const activeTrip =
+      trips.find((t) => (t.id || t._id?.toString()) === activeTripId) || null;
+    if (activeTrip && db) {
+      deliberationOutcome = await executeThinkItThrough(db, {
+        tripId: activeTripId,
+        userId,
+        trip: activeTrip,
+        profile,
+        args: {
+          tripId: activeTripId,
+          decision: { intent: userMessage, limit: 4 },
+        },
+      });
+      thinkUsedThisTurn = true;
+      if (deliberationOutcome?.deferred) {
+        return finishWithDeferredResearch(openai, messages, deliberationOutcome, {
+          onToken,
+          tripId: activeTripId,
+        });
+      }
+      if (deliberationOutcome?.questions?.length) {
+        return finishWithDeliberationQuestion(
+          openai,
+          messages,
+          deliberationOutcome.questions,
+          deliberationOutcome,
+          { onToken, tripId: activeTripId, userId },
+        );
+      }
+    }
+  }
+
+  if (deliberationOutcome?.questions?.length) {
+    return finishWithDeliberationQuestion(
+      openai,
+      messages,
+      deliberationOutcome.questions,
+      deliberationOutcome,
+      { onToken, tripId: activeTripId, userId },
+    );
+  }
+
   if (writes.length === 0) {
+    if (deliberationOutcome?.operations?.length && !deliberationOutcome?.questions?.length) {
+      const targetTrip =
+        trips.find((t) => (t.id || t._id?.toString()) === activeTripId) || null;
+      const gate = await runWriteGate(db, {
+        operations: deliberationOutcome.operations,
+        trip: targetTrip,
+        tripId: activeTripId,
+        userId,
+        webSearchResults,
+        fromSkeleton: false,
+        userMessage,
+      });
+      if (gate.action === "ask") {
+        return finishWithDeliberationQuestion(openai, messages, gate.questions, deliberationOutcome, {
+          onToken,
+          tripId: activeTripId,
+          userId,
+        });
+      }
+      const finalOperations = gate.operations;
+      const followupMessages = [
+        ...messages,
+        {
+          role: "system",
+          content:
+            "You deliberated and have a verified proposal ready (shown as a review card). Write 1-3 sentences: why this one, what you rejected and why. Conversational — not a report.",
+        },
+      ];
+      const second = await streamCompletion(openai, followupMessages, { tools: null, onToken });
+      return {
+        text:
+          second.content ||
+          "Here's what actually fits — review the card when you're ready.",
+        operations: finalOperations,
+        summary: summarizeOperations(finalOperations),
+        rationale: deliberationOutcome.decisions?.[0]?.reasoning || "",
+        createsTrip: false,
+        tripName: targetTrip?.name || "",
+        targetTripId: activeTripId,
+        questionSet: null,
+        deliberation: deliberationOutcome,
+        deferredResearch: false,
+      };
+    }
     return {
       text: last.content || "How can I help with your trip?",
       operations: [],
@@ -975,14 +1552,65 @@ export async function runAssistant({
       createsTrip: false,
       tripName: "",
       targetTripId: activeTripId,
+      questionSet: null,
+      deliberation: deliberationOutcome,
+      deferredResearch: false,
     };
   }
 
-  const built = await buildOperations(writes, { trips, activeTripId });
+  if (deliberationOutcome?.questions?.length) {
+    return finishWithDeliberationQuestion(
+      openai,
+      messages,
+      deliberationOutcome.questions,
+      deliberationOutcome,
+      { onToken, tripId: activeTripId, userId },
+    );
+  }
+
+  const built = await buildOperations(writes, { trips, activeTripId, webSearchResults });
+  let mergedOperations = attachDeliberationToOperations(
+    built.operations,
+    deliberationOutcome,
+  );
+
+  const targetTrip =
+    trips.find((t) => (t.id || t._id?.toString()) === (built.targetTripId || activeTripId)) ||
+    null;
+
+  const gate = await runWriteGate(db, {
+    operations: mergedOperations,
+    trip: targetTrip,
+    tripId: built.targetTripId || activeTripId,
+    userId,
+    webSearchResults,
+    fromSkeleton: built.fromSkeleton,
+    userMessage,
+  });
+
+  if (gate.action === "ask") {
+    return finishWithProgrammaticAsk(openai, messages, gate.questions, {
+      onToken,
+      tripId: built.targetTripId || activeTripId,
+      userId,
+    });
+  }
+
+  const finalOperations = gate.operations;
+  const downgradedOps = (gate.action === "downgrade" ? gate.operations : []).filter(
+    (op) => op.provenance?.note?.startsWith("Couldn't confirm"),
+  );
 
   const toolEcho = writes
     .map((c) => `${c.name}(${JSON.stringify(c.args)})`)
     .join("; ");
+
+  const downgradeHint =
+    gate.action === "downgrade"
+      ? `Some specific venues could not be verified for their proposed date/time and were changed to open placeholder slots instead: ${downgradedOps.map((op) => op.after?.name || "slot").join(", ") || "see card"}. In your reply, name the check you ran (hours / availability) and say plainly what you could not confirm — do not imply confidence. `
+      : deliberationOutcome
+        ? "You deliberated before proposing. In your reply, briefly say why this pick and mention one thing you ruled out and why — conversational, not a report. "
+        : "";
 
   const followupMessages = [
     ...messages,
@@ -991,6 +1619,7 @@ export async function runAssistant({
       content:
         `You proposed these changes (they are now shown to the user as a reviewable card with Apply/Reject): ${toolEcho}. ` +
         (built.rationale ? `Card note: ${built.rationale} ` : "") +
+        downgradeHint +
         `Write a short, friendly natural-language reply (1-3 sentences) describing what you proposed. ` +
         `One idea, with a because. If a time is a guess, say so. If you used a web page, name it so they can check. ` +
         `Do NOT ask for confirmation — the card handles that. Do not list every field; the card shows details.`,
@@ -1001,11 +1630,16 @@ export async function runAssistant({
 
   return {
     text: second.content || "Here's what I'd change — review the card and apply when ready.",
-    operations: built.operations,
-    summary: summarizeOperations(built.operations),
+    operations: finalOperations,
+    summary: summarizeOperations(finalOperations),
     rationale: built.rationale || "",
     createsTrip: built.createsTrip,
     tripName: built.tripName,
     targetTripId: built.targetTripId,
+    questionSet: null,
+    deliberation: deliberationOutcome,
+    deferredResearch: false,
   };
 }
+
+export { executeWhatsNeeded, executeThinkItThrough };

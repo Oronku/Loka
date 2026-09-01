@@ -22,6 +22,7 @@ export const NEW_TRIP_REF = "__new__";
  * @property {object|null} after
  * @property {string} label  human one-liner for the diff UI
  * @property {string|null} [groupKey]  YYYY-MM-DD day key for grouped diff sections
+ * @property {{ origin: string, verified: boolean, sourceUrl: string|null, note: string }|null} [provenance]
  */
 
 /**
@@ -41,9 +42,11 @@ export function newOperation({
   after = null,
   label = "",
   groupKey = null,
+  provenance = null,
 }) {
   const opDoc = { id: randomUUID(), op, entity, itemId, before, after, label };
   if (groupKey) opDoc.groupKey = groupKey;
+  if (provenance) opDoc.provenance = provenance;
   return opDoc;
 }
 

@@ -1700,4 +1700,4 @@ export function readinessForPrompt(readiness) {
   };
 }
 
-export { enumerateTripDays as deriveTripDays };
+export { CATEGORY_ORDER, enumerateTripDays as deriveTripDays };
