@@ -4,6 +4,12 @@ import { runAssistant } from "./runner.js";
 import { createChangeSet, PROPOSALS_COLLECTION } from "./changeset.js";
 import { getUserProfile, maybeUpdateProfile } from "./memory.js";
 import { messageToContextLine, messageToGroupHistoryLine, sanitizeLokaReplyText } from "./messageFormat.js";
+import {
+  createQuestionSet,
+  embedQuestionSet,
+  syncEmbeddedQuestionSetStatus,
+} from "./questions.js";
+import { QUESTION_SETS_COLLECTION } from "../../models/aiQuestionSet.helper.js";
 
 export const AI_WELCOME = `Hey! I'm Loka 👋
 
@@ -58,6 +64,9 @@ export async function getOrCreateAiChat(db, userId) {
   return chat;
 }
 
+/** Compact form of a question set embedded on the AI message for the client. */
+export { embedQuestionSet, syncEmbeddedQuestionSetStatus };
+
 /** Compact form of a changeset embedded on the AI message for the client. */
 function embedChangeSet(cs) {
   if (!cs) return null;
@@ -84,10 +93,19 @@ function embedChangeSet(cs) {
  * @param {string} opts.userId
  * @param {string} opts.text
  * @param {object|null} [opts.changeSet]  full changeset doc (from createChangeSet)
+ * @param {object|null} [opts.questionSet] full question set doc (from createQuestionSet)
  * @param {string|null} [opts.chatId]     reuse a known chat id, else resolve it
+ * @param {boolean} [opts.deferredResearch] Loka promised an async follow-up on this turn
  * @returns {Promise<object>} the saved message (with string _id)
  */
-export async function postAssistantMessage(db, { userId, text, changeSet = null, chatId = null }) {
+export async function postAssistantMessage(db, {
+  userId,
+  text,
+  changeSet = null,
+  questionSet = null,
+  chatId = null,
+  deferredResearch = false,
+}) {
   if (!chatId) {
     const chat = await getOrCreateAiChat(db, userId);
     chatId = chat._id.toString();
@@ -99,6 +117,8 @@ export async function postAssistantMessage(db, { userId, text, changeSet = null,
     senderName: "Loka",
     text: text || "",
     changeSet: embedChangeSet(changeSet),
+    questionSet: embedQuestionSet(questionSet),
+    deferredResearch: deferredResearch === true,
     timestamp: new Date(),
     readBy: [],
   };
@@ -109,6 +129,12 @@ export async function postAssistantMessage(db, { userId, text, changeSet = null,
     await db
       .collection(PROPOSALS_COLLECTION)
       .updateOne({ _id: new ObjectId(changeSet._id) }, { $set: { messageId } });
+  }
+
+  if (questionSet) {
+    await db
+      .collection(QUESTION_SETS_COLLECTION)
+      .updateOne({ _id: new ObjectId(questionSet._id) }, { $set: { messageId } });
   }
 
   await db.collection("chats").updateOne(
@@ -129,7 +155,13 @@ export async function postAssistantMessage(db, { userId, text, changeSet = null,
 /**
  * Persist a Loka reply into a trip group chat and bump unread for all humans.
  */
-export async function postGroupChatAssistantMessage(db, { chatId, text, changeSet = null }) {
+export async function postGroupChatAssistantMessage(db, {
+  chatId,
+  text,
+  changeSet = null,
+  questionSet = null,
+  deferredResearch = false,
+}) {
   const chat = await db.collection("chats").findOne({ _id: new ObjectId(chatId) });
   if (!chat) throw new Error("Chat not found");
 
@@ -141,6 +173,8 @@ export async function postGroupChatAssistantMessage(db, { chatId, text, changeSe
     senderName: "Loka",
     text: cleanText,
     changeSet: embedChangeSet(changeSet),
+    questionSet: embedQuestionSet(questionSet),
+    deferredResearch: deferredResearch === true,
     timestamp: new Date(),
     readBy: [],
   };
@@ -151,6 +185,12 @@ export async function postGroupChatAssistantMessage(db, { chatId, text, changeSe
     await db
       .collection(PROPOSALS_COLLECTION)
       .updateOne({ _id: new ObjectId(changeSet._id) }, { $set: { messageId } });
+  }
+
+  if (questionSet) {
+    await db
+      .collection(QUESTION_SETS_COLLECTION)
+      .updateOne({ _id: new ObjectId(questionSet._id) }, { $set: { messageId } });
   }
 
   const unreadInc = {};
@@ -295,6 +335,8 @@ export async function generateAiReply(db, {
     trips,
     profile,
     activeTripId,
+    userId,
+    userMessage,
     isGroupChat,
     groupParticipants,
     onToken,
@@ -314,13 +356,35 @@ export async function generateAiReply(db, {
     });
   }
 
+  let questionSet = null;
+  if (result.questionSet?.questions?.length) {
+    const qTripId = result.questionSet.tripId || activeTripId;
+    if (qTripId) {
+      questionSet = await createQuestionSet(db, {
+        tripId: qTripId,
+        userId,
+        chatId,
+        source: "turn",
+        questions: result.questionSet.questions,
+      });
+    }
+  }
+
   const saved = isGroupChat
-    ? await postGroupChatAssistantMessage(db, { text: result.text, changeSet, chatId })
+    ? await postGroupChatAssistantMessage(db, {
+        text: result.text,
+        changeSet,
+        questionSet,
+        chatId,
+        deferredResearch: result.deferredResearch,
+      })
     : await postAssistantMessage(db, {
         userId,
         text: result.text,
         changeSet,
+        questionSet,
         chatId,
+        deferredResearch: result.deferredResearch,
       });
 
   // Fold durable preferences into long-term memory (fire-and-forget, throttled
@@ -625,7 +689,15 @@ export async function generateEphemeralAiReply(db, { user, userMessage, history 
     convo.push({ role: "user", content: userMessage });
   }
 
-  const result = await runAssistant({ history: convo, trips, profile, activeTripId: null, onToken });
+  const result = await runAssistant({
+    history: convo,
+    trips,
+    profile,
+    activeTripId: null,
+    userId,
+    userMessage,
+    onToken,
+  });
 
   let changeSet = null;
   if (result.operations.length > 0) {
@@ -638,6 +710,17 @@ export async function generateEphemeralAiReply(db, { user, userMessage, history 
       source: "chat",
       rationale: result.rationale,
       operations: result.operations,
+    });
+  }
+
+  let questionSet = null;
+  if (result.questionSet?.questions?.length && result.questionSet.tripId) {
+    questionSet = await createQuestionSet(db, {
+      tripId: result.questionSet.tripId,
+      userId,
+      chatId: null,
+      source: "turn",
+      questions: result.questionSet.questions,
     });
   }
 
@@ -655,6 +738,8 @@ export async function generateEphemeralAiReply(db, { user, userMessage, history 
     senderName: "Loka",
     text: result.text,
     changeSet: embedChangeSet(changeSet),
+    questionSet: embedQuestionSet(questionSet),
+    deferredResearch: result.deferredResearch === true,
     timestamp: new Date().toISOString(),
     readBy: [],
   };

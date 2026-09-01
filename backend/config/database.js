@@ -82,6 +82,18 @@ export async function connectToDatabase() {
       .createIndex({ userId: 1, read: 1, createdAt: -1 });
 
     await db
+      .collection("ai_trip_axes")
+      .createIndex({ tripId: 1, axisId: 1 }, { unique: true });
+    await db.collection("ai_trip_axes").createIndex({ tripId: 1, lastTouchedAt: -1 });
+
+    await db
+      .collection("ai_question_sets")
+      .createIndex({ tripId: 1, status: 1 });
+    await db
+      .collection("ai_question_sets")
+      .createIndex({ userId: 1, askedAt: -1 });
+
+    await db
       .collection("push_tokens")
       .createIndex({ userId: 1, expoPushToken: 1 }, { unique: true });
     await db.collection("push_tokens").createIndex({ userId: 1 });
@@ -118,6 +130,15 @@ export async function connectToDatabase() {
       .collection("places_cache")
       .createIndex({ placeId: 1 }, { unique: true });
     await db.collection("places_cache").createIndex({ country: 1 });
+
+    await db
+      .collection("ai_deliberations")
+      .createIndex({ tripId: 1, slotId: 1, createdAt: -1 });
+    await db.collection("ai_deliberations").createIndex({ tripId: 1, createdAt: -1 });
+
+    await db
+      .collection("ai_trip_findings")
+      .createIndex({ tripId: 1, generatedAt: -1 });
 
     console.log("✓ Database indexes created");
 

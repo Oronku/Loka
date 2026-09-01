@@ -5,11 +5,14 @@ import {
 import {
   memoryStore
 } from "../config/memoryStore.js";
+import { getDb } from "../config/database.js";
 import {
   verifyGoogleToken
 } from "../middleware/auth.js";
 import * as tripService from "../services/trip.service.js";
 import { computeTripReadiness } from "../services/trip/readiness.js";
+import { getAxes, publicAxes } from "../services/ai/axisMemory.js";
+import { assessTripIntegrity, whatTripNeedsNow } from "../services/ai/integrity/index.js";
 import {
   buildPendingSnapshot,
   markTripTimelinePending,
@@ -345,6 +348,84 @@ router.get("/:id/readiness", async (req, res) => {
     console.error("Error computing trip readiness:", error);
     res.status(500).json({
       error: "Failed to compute trip readiness",
+      message: error.message,
+    });
+  }
+});
+
+// Trip needs — integrity findings ordered by urgency (deterministic, no LLM)
+router.get("/:id/needs", async (req, res) => {
+  try {
+    const db = getDb();
+    if (!db) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+
+    const trip = await loadTrip(req, res, {
+      requireEdit: false,
+    });
+    if (!trip) return;
+
+    const tripId = trip.id || trip._id?.toString();
+    const axes = await getAxes(db, tripId, req.user.id, { trip });
+    const now = new Date();
+    const assessment = assessTripIntegrity(trip, { axes, now, profile: null });
+    const limit = Math.min(Math.max(Number(req.query.limit) || 12, 1), 50);
+    const { findings, rationale } = whatTripNeedsNow(assessment.findings, { limit, now });
+
+    res.json({
+      findings: findings.map((f) => ({
+        id: f.id,
+        code: f.code,
+        axisIds: f.axisIds,
+        kind: f.kind,
+        severity: f.severity,
+        blocking: f.blocking,
+        deadline: f.deadline,
+        urgency: f.urgency,
+        title: f.title,
+        detail: f.detail,
+        titleKey: f.titleKey,
+        detailKey: f.detailKey,
+        titleParams: f.titleParams,
+        detailParams: f.detailParams,
+        evidence: f.evidence,
+        entities: f.entities,
+        resolution: f.resolution,
+      })),
+      rationale,
+      summary: assessment.summary,
+      generatedAt: assessment.generatedAt,
+    });
+  } catch (error) {
+    console.error("Error loading trip needs:", error);
+    res.status(500).json({
+      error: "Failed to load trip needs",
+      message: error.message,
+    });
+  }
+});
+
+// Loka work axes — durable notes and decisions for this trip (read-only panel)
+router.get("/:id/axes", async (req, res) => {
+  try {
+    const db = getDb();
+    if (!db) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+
+    const trip = await loadTrip(req, res, {
+      requireEdit: false,
+    });
+    if (!trip) return;
+
+    const tripId = trip.id || trip._id?.toString();
+    const axes = await getAxes(db, tripId, req.user.id, { trip });
+    res.json({ axes: publicAxes(axes) });
+  } catch (error) {
+    console.error("Error loading trip axes:", error);
+    res.status(500).json({
+      error: "Failed to load trip axes",
       message: error.message,
     });
   }

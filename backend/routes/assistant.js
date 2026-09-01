@@ -10,8 +10,14 @@ import {
   generateAiReply,
   generateEphemeralAiReply,
   syncEmbeddedChangeSetStatus,
+  syncEmbeddedQuestionSetStatus,
 } from "../services/ai/assistantService.js";
 import { applyChangeSet, rejectChangeSet, PROPOSALS_COLLECTION } from "../services/ai/changeset.js";
+import {
+  answerQuestionSet,
+  dismissQuestionSet,
+  embedQuestionSet,
+} from "../services/ai/questions.js";
 import { getUserProfile, clearUserProfile, publicProfile } from "../services/ai/memory.js";
 import { runAgentsForUser } from "../services/ai/agents/runner.js";
 import { listNotifications, markNotificationRead } from "../services/ai/notifications.js";
@@ -273,6 +279,63 @@ router.post("/proposals/:id/apply", async (req, res) => {
   } catch (error) {
     console.error("[assistant/apply] error:", error);
     res.status(500).json({ error: "Failed to apply changes" });
+  }
+});
+
+/** Answer a grounded question set; persists decisions then triggers a follow-up turn. */
+router.post("/questions/:id/answer", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  const { answers } = req.body || {};
+  try {
+    const result = await answerQuestionSet(db, req.params.id, req.user.id, answers);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    await syncEmbeddedQuestionSetStatus(
+      db,
+      req.params.id,
+      "answered",
+      result.questionSet.answers,
+    );
+
+    let message = null;
+    const qs = result.questionSet;
+    if (qs.chatId && result.syntheticMessage) {
+      await insertUserMessage(db, qs.chatId, req.user, result.syntheticMessage);
+      message = await generateAiReply(db, {
+        chatId: qs.chatId,
+        user: req.user,
+        userMessage: result.syntheticMessage,
+        activeTripId: qs.tripId,
+      });
+    }
+
+    res.json({
+      questionSet: embedQuestionSet(result.questionSet),
+      message,
+    });
+  } catch (error) {
+    console.error("[assistant/questions/answer] error:", error);
+    res.status(500).json({ error: "Failed to answer questions" });
+  }
+});
+
+/** Dismiss a pending question set without answering. */
+router.post("/questions/:id/dismiss", async (req, res) => {
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: "Database unavailable" });
+  try {
+    const result = await dismissQuestionSet(db, req.params.id, req.user.id);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    await syncEmbeddedQuestionSetStatus(db, req.params.id, "dismissed");
+    res.json({ questionSet: embedQuestionSet(result.questionSet) });
+  } catch (error) {
+    console.error("[assistant/questions/dismiss] error:", error);
+    res.status(500).json({ error: "Failed to dismiss questions" });
   }
 });
 

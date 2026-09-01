@@ -1,10 +1,10 @@
 import {
   computeTripReadiness,
-  readinessForPrompt,
   enumerateTripDays,
   weekdayForDate,
   dateOnly,
 } from "../trip/readiness.js";
+import { integrityForPrompt } from "./integrity/index.js";
 
 /** Merge legacy date+time fields into an ISO-ish datetime when needed. */
 function combineDateAndTime(dateValue, timeValue) {
@@ -102,7 +102,7 @@ function attractionKind(a) {
   return "place";
 }
 
-function isIdea(a) {
+export function isIdea(a) {
   if (!a) return false;
   if (a.status === "idea") return true;
   if (!a.status && !a.scheduledDate) return true;
@@ -358,7 +358,7 @@ function buildSlimTripSummary(t) {
 
 /** @param {object} t */
 function buildFullTripContext(t) {
-  const readiness = readinessForPrompt(computeTripReadiness(t));
+  const { overallScore } = computeTripReadiness(t);
   const budget = buildBudgetSummary(t);
   const intent = stripIntent(t.intent);
   const base = {
@@ -381,7 +381,7 @@ function buildFullTripContext(t) {
     expenses: buildExpensesSummary(t),
     people: buildPeopleSummary(t),
     ideas: buildIdeasSummary(t),
-    readiness,
+    readinessScore: overallScore,
   };
   if (intent) base.intent = intent;
   if (budget) base.budget = budget;
@@ -455,12 +455,100 @@ You're one participant among several humans. You don't need to name everyone eve
 Humans in this trip group chat: ${names} (plus you, Loka).`;
 }
 
+/** Combined ceiling for axis memory + integrity findings — they compete, not stack. */
+export const TRIP_ATTENTION_CHAR_BUDGET = 2400;
+
+/** @deprecated alias — axis briefs must stay within the shared attention budget. */
+export const AXIS_BLOCK_CHAR_BUDGET = TRIP_ATTENTION_CHAR_BUDGET;
+
+/**
+ * Split the shared attention budget between integrity findings and axis memory.
+ * Urgent findings outrank verbose axis notes; use recall(axisId) for trimmed detail.
+ *
+ * @param {{ integrityText?: string, axisBlock?: string, charBudget?: number }} opts
+ */
+export function allocateTripAttentionBlocks({
+  integrityText = "",
+  axisBlock = "",
+  charBudget = TRIP_ATTENTION_CHAR_BUDGET,
+} = {}) {
+  const integrity = String(integrityText || "").trim();
+  const axis = String(axisBlock || "").trim();
+  if (!integrity && !axis) return { integrityBlock: "", axisBlock: "" };
+  if (!integrity) return { integrityBlock: "", axisBlock: axis.slice(0, charBudget) };
+  if (!axis) return { integrityBlock: integrity.slice(0, charBudget), axisBlock: "" };
+
+  const integrityCap = Math.min(integrity.length, Math.ceil(charBudget * 0.65));
+  let integrityBlock = integrity.slice(0, integrityCap);
+  let axisOut = axis.slice(0, charBudget - integrityBlock.length);
+
+  const slack = charBudget - integrityBlock.length - axisOut.length;
+  if (slack > 0) {
+    if (integrityBlock.length < integrity.length) {
+      const extra = Math.min(slack, integrity.length - integrityBlock.length);
+      integrityBlock = integrity.slice(0, integrityBlock.length + extra);
+    }
+    axisOut = axis.slice(0, charBudget - integrityBlock.length);
+  }
+
+  return { integrityBlock, axisBlock: axisOut };
+}
+
+/**
+ * @param {ReturnType<typeof integrityForPrompt>} projection
+ * @param {object|null} [summary]
+ */
+function formatIntegrityAttentionBlock(projection, summary = null) {
+  if (!projection?.text) return "";
+  const lines = ["=== WHAT THIS TRIP NEEDS NOW ===", projection.text];
+  if (projection.truncated) lines.push("(More via whats_needed().)");
+  if (summary) {
+    const parts = [
+      `${summary.brokenCount} broken`,
+      `${summary.atRiskCount} at risk`,
+      `${summary.unknownCount} unknown`,
+    ];
+    if (summary.nextDeadline) parts.push(`next deadline ${summary.nextDeadline}`);
+    lines.push(`Counts: ${parts.join(", ")}.`);
+  }
+  if (projection.rationale) lines.push(projection.rationale);
+  return lines.join("\n");
+}
+
+function integrityAttentionBlock(integrityBlock = "") {
+  if (!integrityBlock || !String(integrityBlock).trim()) return "";
+  return `\n\n${String(integrityBlock).trim()}`;
+}
+
+function axisMemoryBlock(axisBlock = "") {
+  if (!axisBlock || !String(axisBlock).trim()) return "";
+  return `\n\n${String(axisBlock).trim()}`;
+}
+
+const INTEGRITY_ATTENTION_RULES = `=== TRIP VIABILITY (CRITICAL) ===
+Orient around the integrity findings above — whether this trip can stand for real, not checklist completeness.
+- Lead with what is blocking or broken before anything cosmetic.
+- A finding with a near deadline beats a bigger gap you can fix anytime — say the deadline out loud when you mention it.
+- kind: unknown is a real task: verify it or ask — never treat unknown as fine or stay silent about it.
+- Never assert a fix you have not verified — verification rules and the write gate still apply.
+- Never state a legal or entry requirement as fact without a source from the finding evidence or web_search this turn.
+- Call whats_needed() when you need the full urgency-ordered list with evidence beyond this summary.`;
+
+const DELIBERATION_RULES = `=== THINK BEFORE YOU PROPOSE (CRITICAL) ===
+For broad or consequential itinerary work — filling empty days or afternoons, choosing between saved ideas, planning a stretch of the trip — call think_it_through BEFORE any add_activities, add_attraction, plan_trip_skeleton, or add_placeholder_event writes.
+- think_it_through gathers real candidates, scores them against this trip's criteria, and asks only when the answer would change the winner.
+- If it returns a decision-flipping question, STOP — introduce that question in one sentence. No itinerary diff in the same turn.
+- When you do propose, speak the thinking: why this one, what you rejected and why. One idea, with a because — not a dump of places.
+- Never assert availability, opening hours, or bookability you have not verified this turn (web_search sourceUrl or places_cache hours).
+- Do not auto-schedule saved ideas without deliberation and traveler consent.
+- If the scope is large (many days) or think_it_through defers, say you're looking into it — the app will follow up asynchronously.`;
+
 /**
  * The Loka assistant system prompt. Designed around the propose-then-apply
  * model: the assistant proposes concrete changes (tool calls) which the app
  * renders as a reviewable diff. So the assistant should ACT, not ask permission.
  *
- * @param {{ trips?: object[], profile?: object|null, activeTripId?: string|null, isGroupChat?: boolean, groupParticipants?: string[], now?: Date }} ctx
+ * @param {{ trips?: object[], profile?: object|null, activeTripId?: string|null, isGroupChat?: boolean, groupParticipants?: string[], axisBlock?: string, integrityBlock?: string, now?: Date }} ctx
  */
 export function buildSystemPrompt({
   trips = [],
@@ -468,6 +556,8 @@ export function buildSystemPrompt({
   activeTripId = null,
   isGroupChat = false,
   groupParticipants = [],
+  axisBlock = "",
+  integrityBlock = "",
   now = new Date(),
 } = {}) {
   const context = buildTripContext(trips, { activeTripId });
@@ -512,14 +602,29 @@ When the user wants to build or change a trip, you call tools to PROPOSE the cha
 - When they're excited about the trip, share the hype with them and stop there. When they need logistics, answer and stop — don't add "I'm here for more".
 
 === WHAT YOU KNOW AND OWN ===
-You can see the whole trip for the active trip — day-by-day plan, checklist, budget, expenses, people, ideas, the traveler's stated intent, and a computed readiness assessment. Other trips appear as slim summaries only. You are responsible for this trip's readiness. Ground every suggestion in a real gap from the readiness data — never invent problems the data doesn't show, and never suggest something already handled.
+You can see the whole trip for the active trip — day-by-day plan, checklist, budget, expenses, people, ideas, the traveler's stated intent, and an overall readiness score. Other trips appear as slim summaries only. You are responsible for whether this trip can stand for real. Ground every suggestion in a real integrity finding — never invent problems the data doesn't show, and never suggest something already handled.
+
+${INTEGRITY_ATTENTION_RULES}
+
+${DELIBERATION_RULES}
 
 ANTI-NOISE (strict): Never offer to fill in internal/plumbing fields — photos, images, placeId, coordinates, photoReference, or similar metadata. The app handles those silently. Place facts — opening hours, website, phone, address, photos, rating — are shown live in the app and are NEVER proposed as trip changes. If the traveler asks about a place's hours, prices, or booking, answer directly (use web_search when you need live info) — do not propose an edit to their itinerary. Proposals are strictly for decisions about the trip: what to do, when, where to stay, how to get around, what to budget, what to pack.
 
-When the traveler asks for a whole-trip plan, prefer plan_trip_skeleton. Prefer placeholder events over inventing specific venues you haven't verified. Use add_checklist_items when you spot something they'll need to bring or do.
+When the traveler asks for a whole-trip plan, prefer plan_trip_skeleton. Use placeholder events for slots you have not verified — never invent specific venues at specific times without confirmed hours or a source from this turn's web_search. Use add_checklist_items when you spot something they'll need to bring or do.
+
+=== SCHEDULING RULES (STRUCTURAL) ===
+- Before a broad or underspecified itinerary build, call think_it_through — or ask_user when preferences are missing and not already recorded as axis decisions.
+- A specific venue at a specific time requires verified opening hours (places_cache / web_search sourceUrl from this turn). Otherwise propose a placeholder slot — the system will downgrade unverified venues automatically.
+- Saved ideas on the trip are candidates, not consent. Deliberate first; scheduling them requires the traveler's say-so — never auto-drop ideas onto the calendar.
+- When the system downgrades or verifies something, narrate the check you ran. State uncertainty plainly — never imply confidence you do not have.
+- For narrow, obvious single-item requests where preferences are already known, just propose the change. Anti-nag still applies: never ask as a conversational tic.
 
 === TOOLS YOU HAVE ===
-Trip scaffolding and readiness tools (propose via the app diff — same review flow as other changes):
+Read-only inspection:
+- whats_needed({ tripId? }) — urgency-ordered integrity findings with evidence and deadlines for the active trip (or tripId). Does not change the trip.
+- think_it_through({ tripId, findingIds?, findingCodes?, decision? }) — run real deliberation before proposing itinerary changes. Returns chosen + why, shortlist, rejected + reasons, confidence, and operations when ready. Terminal when it returns a question — no writes that turn.
+
+Trip scaffolding tools (propose via the app diff — same review flow as other changes):
 - add_checklist_items({ tripId, items: [{ text, categoryId? }] }) — shared packing list
 - remove_checklist_item({ tripId, itemId })
 - set_trip_budget({ tripId, totalBudget, currency, categories? })
@@ -527,8 +632,41 @@ Trip scaffolding and readiness tools (propose via the app diff — same review f
 - add_placeholder_event({ tripId, title, date, time?, durationMinutes?, kind? }) — rough day slot with no real place attached
 - plan_trip_skeleton({ tripId, days: [{ date, blocks: [{ kind, title, time?, durationMinutes?, placeholder? }] }] }) — whole trip shape in ONE reviewable card grouped by day
 
-Prefer plan_trip_skeleton when the traveler asks for a whole-trip plan. Prefer placeholders over inventing specific venues you haven't verified. Use add_checklist_items when you spot something the traveler will need to bring or do.
+Prefer plan_trip_skeleton when the traveler asks for a whole-trip plan. Use placeholders for unverified slots — never invent specific venues at specific times without a verified source. Use add_checklist_items when you spot something the traveler will need to bring or do.
+
+=== WORK AXES & MEMORY (CRITICAL) ===
+You maintain durable working notes per trip axis (basics, stay, dayPlan, etc.). The index below is always loaded; full notes for 2-3 relevant axes only — use recall(axisId) for the rest.
+- Call remember when the user states a constraint, preference, decision, or rejection (with why). Write rejections too — that is how you stop re-litigating settled choices.
+- Never re-ask or re-propose something already recorded as a decision on that axis.
+- Call ask_user when you need preferences before a broad plan, when scheduling saved ideas, or when genuinely blocked on a specific gap. Each question must cite axisId (and gapId when closing a gap). The app adds "Something else"; never emit Other/Something else options.
+- Axis memory writes land immediately. Itinerary changes still go through write tools and the Apply/Reject card.
 
 === CURRENT TRIPS ===
-${JSON.stringify(context, null, 0)}${profileBlock(profile)}`;
+${JSON.stringify(context, null, 0)}${integrityAttentionBlock(integrityBlock)}${axisMemoryBlock(axisBlock)}${profileBlock(profile)}`;
+}
+
+export { formatIntegrityAttentionBlock, integrityForPrompt };
+
+/**
+ * Build capped integrity + axis blocks that share TRIP_ATTENTION_CHAR_BUDGET.
+ *
+ * @param {{ integrityAssessment?: object|null, axisBlockRaw?: string, charBudget?: number }} opts
+ */
+export function buildTripAttentionContext({
+  integrityAssessment = null,
+  axisBlockRaw = "",
+  charBudget = TRIP_ATTENTION_CHAR_BUDGET,
+} = {}) {
+  const projection = integrityAssessment
+    ? integrityForPrompt(integrityAssessment, { budget: charBudget })
+    : null;
+  const integrityText = formatIntegrityAttentionBlock(
+    projection,
+    integrityAssessment?.summary ?? null,
+  );
+  return allocateTripAttentionBlocks({
+    integrityText,
+    axisBlock: axisBlockRaw,
+    charBudget,
+  });
 }

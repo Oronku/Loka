@@ -1,9 +1,8 @@
 /**
  * OpenAI tool (function) definitions for the Loka assistant.
  *
- * IMPORTANT: tools here NEVER mutate the database. The runner converts each
- * tool call into a ChangeSet operation (a proposed diff). The change is only
- * written when the user (or an agent policy) applies the proposal.
+ * Write tools become ChangeSet operations (proposed diffs). recall is read-only;
+ * remember writes axis memory directly; ask_user produces a grounded question set.
  */
 
 const tripIdParam = {
@@ -12,7 +11,13 @@ const tripIdParam = {
     "Target trip id. Use the literal string \"__new__\" when the item belongs to a trip being created in this same turn.",
 };
 
-export const READ_ONLY_TOOLS = new Set(["web_search"]);
+export const READ_ONLY_TOOLS = new Set(["web_search", "recall", "whats_needed"]);
+export const THINK_TOOLS = new Set(["think_it_through"]);
+export const MEMORY_TOOLS = new Set(["remember"]);
+export const ASK_USER_TOOLS = new Set(["ask_user"]);
+
+const MAX_REMEMBER_PER_TURN = 3;
+export { MAX_REMEMBER_PER_TURN };
 
 const timeConfidenceParam = {
   type: "string",
@@ -434,6 +439,90 @@ export const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "think_it_through",
+      description:
+        "Think before proposing itinerary changes — gather real candidates, score them against this trip's criteria, and ask only when the answer would change the winner. Use for filling empty time, choosing between saved ideas, or resolving integrity findings. Terminal when it returns a decision-flipping question — do not emit itinerary writes in the same turn. Returns chosen + why, shortlist, rejected + reasons, confidence, and pre-built operations when ready.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: tripIdParam,
+          findingIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Integrity finding ids from whats_needed — resolves via the reasoning engine.",
+          },
+          findingCodes: {
+            type: "array",
+            items: { type: "string" },
+            description: "Integrity finding codes (e.g. unhoused_nights) when ids are not handy.",
+          },
+          decision: {
+            type: "object",
+            description:
+              "Deliberate over open itinerary slots — empty days/afternoons or a described choice.",
+            properties: {
+              intent: {
+                type: "string",
+                description: "What you are deciding, e.g. fill empty afternoons.",
+              },
+              query: {
+                type: "string",
+                description: "Search hint for candidates, e.g. Danube sailing Budapest.",
+              },
+              dates: {
+                type: "array",
+                items: { type: "string" },
+                description: "YYYY-MM-DD dates to fill. Omit to use empty trip days.",
+              },
+              time: {
+                type: "string",
+                description: "Default HH:MM for open slots, e.g. 14:00 for afternoons.",
+              },
+              field: {
+                type: "string",
+                description: "Axis field this decision resolves, e.g. alcoholPreference.",
+              },
+              limit: {
+                type: "number",
+                description: "Max slots to deliberate this turn (default 4). Larger scopes defer async.",
+              },
+            },
+          },
+          limit: {
+            type: "number",
+            description: "Max findings to resolve when using findingIds/codes.",
+          },
+          defer: {
+            type: "boolean",
+            description: "Force async follow-up when the scope is large.",
+          },
+        },
+        required: ["tripId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "whats_needed",
+      description:
+        "Read-only: urgency-ordered integrity findings for a trip — contradictions, unverified facts, deadlines, and evidence. Does not change the trip. Use when you need specifics beyond the prompt summary.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: {
+            type: "string",
+            description:
+              "Trip id to inspect. Omit to use the trip the user is currently viewing.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "web_search",
       description:
         "Look up live tour operating hours, available dates, prices, and official booking links. Read-only — does not change the trip. Use the citations to propose add_attraction or update_item with a real time (timeConfidence confirmed), bookingUrl, and the source page.",
@@ -447,6 +536,121 @@ export const TOOL_DEFINITIONS = [
           },
         },
         required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "recall",
+      description:
+        "Read Loka's full working notes for one trip axis — note, decisions, and open gaps. Read-only.",
+      parameters: {
+        type: "object",
+        properties: {
+          axisId: {
+            type: "string",
+            description:
+              "Axis id, e.g. stay, dayPlan, transport, or custom:anniversary-dinner",
+          },
+        },
+        required: ["axisId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remember",
+      description:
+        "Write directly to Loka's trip axis memory — notes, summaries, decisions, rejections, or open gaps. Does not change the visible itinerary (use write tools for that). Max 3 calls per turn.",
+      parameters: {
+        type: "object",
+        properties: {
+          axisId: {
+            type: "string",
+            description: "Target axis id. Use custom:<slug> or give title to create a custom axis.",
+          },
+          title: { type: "string", description: "Title when creating a new custom axis" },
+          note: { type: "string", description: "Markdown working note for this axis" },
+          summary: { type: "string", description: "One-line summary for the axis index" },
+          decision: { type: "string", description: "A decision taken on this axis" },
+          why: { type: "string", description: "Why this decision was made" },
+          field: { type: "string", description: "Field this decision resolves" },
+          rejected: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                option: { type: "string" },
+                why: { type: "string" },
+              },
+              required: ["option"],
+            },
+          },
+          gaps: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                field: { type: "string" },
+                severity: { type: "number", enum: [1, 2, 3] },
+                blocks: { type: "array", items: { type: "string" } },
+                evidence: { type: "string" },
+              },
+              required: ["field", "severity"],
+            },
+          },
+        },
+        required: ["axisId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ask_user",
+      description:
+        "Ask the user 1-3 grounded multiple-choice questions when genuinely blocked. Terminal — stops the turn and shows a question card. Cite the gap each question closes. Never emit an Other/Something else option.",
+      parameters: {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string" },
+                header: {
+                  type: "string",
+                  description: "Short chip label, max 12 characters",
+                },
+                axisId: { type: "string" },
+                gapId: { type: "string", description: "Open gap this question resolves" },
+                field: { type: "string", description: "Field being decided" },
+                multiSelect: { type: "boolean" },
+                options: {
+                  type: "array",
+                  minItems: 2,
+                  maxItems: 4,
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      label: { type: "string" },
+                      description: { type: "string" },
+                    },
+                    required: ["label"],
+                  },
+                },
+              },
+              required: ["question", "header", "axisId", "options"],
+            },
+          },
+        },
+        required: ["questions"],
       },
     },
   },
