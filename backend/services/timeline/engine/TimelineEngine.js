@@ -3,7 +3,7 @@ import { travelLegGenerator } from "../generators/travelLegGenerator.js";
 import { arrivalTransferGenerator } from "../generators/arrivalTransferGenerator.js";
 import { departureTransferGenerator } from "../generators/departureTransferGenerator.js";
 
-export const TIMELINE_SNAPSHOT_VERSION = 3;
+export const TIMELINE_SNAPSHOT_VERSION = 7;
 const DEFAULT_MODE = "driving";
 
 /**
@@ -48,15 +48,63 @@ export async function recalculateTimeline(trip, opts = {}) {
     generated[generator.key] = results[i];
   });
 
+  const legs = generated.legs || [];
+  const transfers = generated.transfers || [];
+  stampTravelIn(events, { legs, transfers });
+
   return {
     version: TIMELINE_SNAPSHOT_VERSION,
     mode,
     events,
     unscheduled,
-    legs: generated.legs || [],
-    transfers: generated.transfers || [],
+    legs,
+    transfers,
     departureTransfers: generated.departureTransfers || [],
     generatedAt: new Date().toISOString(),
     pending: false,
   };
+}
+
+function travelInFromSource(source, sourceName) {
+  const unresolved =
+    Boolean(source.unresolved) || source.durationSeconds == null;
+  return {
+    mode: source.mode,
+    durationSeconds: unresolved ? null : source.durationSeconds,
+    durationText: unresolved ? null : source.durationText ?? null,
+    distanceText: unresolved ? null : source.distanceText ?? null,
+    bufferSeconds: source.bufferSeconds ?? 0,
+    arriveBy: unresolved ? null : source.estimatedArrival ?? null,
+    leaveBy: source.leaveBy ?? null,
+    unresolved,
+    source: sourceName,
+  };
+}
+
+/**
+ * Stamp inbound-travel metadata onto hotel check-ins and attractions so the
+ * client does not have to join events against legs/transfers. Additive only —
+ * event.start / event.arrival are left untouched.
+ */
+function stampTravelIn(events, { legs, transfers }) {
+  if (!Array.isArray(events) || events.length === 0) return;
+
+  events.forEach((event, index) => {
+    if (event.type !== "hotel-checkin" && event.type !== "attraction") return;
+
+    if (event.type === "hotel-checkin") {
+      const transfer = transfers.find(
+        (t) => t && t.hotelSourceIndex === event.sourceIndex
+      );
+      if (transfer) {
+        event.travelIn = travelInFromSource(transfer, "arrival-transfer");
+        return;
+      }
+    }
+
+    const leg = legs.find((l) => l && l.toIndex === index);
+    if (leg) {
+      event.travelIn = travelInFromSource(leg, "leg");
+    }
+  });
 }

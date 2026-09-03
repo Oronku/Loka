@@ -96,11 +96,12 @@ export async function calculateTravelLegs(trip, events, opts = {}) {
         effectiveTravel > leg.gapSeconds
       ) {
         leg.tight = true;
-        if (!Number.isNaN(nextStart)) {
-          leg.leaveBy = new Date(
-            nextStart - effectiveTravel * 1000
-          ).toISOString();
-        }
+      }
+
+      if (!Number.isNaN(nextStart) && effectiveTravel != null) {
+        leg.leaveBy = new Date(
+          nextStart - effectiveTravel * 1000
+        ).toISOString();
       }
 
       return leg;

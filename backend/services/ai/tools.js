@@ -105,6 +105,16 @@ export const TOOL_DEFINITIONS = [
           arrival: { type: "string", description: "Arrival airport code" },
           date: { type: "string", description: "YYYY-MM-DD" },
           time: { type: "string", description: "HH:MM departure time" },
+          arrivalTime: {
+            type: "string",
+            description:
+              "HH:MM local arrival clock at the destination airport. May be the next calendar day for overnight flights. Omit when unknown — do not guess.",
+          },
+          arrivalDate: {
+            type: "string",
+            description:
+              "YYYY-MM-DD landing date when it differs from date (red-eyes / overnight). Omit when arrival is the same calendar day as date.",
+          },
         },
         required: ["tripId", "flightNumber", "departure", "arrival", "date", "time"],
       },

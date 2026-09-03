@@ -40,6 +40,15 @@ import {
   removeLinkedDraftExpense,
   upsertDraftItemExpense,
 } from "../utils/draftItemExpense.js";
+import {
+  validateHotelInput,
+  normalizeHotel,
+  syncHotelExpense,
+  addHotel,
+  updateHotel,
+  removeHotel,
+  findHotelRef,
+} from "../services/hotels.js";
 
 const router = express.Router();
 
@@ -59,18 +68,6 @@ function isValidPaidBy(paidBy) {
   return paidBy.every(
     (payer) => payer && typeof payer.userId === "string" && payer.userId.length > 0
   );
-}
-
-function inferHotelExpenseCurrency(trip, hotel, existingExpense) {
-  const fromHotel =
-    typeof hotel?.currency === "string" && hotel.currency.trim();
-  if (fromHotel) return fromHotel.trim().toUpperCase();
-  if (existingExpense?.currency) {
-    return String(existingExpense.currency).trim().toUpperCase();
-  }
-  const sibling = (trip.expenses || []).find((e) => e?.currency);
-  if (sibling?.currency) return String(sibling.currency).trim().toUpperCase();
-  return "USD";
 }
 
 /** Normalize and attach access flags before returning a trip from expense mutations. */
@@ -1038,198 +1035,84 @@ router.post("/:id/flights/:flightId/price/refresh", async (req, res) => {
 router.post("/:id/hotels", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
-  const hotel = req.body || {};
+  const body = req.body || {};
 
-  if (!hotel.name || !hotel.checkIn || !hotel.checkOut) {
-    return res
-      .status(400)
-      .json({
-        error: "name, checkIn and checkOut are required"
-      });
-
+  const validation = validateHotelInput(body);
+  if (!validation.ok) {
+    return res.status(400).json({
+      error: validation.error,
+      ...(validation.message ? { message: validation.message } : {}),
+    });
   }
 
-  if (hotel.isIdea) {
-    trip.hotels.push({
-      ...hotel,
-      isIdea: true,
-      checkIn: hotel.checkIn || "",
-      checkOut: hotel.checkOut || "",
-    });
-  } else {
-    if (!hotel.checkIn || !hotel.checkOut) {
-      return res
-        .status(400)
-        .json({ error: "name, checkIn and checkOut are required" });
-    }
-    if (
-      rejectIfOutsideTripRange(
-        res,
-        trip,
-        [hotel.checkIn, hotel.checkOut],
-        "Hotel"
-      )
+  if (
+    !body.isIdea &&
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [body.checkIn, body.checkOut],
+      "Hotel"
     )
-      return;
+  ) {
+    return;
   }
 
-  // Generate hotel ID for linking with expenses
-  if (!hotel.id) hotel.id = `hotel-${Date.now()}`;
-
-
-  // If hotel has a cost, create a corresponding expense
-  const expenses = trip.expenses || [];
-  const costAmount = parseFloat(hotel.cost);
-  
-  if (hotel.cost && costAmount > 0) {
-    const hotelExpense = persistResolvedSplits({
-      id: `expense-${Date.now()}`,
-      title: hotel.name,
-      description: "Hotel booking",
-      amount: costAmount,
-      currency: inferHotelExpenseCurrency(trip, hotel),
-      category: "hotel",
-      date: hotel.checkIn,
-      paidBy: req.user.id,
-      splits: [{
-        userId: req.user.id,
-        amount: costAmount,
-      }],
-      splitMethod: "equal",
-      createdBy: req.user.id,
-      createdAt: new Date().toISOString(),
-      linkedHotelId: hotel.id,
-    });
-    expenses.push(hotelExpense);
-  }
-
-  const collection = getTripsCollection();
-  let updated;
-  if (collection) {
-    await collection.updateOne(
-      tripService.buildIdQuery(trip.id), {
-        $set: {
-          hotels: trip.hotels,
-          expenses: expenses,
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-    updated = await tripService.findById(trip.id);
-  } else {
-    updated = memoryStore.trips.update(trip.id, {
-      hotels: trip.hotels,
-      expenses: expenses,
-    });
-  }
-
+  const hotel = normalizeHotel(body);
+  const expense = syncHotelExpense(trip, hotel, { userId: req.user.id });
+  const updated = await addHotel(trip, hotel, expense);
   respondWithTimeline(req, res, updated, 201);
 });
 
 router.put("/:id/hotels/:idx", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
-  const {
-    idx
-  } = req.params;
-  const hotel = req.body || {};
+  const body = req.body || {};
 
-  const i = parseInt(idx, 10);
-  if (Number.isNaN(i) || i < 0 || i >= trip.hotels.length) {
-    return res.status(400).json({
-      error: "Invalid hotel index"
-    });
+  const ref = findHotelRef(trip, req.params.idx);
+  if (!ref) {
+    return res.status(404).json({ error: "Hotel not found" });
   }
 
-  if (!hotel.name || !hotel.checkIn || !hotel.checkOut) {
-    return res
-      .status(400)
-      .json({
-        error: "name, checkIn and checkOut are required"
-      });
+  const validation = validateHotelInput(body);
+  if (!validation.ok) {
+    return res.status(400).json({
+      error: validation.error,
+      ...(validation.message ? { message: validation.message } : {}),
+    });
   }
 
   if (
+    !body.isIdea &&
     rejectIfOutsideTripRange(
       res,
       trip,
-      [hotel.checkIn, hotel.checkOut],
+      [body.checkIn, body.checkOut],
       "Hotel"
     )
-  )
+  ) {
     return;
-
-  const oldHotel = trip.hotels[i];
-  const hotelId = oldHotel.id || `hotel-${Date.now()}`;
-
-  // Update hotel
-  trip.hotels[i] = {
-    ...hotel,
-    id: hotelId
-  };
-
-  // Update or create/delete corresponding expense
-  const expenses = trip.expenses || [];
-  const expenseIndex = expenses.findIndex(e => e.linkedHotelId === hotelId);
-
-  const costAmount = parseFloat(hotel.cost);
-  if (hotel.cost && costAmount > 0) {
-    // Hotel has cost - update or create expense
-    const existingHotelExpense =
-      expenseIndex >= 0 ? expenses[expenseIndex] : null;
-    const hotelExpense = persistResolvedSplits({
-      id: existingHotelExpense?.id || `expense-${Date.now()}`,
-      title: hotel.name,
-      description: "Hotel booking",
-      amount: costAmount,
-      currency: inferHotelExpenseCurrency(trip, hotel, existingHotelExpense),
-      category: ["food", "hotel", "flight", "ride", "activity", "shopping", "other"].includes(
-        existingHotelExpense?.category,
-      )
-        ? existingHotelExpense.category
-        : "hotel",
-      date: hotel.checkIn,
-      paidBy: existingHotelExpense?.paidBy || req.user.id,
-      splits: existingHotelExpense?.splits || [{
-        userId: req.user.id,
-        amount: costAmount,
-      }],
-      splitMethod: existingHotelExpense?.splitMethod || "equal",
-      createdBy: existingHotelExpense?.createdBy || req.user.id,
-      createdAt: existingHotelExpense?.createdAt || new Date().toISOString(),
-      linkedHotelId: hotelId,
-    });
-
-    if (expenseIndex >= 0) {
-      expenses[expenseIndex] = hotelExpense;
-    } else {
-      expenses.push(hotelExpense);
-    }
-  } else if (expenseIndex >= 0) {
-    // Hotel has no cost but expense exists - remove it
-    expenses.splice(expenseIndex, 1);
   }
 
-  const collection = getTripsCollection();
-  let updated;
-  if (collection) {
-    await collection.updateOne(
-      tripService.buildIdQuery(trip.id), {
-        $set: {
-          hotels: trip.hotels,
-          expenses: expenses,
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-    updated = await tripService.findById(trip.id);
-  } else {
-    updated = memoryStore.trips.update(trip.id, {
-      hotels: trip.hotels,
-      expenses: expenses,
-    });
+  const hotel = normalizeHotel(body, { existing: ref.hotel });
+  const expense = syncHotelExpense(trip, hotel, { userId: req.user.id });
+  const updated = await updateHotel(trip, hotel.id, hotel, expense, {
+    index: ref.index,
+  });
+  respondWithTimeline(req, res, updated, 200);
+});
+
+router.delete("/:id/hotels/:idx", async (req, res) => {
+  const trip = await getTripOr404(req, res);
+  if (!trip) return;
+
+  const ref = findHotelRef(trip, req.params.idx);
+  if (!ref) {
+    return res.status(404).json({ error: "Hotel not found" });
   }
 
+  const updated = await removeHotel(trip, ref.hotel.id, {
+    index: ref.index,
+  });
   respondWithTimeline(req, res, updated, 200);
 });
 
