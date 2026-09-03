@@ -93,6 +93,42 @@ function pushEvent(target, event) {
   }
 }
 
+/**
+ * Resolve a ride's pickup and dropoff wall-clock times.
+ *
+ * Rides are written by different paths with incompatible shapes:
+ * - The manual add-ride screen stores combined `pickupDateTime` /
+ *   `dropoffDateTime`.
+ * - AI/chat (and trip-monitor proposals) store split `date` + `time` and never
+ *   set `pickupDateTime`. Chat sometimes puts a full ISO datetime in `time`
+ *   instead of HH:MM.
+ * Without collapsing those shapes here, `sortKey` is NaN and the ride lands in
+ * the unscheduled bucket — invisible on the timeline.
+ *
+ * @param {object} ride
+ * @returns {{ pickup: string|null, dropoff: string|null }}
+ */
+function resolveRideTimes(ride) {
+  if (!ride || typeof ride !== "object") {
+    return { pickup: null, dropoff: null };
+  }
+
+  let pickup = ride.pickupDateTime || null;
+  if (!pickup) {
+    const timeStr = ride.time != null ? String(ride.time).trim() : "";
+    // Chat AI sometimes stores a full ISO in `time`; combineDateAndTime would
+    // only keep the date half when that happens, so prefer the richer value.
+    if (/T\d{1,2}:\d{2}/.test(timeStr)) {
+      pickup = timeStr;
+    } else if (ride.date || ride.time) {
+      pickup = combineDateAndTime(ride.date, ride.time) || null;
+    }
+  }
+
+  const dropoff = ride.dropoffDateTime || pickup || null;
+  return { pickup, dropoff };
+}
+
 /** Collapse events that are effectively identical (e.g. a duplicated booking). */
 function dedupeEvents(events) {
   const seen = new Set();
@@ -177,6 +213,7 @@ export function buildTimeline(trip) {
   });
 
   (trip.rides || []).forEach((ride, sourceIndex) => {
+    const { pickup, dropoff } = resolveRideTimes(ride);
     pushEvent(result, {
       id: ride.id || `ride-${sourceIndex}`,
       type: "ride",
@@ -186,12 +223,12 @@ export function buildTimeline(trip) {
           ? `${ride.pickup} \u2192 ${ride.dropoff}`
           : "Ride",
       subtitle: ride.provider || null,
-      start: ride.pickupDateTime || null,
-      end: ride.dropoffDateTime || ride.pickupDateTime || null,
-      arrival: ride.dropoffDateTime || ride.pickupDateTime || null,
+      start: pickup,
+      end: dropoff,
+      arrival: dropoff,
       // For routing, the ride ends at its dropoff location.
       location: ride.dropoff || extractLocation(ride),
-      sortKey: toTime(ride.pickupDateTime),
+      sortKey: toTime(pickup),
       raw: ride,
     });
   });
