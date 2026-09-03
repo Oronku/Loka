@@ -6,10 +6,10 @@ import {
   extractLocation,
   resolveAirportLabel,
 } from "./shared/location.js";
-import { combineDateAndTime, toTime } from "./shared/wallClock.js";
+import { asNaiveDateTime, combineDateAndTime, toTime } from "./shared/wallClock.js";
 import { applyHotelOrdering, buildHotelEvents } from "../hotels.js";
 
-export { toTime, combineDateAndTime } from "./shared/wallClock.js";
+export { asNaiveDateTime, toTime, combineDateAndTime } from "./shared/wallClock.js";
 export {
   extractLocation,
   airportQuery,
@@ -129,6 +129,34 @@ function resolveRideTimes(ride) {
   return { pickup, dropoff };
 }
 
+/**
+ * Collapse flight timestamps the same way rides do. Loka/chat writes split
+ * `date` + `time` and never sets `departureDateTime`; without merging those,
+ * `sortKey` is NaN and the flight lands in unscheduled.
+ * Date-only datetimes are rewritten as local midnight so they do not parse as
+ * UTC and sort against naive hotel `T15:00` values.
+ */
+function resolveFlightTimes(flight) {
+  if (!flight || typeof flight !== "object") {
+    return { departure: null, arrival: null };
+  }
+
+  let departure = flight.departureDateTime || null;
+  if (!departure) {
+    const timeStr = flight.time != null ? String(flight.time).trim() : "";
+    if (/T\d{1,2}:\d{2}/.test(timeStr)) {
+      departure = timeStr;
+    } else if (flight.date || flight.time) {
+      departure = combineDateAndTime(flight.date, flight.time) || null;
+    }
+  }
+
+  return {
+    departure: asNaiveDateTime(departure),
+    arrival: asNaiveDateTime(flight.arrivalDateTime || null),
+  };
+}
+
 /** Collapse events that are effectively identical (e.g. a duplicated booking). */
 function dedupeEvents(events) {
   const seen = new Set();
@@ -156,12 +184,14 @@ export function buildTimeline(trip) {
     const departureAirport = resolveAirportLabel(
       flight.departureAirportCode,
       flight.departureAirport,
-      flight.from
+      flight.from,
+      flight.departure
     );
     const arrivalAirport = resolveAirportLabel(
       flight.arrivalAirportCode,
       flight.arrivalAirport,
-      flight.to
+      flight.to,
+      flight.arrival
     );
 
     const departLabel = resolveAirportLabel(
@@ -178,6 +208,8 @@ export function buildTimeline(trip) {
       airportQuery(arrivalAirport) ||
       (arriveLabel ? `${arriveLabel} airport` : null);
 
+    const { departure, arrival } = resolveFlightTimes(flight);
+
     pushEvent(result, {
       id: flight.id || `flight-${sourceIndex}`,
       type: "flight",
@@ -192,16 +224,16 @@ export function buildTimeline(trip) {
         ]
           .filter(Boolean)
           .join(" \u00b7 ") || null,
-      start: flight.departureDateTime || null,
-      end: flight.arrivalDateTime || null,
-      arrival: flight.arrivalDateTime || null,
+      start: departure,
+      end: arrival,
+      arrival,
       departureAirport: departLabel,
       arrivalAirport: arriveLabel,
       // You travel TO the departure airport, and continue FROM the arrival airport.
       arriveLocation: departQuery || extractLocation(flight),
       departLocation: arriveQuery || extractLocation(flight),
       location: arriveQuery || departQuery || extractLocation(flight),
-      sortKey: toTime(flight.departureDateTime),
+      sortKey: toTime(departure),
       raw: flight,
     });
   });

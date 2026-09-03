@@ -6,6 +6,7 @@ import { buildSystemPrompt } from "./prompt.js";
 import { newOperation, summarizeOperations, NEW_TRIP_REF } from "./changeset.js";
 import { enrichPlace, normalizeOpeningHours } from "./places.js";
 import { MAX_WEB_SEARCHES_PER_TURN, webSearch } from "./webSearch.js";
+import { combineDateAndTime } from "../timeline/shared/wallClock.js";
 
 const ENTITY_FIELD = {
   flight: "flights",
@@ -136,7 +137,7 @@ function firstSourceUrl(toolCalls) {
  * Enriches attractions with Google Places. Returns the resolved target trip
  * metadata so the caller can persist the proposal.
  */
-async function buildOperations(toolCalls, { trips, activeTripId }) {
+export async function buildOperations(toolCalls, { trips, activeTripId }) {
   const operations = [];
   let createsTrip = false;
   let tripName = "";
@@ -237,25 +238,42 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
           }),
         );
         break;
-      case "add_flight":
+      case "add_flight": {
+        const after = {
+          id: randomUUID(),
+          airline: a.airline || "",
+          flightNumber: a.flightNumber,
+          departure: a.departure,
+          arrival: a.arrival,
+          date: a.date,
+          time: a.time,
+          // Timeline sorts on departureDateTime and routes via *AirportCode/from/to.
+          departureDateTime: combineDateAndTime(a.date, a.time),
+          departureAirportCode: a.departure,
+          departureAirport: a.departure,
+          from: a.departure,
+          arrivalAirportCode: a.arrival,
+          arrivalAirport: a.arrival,
+          to: a.arrival,
+          createdAt: new Date(),
+        };
+        // Only stamp arrivalDateTime when Loka supplied a clock — never invent one.
+        if (typeof a.arrivalTime === "string" && a.arrivalTime.trim()) {
+          after.arrivalDateTime = combineDateAndTime(
+            a.arrivalDate || a.date,
+            a.arrivalTime,
+          );
+        }
         operations.push(
           newOperation({
             op: "add",
             entity: "flight",
-            after: {
-              id: randomUUID(),
-              airline: a.airline || "",
-              flightNumber: a.flightNumber,
-              departure: a.departure,
-              arrival: a.arrival,
-              date: a.date,
-              time: a.time,
-              createdAt: new Date(),
-            },
+            after,
             label: `${a.airline ? a.airline + " " : ""}${a.flightNumber}: ${a.departure} → ${a.arrival}, ${a.date} ${a.time}`,
           }),
         );
         break;
+      }
       case "add_hotel":
         operations.push(
           newOperation({

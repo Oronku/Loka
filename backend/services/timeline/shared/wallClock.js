@@ -12,6 +12,18 @@ export function toTime(value) {
 }
 
 /**
+ * Date-only strings (`"2026-06-07"`) parse as UTC midnight. Rewrite those as
+ * local wall-clock midnight so they sort with naive `T` timestamps. Zoned or
+ * already-clocked values are returned unchanged.
+ */
+export function asNaiveDateTime(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00`;
+  return s;
+}
+
+/**
  * Combine a date with a separate time-of-day into one datetime string.
  * Many items store a date ("2026-06-07") and a time ("15:00") separately;
  * timelining needs them merged so the event has a real sort key.

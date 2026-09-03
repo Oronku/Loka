@@ -6,6 +6,7 @@ import {
   normalizeHotel,
   buildHotelEvents,
   removeHotel,
+  syncHotelExpense,
 } from "./hotels.js";
 import { buildTimeline } from "./timeline/buildTimeline.js";
 import { formatNaive, stripZone } from "./timeline/shared/wallClock.js";
@@ -205,6 +206,74 @@ describe("buildHotelEvents", () => {
     assert.equal(coordsOnly[0].displayLocation, null);
     assert.ok("displayLocation" in coordsOnly[0]);
     assert.notEqual(coordsOnly[0].displayLocation, coordsOnly[0].location);
+  });
+});
+
+describe("syncHotelExpense", () => {
+  it("returns null when cost is missing or not positive", () => {
+    const trip = { expenses: [] };
+    const hotel = { id: "hotel-1", name: "Hilton", checkIn: "2026-06-07" };
+    assert.equal(syncHotelExpense(trip, hotel, { userId: "u1" }), null);
+    assert.equal(
+      syncHotelExpense(trip, { ...hotel, cost: 0 }, { userId: "u1" }),
+      null
+    );
+    assert.equal(
+      syncHotelExpense(trip, { ...hotel, cost: -10 }, { userId: "u1" }),
+      null
+    );
+  });
+
+  it("writes category hotel, currency, and resolved split amounts", () => {
+    const trip = { expenses: [] };
+    const hotel = {
+      id: "hotel-1",
+      name: "Hilton",
+      cost: 200,
+      checkIn: "2026-06-07",
+      currency: "eur",
+    };
+    const expense = syncHotelExpense(trip, hotel, { userId: "u1" });
+    assert.equal(expense.category, "hotel");
+    assert.equal(expense.currency, "EUR");
+    assert.equal(expense.title, "Hilton");
+    assert.equal(expense.amount, 200);
+    assert.equal(expense.linkedHotelId, "hotel-1");
+    assert.equal(expense.paidBy, "u1");
+    assert.equal(expense.splitMethod, "equal");
+    assert.deepEqual(expense.splits, [{ userId: "u1", amount: 200 }]);
+  });
+
+  it("preserves a valid existing category and falls back invalid ones to hotel", () => {
+    const hotel = {
+      id: "hotel-1",
+      name: "Hilton",
+      cost: 150,
+      checkIn: "2026-06-07",
+    };
+    const keep = syncHotelExpense(
+      {
+        expenses: [
+          { linkedHotelId: "hotel-1", category: "activity", currency: "ILS" },
+        ],
+      },
+      hotel,
+      { userId: "u1" }
+    );
+    assert.equal(keep.category, "activity");
+    assert.equal(keep.currency, "ILS");
+
+    const remap = syncHotelExpense(
+      {
+        expenses: [
+          { linkedHotelId: "hotel-1", category: "Accommodation" },
+        ],
+      },
+      hotel,
+      { userId: "u1" }
+    );
+    assert.equal(remap.category, "hotel");
+    assert.equal(remap.currency, "USD");
   });
 });
 

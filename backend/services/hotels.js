@@ -1,5 +1,6 @@
 import { memoryStore } from "../config/memoryStore.js";
 import * as tripService from "./trip.service.js";
+import { persistResolvedSplits } from "../utils/expenseMath.js";
 import {
   DEFAULT_AIRPORT_ARRIVAL_BUFFER_SECONDS,
   POST_FLIGHT_BUFFER_SECONDS,
@@ -339,8 +340,38 @@ export function findHotelRef(trip, idxOrId) {
   return null;
 }
 
+const HOTEL_EXPENSE_CATEGORIES = [
+  "food",
+  "hotel",
+  "flight",
+  "ride",
+  "activity",
+  "shopping",
+  "other",
+];
+
 /**
- * Build (or clear) the linked Accommodation expense for a hotel without writing.
+ * Infer the expense currency: hotel.currency, else the existing expense, else a
+ * sibling trip expense, else USD.
+ * @param {object} trip
+ * @param {object} hotel
+ * @param {object} [existingExpense]
+ * @returns {string}
+ */
+function inferHotelExpenseCurrency(trip, hotel, existingExpense) {
+  const fromHotel =
+    typeof hotel?.currency === "string" && hotel.currency.trim();
+  if (fromHotel) return fromHotel.trim().toUpperCase();
+  if (existingExpense?.currency) {
+    return String(existingExpense.currency).trim().toUpperCase();
+  }
+  const sibling = (trip.expenses || []).find((e) => e?.currency);
+  if (sibling?.currency) return String(sibling.currency).trim().toUpperCase();
+  return "USD";
+}
+
+/**
+ * Build (or clear) the linked hotel expense for a hotel without writing.
  * Expense exists only while cost > 0. On update, preserve id/paidBy/splits/etc.
  * @param {object} trip
  * @param {object} hotel
@@ -354,12 +385,15 @@ export function syncHotelExpense(trip, hotel, { userId } = {}) {
 
   if (!hasCost) return null;
 
-  return {
+  return persistResolvedSplits({
     id: existing?.id || `expense-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: hotel.name,
     description: "Hotel booking",
     amount: costAmount,
-    category: "Accommodation",
+    currency: inferHotelExpenseCurrency(trip, hotel, existing),
+    category: HOTEL_EXPENSE_CATEGORIES.includes(existing?.category)
+      ? existing.category
+      : "hotel",
     date: hotel.checkIn,
     paidBy: existing?.paidBy ?? userId,
     splits: existing?.splits ?? [{ userId }],
@@ -367,7 +401,7 @@ export function syncHotelExpense(trip, hotel, { userId } = {}) {
     createdBy: existing?.createdBy ?? userId,
     createdAt: existing?.createdAt ?? new Date().toISOString(),
     linkedHotelId: hotel.id,
-  };
+  });
 }
 
 /**

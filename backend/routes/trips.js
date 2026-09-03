@@ -70,18 +70,6 @@ function isValidPaidBy(paidBy) {
   );
 }
 
-function inferHotelExpenseCurrency(trip, hotel, existingExpense) {
-  const fromHotel =
-    typeof hotel?.currency === "string" && hotel.currency.trim();
-  if (fromHotel) return fromHotel.trim().toUpperCase();
-  if (existingExpense?.currency) {
-    return String(existingExpense.currency).trim().toUpperCase();
-  }
-  const sibling = (trip.expenses || []).find((e) => e?.currency);
-  if (sibling?.currency) return String(sibling.currency).trim().toUpperCase();
-  return "USD";
-}
-
 /** Normalize and attach access flags before returning a trip from expense mutations. */
 function formatTripForClient(trip, user) {
   if (!trip) return trip;
