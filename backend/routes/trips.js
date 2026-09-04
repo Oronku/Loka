@@ -41,6 +41,9 @@ import {
   upsertDraftItemExpense,
 } from "../utils/draftItemExpense.js";
 import {
+  getDb
+} from "../config/database.js";
+import {
   validateHotelInput,
   normalizeHotel,
   syncHotelExpense,
@@ -201,6 +204,168 @@ function rejectIfOutsideTripRange(res, trip, dateValues, label) {
     ).slice(0, 10)}.`,
   });
   return true;
+}
+
+const FLIGHT_PERSIST_KEYS = [
+  "id",
+  "airline",
+  "flightNumber",
+  "departureAirportCode",
+  "departureCity",
+  "departureCountry",
+  "departureDateTime",
+  "departureTimeLocal",
+  "departureTimezone",
+  "arrivalAirportCode",
+  "arrivalCity",
+  "arrivalCountry",
+  "arrivalDateTime",
+  "arrivalTimeLocal",
+  "arrivalTimezone",
+  "durationMinutes",
+  "status",
+  "aircraft",
+  "aircraftType",
+  "terminal",
+  "gate",
+  "notes",
+  "carryOnBags",
+  "checkedBags",
+  "addedBy",
+  "addedByEmail",
+  "addedAt",
+  "date",
+  "time",
+  "departure",
+  "arrival",
+  "from",
+  "to",
+  "source",
+  "price",
+  "currency",
+  "flightIata",
+];
+
+function pickFlightFields(obj) {
+  const value = {};
+  for (const key of FLIGHT_PERSIST_KEYS) {
+    if (obj[key] !== undefined) {
+      value[key] = obj[key];
+    }
+  }
+  return value;
+}
+
+/**
+ * Validate flight input for create or patch (merge existing before validating).
+ * @returns {{ ok: true, value: object } | { ok: false, error: string, message?: string }}
+ */
+function validateFlightInput(flight, {
+  existing
+} = {}) {
+  const merged = existing ?
+    {
+      ...existing,
+      ...(flight || {})
+    } :
+    {
+      ...(flight || {})
+    };
+
+  const flightNumber = merged.flightNumber;
+  if (
+    !flightNumber ||
+    typeof flightNumber !== "string" ||
+    !flightNumber.trim()
+  ) {
+    return {
+      ok: false,
+      error: "flightNumber is required",
+    };
+  }
+
+  const departureDateTime = merged.departureDateTime;
+  const arrivalDateTime = merged.arrivalDateTime;
+  if (!departureDateTime) {
+    return {
+      ok: false,
+      error: "departureDateTime is required",
+    };
+  }
+  if (!arrivalDateTime) {
+    return {
+      ok: false,
+      error: "arrivalDateTime is required",
+    };
+  }
+
+  const depTime = new Date(departureDateTime).getTime();
+  const arrTime = new Date(arrivalDateTime).getTime();
+  if (Number.isNaN(depTime)) {
+    return {
+      ok: false,
+      error: "departureDateTime is invalid",
+    };
+  }
+  if (Number.isNaN(arrTime)) {
+    return {
+      ok: false,
+      error: "arrivalDateTime is invalid",
+    };
+  }
+  if (arrTime < depTime) {
+    return {
+      ok: false,
+      error: "arrivalDateTime must be on or after departureDateTime",
+      message: "If this is an overnight flight, set the arrival date to the day after departure.",
+    };
+  }
+
+  if (
+    merged.departureAirportCode !== undefined &&
+    merged.departureAirportCode !== null &&
+    merged.departureAirportCode !== ""
+  ) {
+    const code = String(merged.departureAirportCode).trim().toUpperCase();
+    if (!/^[A-Z]{3,4}$/.test(code)) {
+      return {
+        ok: false,
+        error: "departureAirportCode must be a 3 or 4 letter IATA code",
+      };
+    }
+    merged.departureAirportCode = code;
+  }
+
+  if (
+    merged.arrivalAirportCode !== undefined &&
+    merged.arrivalAirportCode !== null &&
+    merged.arrivalAirportCode !== ""
+  ) {
+    const code = String(merged.arrivalAirportCode).trim().toUpperCase();
+    if (!/^[A-Z]{3,4}$/.test(code)) {
+      return {
+        ok: false,
+        error: "arrivalAirportCode must be a 3 or 4 letter IATA code",
+      };
+    }
+    merged.arrivalAirportCode = code;
+  }
+
+  for (const key of ["carryOnBags", "checkedBags"]) {
+    if (merged[key] !== undefined && merged[key] !== null) {
+      if (!Number.isInteger(merged[key]) || merged[key] < 0 || merged[key] > 9) {
+        return {
+          ok: false,
+          error: `${key} must be an integer between 0 and 9`,
+        };
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    value: pickFlightFields(merged),
+  };
 }
 
 async function loadTrip(req, res, {
@@ -918,54 +1083,143 @@ export default router;
  */
 
 router.post("/:id/flights", async (req, res) => {
-  const trip = await getTripOr404(req, res);
-  if (!trip) return;
-  const flight = req.body || {};
-  // minimal validation
-  if (
-    !flight.flightNumber ||
-    !flight.departureDateTime ||
-    !flight.arrivalDateTime
-  ) {
-    return res.status(400).json({
-      error: "flightNumber, departureDateTime and arrivalDateTime are required",
+  try {
+    const trip = await getTripOr404(req, res);
+    if (!trip) return;
+
+    const validated = validateFlightInput(req.body || {});
+    if (!validated.ok) {
+      return res.status(400).json({
+        error: validated.error,
+        ...(validated.message ? {
+          message: validated.message
+        } : {}),
+      });
+    }
+
+    const value = validated.value;
+    if (
+      rejectIfOutsideTripRange(
+        res,
+        trip,
+        [value.departureDateTime, value.arrivalDateTime],
+        "Flight"
+      )
+    )
+      return;
+
+    const force = req.query.force === "true";
+    const duplicate = (trip.flights || []).find(
+      (f) =>
+        f &&
+        String(f.flightNumber || "").toLowerCase() ===
+        String(value.flightNumber).toLowerCase() &&
+        f.departureDateTime === value.departureDateTime
+    );
+    if (duplicate && !force) {
+      return res.status(409).json({
+        error: "This flight is already on the trip",
+        code: "DUPLICATE_FLIGHT",
+      });
+    }
+
+    if (!value.id) value.id = randomUUID();
+
+    const collection = getTripsCollection();
+    let updated;
+    if (collection) {
+      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+        $push: {
+          flights: value
+        },
+        $set: {
+          updatedAt: new Date().toISOString(),
+        },
+      });
+      updated = await collection.findOne(tripService.buildIdQuery(trip.id));
+    } else {
+      const flights = [...(trip.flights || []), value];
+      updated = memoryStore.trips.update(trip.id, {
+        flights,
+      });
+    }
+
+    respondWithTimeline(req, res, updated, 201);
+  } catch (error) {
+    console.error("Error adding flight:", error);
+    res.status(500).json({
+      error: "Failed to add flight"
     });
   }
+});
+
+router.patch("/:id/flights/:flightId", async (req, res) => {
+  const trip = await getTripOr404(req, res);
+  if (!trip) return;
+
+  const flightId = req.params.flightId;
+  const existingIndex = (trip.flights || []).findIndex(
+    (f) => f && f.id === flightId
+  );
+  if (existingIndex < 0) {
+    return res.status(404).json({
+      error: "Flight not found"
+    });
+  }
+
+  const patch = {
+    ...(req.body || {})
+  };
+  delete patch.force;
+  delete patch.id;
+  delete patch._id;
+
+  const validated = validateFlightInput(patch, {
+    existing: trip.flights[existingIndex],
+  });
+  if (!validated.ok) {
+    return res.status(400).json({
+      error: validated.error,
+      ...(validated.message ? {
+        message: validated.message
+      } : {}),
+    });
+  }
+
+  const value = {
+    ...validated.value,
+    id: trip.flights[existingIndex].id,
+  };
+
   if (
     rejectIfOutsideTripRange(
       res,
       trip,
-      [flight.departureDateTime, flight.arrivalDateTime],
+      [value.departureDateTime, value.arrivalDateTime],
       "Flight"
     )
   )
     return;
-  // Optional departureAirport/arrivalAirport (IATA code or name, stored as-is)
-  // let the timeline route travel to/from the correct airports.
-  if (!flight.id) flight.id = randomUUID();
-  trip.flights.push(flight);
+
+  trip.flights[existingIndex] = value;
 
   const collection = getTripsCollection();
   let updated;
   if (collection) {
-    await collection.updateOne({
-      id: trip.id
-    }, {
+    await collection.updateOne(tripService.buildIdQuery(trip.id), {
       $set: {
         flights: trip.flights,
         updatedAt: new Date().toISOString(),
       },
     });
-    updated = await collection.findOne({
-      id: trip.id
-    });
+    updated = await collection.findOne(tripService.buildIdQuery(trip.id));
   } else {
     updated = memoryStore.trips.update(trip.id, {
       flights: trip.flights,
     });
   }
 
-  respondWithTimeline(req, res, updated, 201);
+  respondWithTimeline(req, res, updated, 200);
 });
 
 router.get("/:id/flights/:flightId/price", async (req, res) => {
@@ -1403,6 +1657,9 @@ router.delete("/:id/:type/:idx", async (req, res) => {
     expenses = removeLinkedDraftExpense(expenses, "ride", trip.rides[i].id);
   }
 
+  const removedFlightId =
+    type === "flights" && trip.flights[i]?.id ? trip.flights[i].id : null;
+
   trip[type].splice(i, 1);
 
   const collection = getTripsCollection();
@@ -1423,6 +1680,20 @@ router.delete("/:id/:type/:idx", async (req, res) => {
       [type]: trip[type],
       expenses: expenses,
     });
+  }
+
+  if (removedFlightId) {
+    try {
+      const db = getDb();
+      if (db) {
+        await db.collection("flight_price_history").deleteMany({
+          tripId: trip.id,
+          flightId: removedFlightId,
+        });
+      }
+    } catch (cleanupError) {
+      console.error("Failed to clean up flight price history:", cleanupError);
+    }
   }
 
   respondWithTimeline(req, res, updated, 200);
