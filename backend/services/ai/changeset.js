@@ -304,6 +304,13 @@ export async function applyChangeSet(db, id, user) {
     trip = await tripService.findById(canonicalTripId(trip));
   }
 
+  const hasEmbeddedOps = changeSet.operations.some(
+    (o) => o.entity !== "trip" && ENTITY_FIELD[o.entity],
+  );
+  if (trip && hasEmbeddedOps && !tripService.canEdit(trip, user.id)) {
+    return { ok: false, status: 403, error: "You cannot edit this trip" };
+  }
+
   // 2. Apply each embedded-item operation in order.
   const failedOps = [];
   for (const op of changeSet.operations) {

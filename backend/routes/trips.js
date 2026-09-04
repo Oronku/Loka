@@ -40,6 +40,18 @@ import {
   removeLinkedDraftExpense,
   upsertDraftItemExpense,
 } from "../utils/draftItemExpense.js";
+import {
+  getDb
+} from "../config/database.js";
+import {
+  validateHotelInput,
+  normalizeHotel,
+  syncHotelExpense,
+  addHotel,
+  updateHotel,
+  removeHotel,
+  findHotelRef,
+} from "../services/hotels.js";
 
 const router = express.Router();
 
@@ -59,18 +71,6 @@ function isValidPaidBy(paidBy) {
   return paidBy.every(
     (payer) => payer && typeof payer.userId === "string" && payer.userId.length > 0
   );
-}
-
-function inferHotelExpenseCurrency(trip, hotel, existingExpense) {
-  const fromHotel =
-    typeof hotel?.currency === "string" && hotel.currency.trim();
-  if (fromHotel) return fromHotel.trim().toUpperCase();
-  if (existingExpense?.currency) {
-    return String(existingExpense.currency).trim().toUpperCase();
-  }
-  const sibling = (trip.expenses || []).find((e) => e?.currency);
-  if (sibling?.currency) return String(sibling.currency).trim().toUpperCase();
-  return "USD";
 }
 
 /** Normalize and attach access flags before returning a trip from expense mutations. */
@@ -204,6 +204,168 @@ function rejectIfOutsideTripRange(res, trip, dateValues, label) {
     ).slice(0, 10)}.`,
   });
   return true;
+}
+
+const FLIGHT_PERSIST_KEYS = [
+  "id",
+  "airline",
+  "flightNumber",
+  "departureAirportCode",
+  "departureCity",
+  "departureCountry",
+  "departureDateTime",
+  "departureTimeLocal",
+  "departureTimezone",
+  "arrivalAirportCode",
+  "arrivalCity",
+  "arrivalCountry",
+  "arrivalDateTime",
+  "arrivalTimeLocal",
+  "arrivalTimezone",
+  "durationMinutes",
+  "status",
+  "aircraft",
+  "aircraftType",
+  "terminal",
+  "gate",
+  "notes",
+  "carryOnBags",
+  "checkedBags",
+  "addedBy",
+  "addedByEmail",
+  "addedAt",
+  "date",
+  "time",
+  "departure",
+  "arrival",
+  "from",
+  "to",
+  "source",
+  "price",
+  "currency",
+  "flightIata",
+];
+
+function pickFlightFields(obj) {
+  const value = {};
+  for (const key of FLIGHT_PERSIST_KEYS) {
+    if (obj[key] !== undefined) {
+      value[key] = obj[key];
+    }
+  }
+  return value;
+}
+
+/**
+ * Validate flight input for create or patch (merge existing before validating).
+ * @returns {{ ok: true, value: object } | { ok: false, error: string, message?: string }}
+ */
+function validateFlightInput(flight, {
+  existing
+} = {}) {
+  const merged = existing ?
+    {
+      ...existing,
+      ...(flight || {})
+    } :
+    {
+      ...(flight || {})
+    };
+
+  const flightNumber = merged.flightNumber;
+  if (
+    !flightNumber ||
+    typeof flightNumber !== "string" ||
+    !flightNumber.trim()
+  ) {
+    return {
+      ok: false,
+      error: "flightNumber is required",
+    };
+  }
+
+  const departureDateTime = merged.departureDateTime;
+  const arrivalDateTime = merged.arrivalDateTime;
+  if (!departureDateTime) {
+    return {
+      ok: false,
+      error: "departureDateTime is required",
+    };
+  }
+  if (!arrivalDateTime) {
+    return {
+      ok: false,
+      error: "arrivalDateTime is required",
+    };
+  }
+
+  const depTime = new Date(departureDateTime).getTime();
+  const arrTime = new Date(arrivalDateTime).getTime();
+  if (Number.isNaN(depTime)) {
+    return {
+      ok: false,
+      error: "departureDateTime is invalid",
+    };
+  }
+  if (Number.isNaN(arrTime)) {
+    return {
+      ok: false,
+      error: "arrivalDateTime is invalid",
+    };
+  }
+  if (arrTime < depTime) {
+    return {
+      ok: false,
+      error: "arrivalDateTime must be on or after departureDateTime",
+      message: "If this is an overnight flight, set the arrival date to the day after departure.",
+    };
+  }
+
+  if (
+    merged.departureAirportCode !== undefined &&
+    merged.departureAirportCode !== null &&
+    merged.departureAirportCode !== ""
+  ) {
+    const code = String(merged.departureAirportCode).trim().toUpperCase();
+    if (!/^[A-Z]{3,4}$/.test(code)) {
+      return {
+        ok: false,
+        error: "departureAirportCode must be a 3 or 4 letter IATA code",
+      };
+    }
+    merged.departureAirportCode = code;
+  }
+
+  if (
+    merged.arrivalAirportCode !== undefined &&
+    merged.arrivalAirportCode !== null &&
+    merged.arrivalAirportCode !== ""
+  ) {
+    const code = String(merged.arrivalAirportCode).trim().toUpperCase();
+    if (!/^[A-Z]{3,4}$/.test(code)) {
+      return {
+        ok: false,
+        error: "arrivalAirportCode must be a 3 or 4 letter IATA code",
+      };
+    }
+    merged.arrivalAirportCode = code;
+  }
+
+  for (const key of ["carryOnBags", "checkedBags"]) {
+    if (merged[key] !== undefined && merged[key] !== null) {
+      if (!Number.isInteger(merged[key]) || merged[key] < 0 || merged[key] > 9) {
+        return {
+          ok: false,
+          error: `${key} must be an integer between 0 and 9`,
+        };
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    value: pickFlightFields(merged),
+  };
 }
 
 async function loadTrip(req, res, {
@@ -921,54 +1083,143 @@ export default router;
  */
 
 router.post("/:id/flights", async (req, res) => {
-  const trip = await getTripOr404(req, res);
-  if (!trip) return;
-  const flight = req.body || {};
-  // minimal validation
-  if (
-    !flight.flightNumber ||
-    !flight.departureDateTime ||
-    !flight.arrivalDateTime
-  ) {
-    return res.status(400).json({
-      error: "flightNumber, departureDateTime and arrivalDateTime are required",
+  try {
+    const trip = await getTripOr404(req, res);
+    if (!trip) return;
+
+    const validated = validateFlightInput(req.body || {});
+    if (!validated.ok) {
+      return res.status(400).json({
+        error: validated.error,
+        ...(validated.message ? {
+          message: validated.message
+        } : {}),
+      });
+    }
+
+    const value = validated.value;
+    if (
+      rejectIfOutsideTripRange(
+        res,
+        trip,
+        [value.departureDateTime, value.arrivalDateTime],
+        "Flight"
+      )
+    )
+      return;
+
+    const force = req.query.force === "true";
+    const duplicate = (trip.flights || []).find(
+      (f) =>
+        f &&
+        String(f.flightNumber || "").toLowerCase() ===
+        String(value.flightNumber).toLowerCase() &&
+        f.departureDateTime === value.departureDateTime
+    );
+    if (duplicate && !force) {
+      return res.status(409).json({
+        error: "This flight is already on the trip",
+        code: "DUPLICATE_FLIGHT",
+      });
+    }
+
+    if (!value.id) value.id = randomUUID();
+
+    const collection = getTripsCollection();
+    let updated;
+    if (collection) {
+      await collection.updateOne(tripService.buildIdQuery(trip.id), {
+        $push: {
+          flights: value
+        },
+        $set: {
+          updatedAt: new Date().toISOString(),
+        },
+      });
+      updated = await collection.findOne(tripService.buildIdQuery(trip.id));
+    } else {
+      const flights = [...(trip.flights || []), value];
+      updated = memoryStore.trips.update(trip.id, {
+        flights,
+      });
+    }
+
+    respondWithTimeline(req, res, updated, 201);
+  } catch (error) {
+    console.error("Error adding flight:", error);
+    res.status(500).json({
+      error: "Failed to add flight"
     });
   }
+});
+
+router.patch("/:id/flights/:flightId", async (req, res) => {
+  const trip = await getTripOr404(req, res);
+  if (!trip) return;
+
+  const flightId = req.params.flightId;
+  const existingIndex = (trip.flights || []).findIndex(
+    (f) => f && f.id === flightId
+  );
+  if (existingIndex < 0) {
+    return res.status(404).json({
+      error: "Flight not found"
+    });
+  }
+
+  const patch = {
+    ...(req.body || {})
+  };
+  delete patch.force;
+  delete patch.id;
+  delete patch._id;
+
+  const validated = validateFlightInput(patch, {
+    existing: trip.flights[existingIndex],
+  });
+  if (!validated.ok) {
+    return res.status(400).json({
+      error: validated.error,
+      ...(validated.message ? {
+        message: validated.message
+      } : {}),
+    });
+  }
+
+  const value = {
+    ...validated.value,
+    id: trip.flights[existingIndex].id,
+  };
+
   if (
     rejectIfOutsideTripRange(
       res,
       trip,
-      [flight.departureDateTime, flight.arrivalDateTime],
+      [value.departureDateTime, value.arrivalDateTime],
       "Flight"
     )
   )
     return;
-  // Optional departureAirport/arrivalAirport (IATA code or name, stored as-is)
-  // let the timeline route travel to/from the correct airports.
-  if (!flight.id) flight.id = randomUUID();
-  trip.flights.push(flight);
+
+  trip.flights[existingIndex] = value;
 
   const collection = getTripsCollection();
   let updated;
   if (collection) {
-    await collection.updateOne({
-      id: trip.id
-    }, {
+    await collection.updateOne(tripService.buildIdQuery(trip.id), {
       $set: {
         flights: trip.flights,
         updatedAt: new Date().toISOString(),
       },
     });
-    updated = await collection.findOne({
-      id: trip.id
-    });
+    updated = await collection.findOne(tripService.buildIdQuery(trip.id));
   } else {
     updated = memoryStore.trips.update(trip.id, {
       flights: trip.flights,
     });
   }
 
-  respondWithTimeline(req, res, updated, 201);
+  respondWithTimeline(req, res, updated, 200);
 });
 
 router.get("/:id/flights/:flightId/price", async (req, res) => {
@@ -1038,198 +1289,84 @@ router.post("/:id/flights/:flightId/price/refresh", async (req, res) => {
 router.post("/:id/hotels", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
-  const hotel = req.body || {};
+  const body = req.body || {};
 
-  if (!hotel.name || !hotel.checkIn || !hotel.checkOut) {
-    return res
-      .status(400)
-      .json({
-        error: "name, checkIn and checkOut are required"
-      });
-
+  const validation = validateHotelInput(body);
+  if (!validation.ok) {
+    return res.status(400).json({
+      error: validation.error,
+      ...(validation.message ? { message: validation.message } : {}),
+    });
   }
 
-  if (hotel.isIdea) {
-    trip.hotels.push({
-      ...hotel,
-      isIdea: true,
-      checkIn: hotel.checkIn || "",
-      checkOut: hotel.checkOut || "",
-    });
-  } else {
-    if (!hotel.checkIn || !hotel.checkOut) {
-      return res
-        .status(400)
-        .json({ error: "name, checkIn and checkOut are required" });
-    }
-    if (
-      rejectIfOutsideTripRange(
-        res,
-        trip,
-        [hotel.checkIn, hotel.checkOut],
-        "Hotel"
-      )
+  if (
+    !body.isIdea &&
+    rejectIfOutsideTripRange(
+      res,
+      trip,
+      [body.checkIn, body.checkOut],
+      "Hotel"
     )
-      return;
+  ) {
+    return;
   }
 
-  // Generate hotel ID for linking with expenses
-  if (!hotel.id) hotel.id = `hotel-${Date.now()}`;
-
-
-  // If hotel has a cost, create a corresponding expense
-  const expenses = trip.expenses || [];
-  const costAmount = parseFloat(hotel.cost);
-  
-  if (hotel.cost && costAmount > 0) {
-    const hotelExpense = persistResolvedSplits({
-      id: `expense-${Date.now()}`,
-      title: hotel.name,
-      description: "Hotel booking",
-      amount: costAmount,
-      currency: inferHotelExpenseCurrency(trip, hotel),
-      category: "hotel",
-      date: hotel.checkIn,
-      paidBy: req.user.id,
-      splits: [{
-        userId: req.user.id,
-        amount: costAmount,
-      }],
-      splitMethod: "equal",
-      createdBy: req.user.id,
-      createdAt: new Date().toISOString(),
-      linkedHotelId: hotel.id,
-    });
-    expenses.push(hotelExpense);
-  }
-
-  const collection = getTripsCollection();
-  let updated;
-  if (collection) {
-    await collection.updateOne(
-      tripService.buildIdQuery(trip.id), {
-        $set: {
-          hotels: trip.hotels,
-          expenses: expenses,
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-    updated = await tripService.findById(trip.id);
-  } else {
-    updated = memoryStore.trips.update(trip.id, {
-      hotels: trip.hotels,
-      expenses: expenses,
-    });
-  }
-
+  const hotel = normalizeHotel(body);
+  const expense = syncHotelExpense(trip, hotel, { userId: req.user.id });
+  const updated = await addHotel(trip, hotel, expense);
   respondWithTimeline(req, res, updated, 201);
 });
 
 router.put("/:id/hotels/:idx", async (req, res) => {
   const trip = await getTripOr404(req, res);
   if (!trip) return;
-  const {
-    idx
-  } = req.params;
-  const hotel = req.body || {};
+  const body = req.body || {};
 
-  const i = parseInt(idx, 10);
-  if (Number.isNaN(i) || i < 0 || i >= trip.hotels.length) {
-    return res.status(400).json({
-      error: "Invalid hotel index"
-    });
+  const ref = findHotelRef(trip, req.params.idx);
+  if (!ref) {
+    return res.status(404).json({ error: "Hotel not found" });
   }
 
-  if (!hotel.name || !hotel.checkIn || !hotel.checkOut) {
-    return res
-      .status(400)
-      .json({
-        error: "name, checkIn and checkOut are required"
-      });
+  const validation = validateHotelInput(body);
+  if (!validation.ok) {
+    return res.status(400).json({
+      error: validation.error,
+      ...(validation.message ? { message: validation.message } : {}),
+    });
   }
 
   if (
+    !body.isIdea &&
     rejectIfOutsideTripRange(
       res,
       trip,
-      [hotel.checkIn, hotel.checkOut],
+      [body.checkIn, body.checkOut],
       "Hotel"
     )
-  )
+  ) {
     return;
-
-  const oldHotel = trip.hotels[i];
-  const hotelId = oldHotel.id || `hotel-${Date.now()}`;
-
-  // Update hotel
-  trip.hotels[i] = {
-    ...hotel,
-    id: hotelId
-  };
-
-  // Update or create/delete corresponding expense
-  const expenses = trip.expenses || [];
-  const expenseIndex = expenses.findIndex(e => e.linkedHotelId === hotelId);
-
-  const costAmount = parseFloat(hotel.cost);
-  if (hotel.cost && costAmount > 0) {
-    // Hotel has cost - update or create expense
-    const existingHotelExpense =
-      expenseIndex >= 0 ? expenses[expenseIndex] : null;
-    const hotelExpense = persistResolvedSplits({
-      id: existingHotelExpense?.id || `expense-${Date.now()}`,
-      title: hotel.name,
-      description: "Hotel booking",
-      amount: costAmount,
-      currency: inferHotelExpenseCurrency(trip, hotel, existingHotelExpense),
-      category: ["food", "hotel", "flight", "ride", "activity", "shopping", "other"].includes(
-        existingHotelExpense?.category,
-      )
-        ? existingHotelExpense.category
-        : "hotel",
-      date: hotel.checkIn,
-      paidBy: existingHotelExpense?.paidBy || req.user.id,
-      splits: existingHotelExpense?.splits || [{
-        userId: req.user.id,
-        amount: costAmount,
-      }],
-      splitMethod: existingHotelExpense?.splitMethod || "equal",
-      createdBy: existingHotelExpense?.createdBy || req.user.id,
-      createdAt: existingHotelExpense?.createdAt || new Date().toISOString(),
-      linkedHotelId: hotelId,
-    });
-
-    if (expenseIndex >= 0) {
-      expenses[expenseIndex] = hotelExpense;
-    } else {
-      expenses.push(hotelExpense);
-    }
-  } else if (expenseIndex >= 0) {
-    // Hotel has no cost but expense exists - remove it
-    expenses.splice(expenseIndex, 1);
   }
 
-  const collection = getTripsCollection();
-  let updated;
-  if (collection) {
-    await collection.updateOne(
-      tripService.buildIdQuery(trip.id), {
-        $set: {
-          hotels: trip.hotels,
-          expenses: expenses,
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
-    updated = await tripService.findById(trip.id);
-  } else {
-    updated = memoryStore.trips.update(trip.id, {
-      hotels: trip.hotels,
-      expenses: expenses,
-    });
+  const hotel = normalizeHotel(body, { existing: ref.hotel });
+  const expense = syncHotelExpense(trip, hotel, { userId: req.user.id });
+  const updated = await updateHotel(trip, hotel.id, hotel, expense, {
+    index: ref.index,
+  });
+  respondWithTimeline(req, res, updated, 200);
+});
+
+router.delete("/:id/hotels/:idx", async (req, res) => {
+  const trip = await getTripOr404(req, res);
+  if (!trip) return;
+
+  const ref = findHotelRef(trip, req.params.idx);
+  if (!ref) {
+    return res.status(404).json({ error: "Hotel not found" });
   }
 
+  const updated = await removeHotel(trip, ref.hotel.id, {
+    index: ref.index,
+  });
   respondWithTimeline(req, res, updated, 200);
 });
 
@@ -1520,6 +1657,9 @@ router.delete("/:id/:type/:idx", async (req, res) => {
     expenses = removeLinkedDraftExpense(expenses, "ride", trip.rides[i].id);
   }
 
+  const removedFlightId =
+    type === "flights" && trip.flights[i]?.id ? trip.flights[i].id : null;
+
   trip[type].splice(i, 1);
 
   const collection = getTripsCollection();
@@ -1540,6 +1680,20 @@ router.delete("/:id/:type/:idx", async (req, res) => {
       [type]: trip[type],
       expenses: expenses,
     });
+  }
+
+  if (removedFlightId) {
+    try {
+      const db = getDb();
+      if (db) {
+        await db.collection("flight_price_history").deleteMany({
+          tripId: trip.id,
+          flightId: removedFlightId,
+        });
+      }
+    } catch (cleanupError) {
+      console.error("Failed to clean up flight price history:", cleanupError);
+    }
   }
 
   respondWithTimeline(req, res, updated, 200);

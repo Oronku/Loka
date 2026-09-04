@@ -6,15 +6,20 @@ import travelpayouts from './travelpayouts.js'
 import aviationStack from './aviationStack.js'
 import { normalizeFlightNumber, formatFlightNumber, hasAirlineFlightNumberPrefix } from './flightNumberUtils.js'
 
-/** Normalize AeroDataBox-style datetimes to strict ISO 8601. */
+/** Normalize AeroDataBox-style datetimes to strict ISO 8601, preserving offset/Z. */
 export function toIsoDateTime(value) {
   if (!value) return value
-  const m = String(value)
-    .trim()
-    .match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(:\d{2})?\s*(Z|[+-]\d{2}:?\d{2})?$/)
-  if (!m) return value
+  const trimmed = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})$/.test(trimmed)) {
+    return trimmed
+  }
+  const m = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(:\d{2})?\s*(Z|[+-]\d{2}:?\d{2})?$/,
+  )
+  if (!m) return trimmed
   const [, date, hm, sec, tz] = m
-  const offset = tz ? tz.replace(/^([+-]\d{2})(\d{2})$/, '$1:$2') : ''
+  const offset =
+    tz === 'Z' ? 'Z' : tz ? tz.replace(/^([+-]\d{2})(\d{2})$/, '$1:$2') : ''
   return `${date}T${hm}${sec || ':00'}${offset}`
 }
 
@@ -43,9 +48,17 @@ function readAeroDataBoxTimes(leg) {
   }
 }
 
+function hasTimezoneOffset(iso) {
+  return typeof iso === 'string' && /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso)
+}
+
 function pickIsoDateTime(times) {
   if (!times) return null
-  return toIsoDateTime(times.local || times.utc) || null
+  const local = times.local ? toIsoDateTime(times.local) : null
+  const utc = times.utc ? toIsoDateTime(times.utc) : null
+  if (local && hasTimezoneOffset(local)) return local
+  if (utc && hasTimezoneOffset(utc)) return utc
+  return local || utc || null
 }
 
 function localDateFromScheduled(value) {
@@ -104,7 +117,7 @@ function mapAeroDataBoxFlight(flight, flightNumber, date) {
   const departureTime = pickIsoDateTime(readAeroDataBoxTimes(flight.departure))
   const arrivalTime = pickIsoDateTime(readAeroDataBoxTimes(flight.arrival))
 
-  const durationMinutes = computeDurationMinutes(departureTime, arrivalTime) || 0
+  const durationMinutes = computeDurationMinutes(departureTime, arrivalTime)
 
   return {
     airline: flight.airline?.name || 'Unknown',
@@ -112,16 +125,16 @@ function mapAeroDataBoxFlight(flight, flightNumber, date) {
     departureAirportCode: flight.departure?.airport?.iata || '',
     departureCity: flight.departure?.airport?.municipalityName || '',
     departureCountry: flight.departure?.airport?.countryCode || '',
-    departureDateTime: departureTime || `${date}T00:00:00`,
+    departureDateTime: departureTime || null,
     departureTimeLocal: departureTime || '',
     departureTimezone: flight.departure?.airport?.timezone || '',
     arrivalAirportCode: flight.arrival?.airport?.iata || '',
     arrivalCity: flight.arrival?.airport?.municipalityName || '',
     arrivalCountry: flight.arrival?.airport?.countryCode || '',
-    arrivalDateTime: arrivalTime || `${date}T00:00:00`,
+    arrivalDateTime: arrivalTime || null,
     arrivalTimeLocal: arrivalTime || '',
     arrivalTimezone: flight.arrival?.airport?.timezone || '',
-    durationMinutes: durationMinutes > 0 ? durationMinutes : null,
+    durationMinutes,
     status: flight.status || 'scheduled',
     aircraft: flight.aircraft?.model || null,
     aircraftType: flight.aircraft?.model || null,
@@ -337,24 +350,37 @@ async function enrichRouteFlightByNumber(routeFlight, date) {
       durationMinutes: detail.durationMinutes ?? routeFlight.durationMinutes,
     }
   } catch (error) {
-    if (error.code === 'NOT_ON_DATE') return null
+    if (error.code === 'NOT_ON_DATE') return routeFlight
     return routeFlight
   }
 }
 
-async function finalizeRouteFlights(flights, date, limit = 20) {
-  const deduped = dedupeRouteFlights(flights)
-  const finalized = []
+async function mapWithConcurrency(items, concurrency, fn) {
+  const results = new Array(items.length)
+  let nextIndex = 0
 
-  for (const flight of deduped) {
-    if (finalized.length >= limit) break
-    const enriched = await enrichRouteFlightByNumber(flight, date)
-    if (enriched && isValidRouteFlight(enriched, date)) {
-      finalized.push(enriched)
+  async function worker() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++
+      results[i] = await fn(items[i], i)
     }
   }
 
-  return finalized
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker(),
+  )
+  await Promise.all(workers)
+  return results
+}
+
+async function finalizeRouteFlights(flights, date, limit = 20) {
+  const deduped = dedupeRouteFlights(flights)
+  const candidates = deduped.slice(0, limit)
+  const enriched = await mapWithConcurrency(candidates, 5, (flight) =>
+    enrichRouteFlightByNumber(flight, date),
+  )
+  return enriched.filter((flight) => flight && isValidRouteFlight(flight, date))
 }
 
 function addDaysIso(isoDate, days) {
@@ -522,10 +548,22 @@ async function searchRouteAeroDataBox(from, to, date) {
     return []
   }
 
+  const destIata = to.toUpperCase()
+  let noIataRejected = 0
+  const matched = allDepartures.filter((flight) => {
+    const arrivalIata = flight.arrival?.airport?.iata
+    if (arrivalIata === destIata) return true
+    if (!arrivalIata) noIataRejected++
+    return false
+  })
+  if (noIataRejected > 0) {
+    console.warn(
+      `[flightSearch] ${noIataRejected} departures rejected (arrival airport has no IATA code)`,
+    )
+  }
+
   return finalizeRouteFlights(
-    allDepartures
-      .filter((flight) => flight.arrival?.airport?.iata === to.toUpperCase())
-      .map((flight) => mapAeroDataBoxRouteFlight(flight, from, to, date)),
+    matched.map((flight) => mapAeroDataBoxRouteFlight(flight, from, to, date)),
     date,
   )
 }
@@ -557,14 +595,17 @@ async function searchRouteFallbacks(from, to, date, filters) {
     })
   }
 
+  let anyProviderSucceeded = false
+
   for (const attempt of attempts) {
     try {
       const flights = applyRouteFilters(await attempt(), filters)
+      anyProviderSucceeded = true
       if (flights.length > 0) {
         const finalized = await finalizeRouteFlights(flights, date)
         if (finalized.length > 0) {
           console.log(`[flightSearch] route fallback succeeded (${finalized[0].source})`)
-          return finalized
+          return { flights: finalized, anyProviderSucceeded: true }
         }
       }
     } catch (error) {
@@ -572,7 +613,7 @@ async function searchRouteFallbacks(from, to, date, filters) {
     }
   }
 
-  return []
+  return { flights: [], anyProviderSucceeded }
 }
 
 /**
@@ -580,25 +621,32 @@ async function searchRouteFallbacks(from, to, date, filters) {
  * Google Flights → Travelpayouts → Duffel.
  */
 export async function searchRoute(from, to, date, filters = {}) {
-  if (!process.env.RAPIDAPI_KEY) {
-    return searchRouteFallbacks(from, to, date, filters)
+  let aeroDataBoxSucceeded = false
+
+  if (process.env.RAPIDAPI_KEY) {
+    try {
+      const flights = applyRouteFilters(
+        await searchRouteAeroDataBox(from, to, date),
+        filters,
+      )
+      aeroDataBoxSucceeded = true
+      if (flights.length > 0) return flights
+    } catch (error) {
+      console.warn('[flightSearch] AeroDataBox route search failed:', error.message)
+    }
   }
 
-  try {
-    const flights = applyRouteFilters(
-      await searchRouteAeroDataBox(from, to, date),
-      filters,
-    )
-    if (flights.length > 0) return flights
-  } catch (error) {
-    if (!isRateLimitError(error)) throw error
-    console.warn('[flightSearch] AeroDataBox rate limited — trying fallbacks')
-  }
-
-  const fallbackFlights = await searchRouteFallbacks(from, to, date, filters)
+  const { flights: fallbackFlights, anyProviderSucceeded } =
+    await searchRouteFallbacks(from, to, date, filters)
   if (fallbackFlights.length > 0) return fallbackFlights
 
-  return []
+  if (aeroDataBoxSucceeded || anyProviderSucceeded) {
+    return []
+  }
+
+  const err = new Error('All flight search providers failed')
+  err.code = 'PROVIDERS_UNAVAILABLE'
+  throw err
 }
 
 async function searchByNumberAeroDataBox(flightNumber, date) {

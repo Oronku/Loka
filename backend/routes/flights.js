@@ -106,16 +106,21 @@ router.get('/search-route', async (req, res) => {
     const flightResults = await searchRoute(from, to, date, { directOnly, airline })
 
     if (flightResults.length === 0) {
-      return res.status(404).json({
-        error: 'No flights found',
-        message: `No flights found from ${from} to ${to} on ${date} matching your criteria`,
-      })
+      return res.status(200).json({ flights: [], reason: 'no_flights' })
     }
 
     console.log(`Found ${flightResults.length} flights from ${from} to ${to}`)
     res.json({ flights: flightResults })
   } catch (error) {
     console.error('Route search error:', error.message)
+
+    if (error.code === 'PROVIDERS_UNAVAILABLE') {
+      return res.status(503).json({
+        error: 'Flight search temporarily unavailable',
+        code: 'PROVIDERS_UNAVAILABLE',
+        flights: [],
+      })
+    }
 
     if (error.response?.status === 404) {
       return res.status(404).json({

@@ -1,4 +1,5 @@
 import { combineDateAndTime, toTime } from "../buildTimeline.js";
+import { resolveAirportLabel } from "../shared/location.js";
 import { resolveLocationString } from "../shared/locationResolver.js";
 import { getTravelTime } from "../shared/travelTimeService.js";
 import { DEFAULT_AIRPORT_ARRIVAL_BUFFER_SECONDS } from "../shared/constants.js";
@@ -104,7 +105,12 @@ export async function calculateDepartureTransfers(trip, events, opts = {}) {
       const onOrAfter = candidates.filter(
         (c) => checkoutDay == null || c.day >= checkoutDay
       );
-      const pool = onOrAfter.length > 0 ? onOrAfter : candidates;
+      // No flight departs on/after the check-out, so there is nothing to leave
+      // for. Falling back to any flight pairs the check-out with the trip's
+      // outbound departure and anchors a "be at the airport" card before the
+      // trip has even started.
+      if (onOrAfter.length === 0) return null;
+      const pool = onOrAfter;
       pool.sort((a, b) =>
         checkoutDay == null
           ? a.at - b.at
@@ -124,12 +130,20 @@ export async function calculateDepartureTransfers(trip, events, opts = {}) {
           ? null
           : new Date(departureMs - bufferSeconds * 1000).toISOString();
 
+      const raw = flight.raw || {};
       const transfer = {
         type: "departure-transfer",
-        hotelTitle: checkout.subtitle || checkout.title,
+        hotelTitle: checkout.hotelName || checkout.subtitle || checkout.title,
         hotelSourceIndex: checkout.sourceIndex,
         flightTitle: flight.title,
-        toAirport: flight.departureAirport || null,
+        // Never emit "" — frontend `??` treats empty string as present.
+        toAirport: resolveAirportLabel(
+          flight.departureAirport,
+          raw.departureAirportCode,
+          raw.departureAirport,
+          raw.from,
+          raw.departureCity
+        ),
         mode,
         flightDeparture: flight.start || null,
         bufferSeconds,

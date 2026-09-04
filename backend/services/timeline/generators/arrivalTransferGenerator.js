@@ -1,4 +1,5 @@
 import { combineDateAndTime, toTime } from "../buildTimeline.js";
+import { resolveAirportLabel } from "../shared/location.js";
 import { resolveLocationString } from "../shared/locationResolver.js";
 import { getTravelTime } from "../shared/travelTimeService.js";
 import { POST_FLIGHT_BUFFER_SECONDS } from "../shared/constants.js";
@@ -83,7 +84,12 @@ export async function calculateArrivalTransfers(trip, events, opts = {}) {
       const onOrBefore = candidates.filter(
         (c) => checkinDay == null || c.day <= checkinDay
       );
-      const pool = onOrBefore.length > 0 ? onOrBefore : candidates;
+      // No flight arrives on/before the check-in, so the traveller did not fly
+      // in to this hotel. Falling back to any flight pairs the check-in with a
+      // later arrival and places the airport ride suggestion at a time that
+      // cannot happen.
+      if (onOrBefore.length === 0) return null;
+      const pool = onOrBefore;
       pool.sort((a, b) =>
         checkinDay == null
           ? b.at - a.at
@@ -97,15 +103,22 @@ export async function calculateArrivalTransfers(trip, events, opts = {}) {
         return null;
       }
 
+      const raw = flight.raw || {};
       const transfer = {
         type: "arrival-transfer",
-        hotelTitle: checkin.subtitle || checkin.title,
+        hotelTitle: checkin.hotelName || checkin.subtitle || checkin.title,
         hotelSourceIndex: checkin.sourceIndex,
         flightTitle: flight.title,
-        fromAirport: flight.arrivalAirport || null,
+        // Never emit "" — frontend `??` treats empty string as present.
+        fromAirport: resolveAirportLabel(
+          flight.arrivalAirport,
+          raw.arrivalAirportCode,
+          raw.arrivalAirport,
+          raw.to,
+          raw.arrivalCity
+        ),
         mode,
         flightArrival: flight.end || null,
-        policyCheckInTime: checkin.checkInTime || null,
         bufferSeconds: POST_FLIGHT_BUFFER_SECONDS,
         durationSeconds: null,
         durationText: null,
