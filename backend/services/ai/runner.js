@@ -6,6 +6,7 @@ import { buildSystemPrompt } from "./prompt.js";
 import { newOperation, summarizeOperations, NEW_TRIP_REF } from "./changeset.js";
 import { enrichPlace, normalizeOpeningHours } from "./places.js";
 import { MAX_WEB_SEARCHES_PER_TURN, webSearch } from "./webSearch.js";
+import { claimsCompletedWrite, honestNoProposalText } from "./replyGuard.js";
 
 const ENTITY_FIELD = {
   flight: "flights",
@@ -543,7 +544,6 @@ export async function runAssistant({
 
   let last = await streamCompletion(openai, messages, {
     tools: TOOL_DEFINITIONS,
-    onToken,
   });
 
   let searchesUsed = 0;
@@ -570,14 +570,16 @@ export async function runAssistant({
 
     last = await streamCompletion(openai, messages, {
       tools: TOOL_DEFINITIONS,
-      onToken,
     });
   }
 
   const { writes } = splitToolCalls(last.toolCalls);
   if (writes.length === 0) {
+    let text = last.content || "How can I help with your trip?";
+    if (claimsCompletedWrite(text)) text = honestNoProposalText(text);
+    if (onToken && text) onToken(text);
     return {
-      text: last.content || "How can I help with your trip?",
+      text,
       operations: [],
       summary: "",
       rationale: "",
@@ -589,6 +591,21 @@ export async function runAssistant({
 
   const built = await buildOperations(writes, { trips, activeTripId });
 
+  if (built.operations.length === 0) {
+    let text = last.content || "How can I help with your trip?";
+    if (claimsCompletedWrite(text)) text = honestNoProposalText(text);
+    if (onToken && text) onToken(text);
+    return {
+      text,
+      operations: [],
+      summary: "",
+      rationale: "",
+      createsTrip: false,
+      tripName: built.tripName || "",
+      targetTripId: built.targetTripId || activeTripId,
+    };
+  }
+
   const toolEcho = writes
     .map((c) => `${c.name}(${JSON.stringify(c.args)})`)
     .join("; ");
@@ -598,11 +615,12 @@ export async function runAssistant({
     {
       role: "system",
       content:
-        `You proposed these changes (they are now shown to the user as a reviewable card with Apply/Reject): ${toolEcho}. ` +
+        `You proposed these changes. They are NOT on the trip yet. The app is showing a reviewable card with Apply/Reject: ${toolEcho}. ` +
         (built.rationale ? `Card note: ${built.rationale} ` : "") +
-        `Write a short, friendly natural-language reply (1-3 sentences) describing what you proposed. ` +
+        `Write a short, friendly natural-language reply (1-3 sentences) describing the proposal. ` +
+        `Speak as a proposal, not a done deal. Banned phrasing: "I set this up", "I booked", "I scheduled", "I added it", "it's done", "all set", "סידרתי", "קבעתי", "הוספתי", "הזמנתי" as if the trip already changed. ` +
         `One idea, with a because. If a time is a guess, say so. If you used a web page, name it so they can check. ` +
-        `Do NOT ask for confirmation — the card handles that. Do not list every field; the card shows details.`,
+        `Do NOT ask for confirmation — the card is the confirmation. Do not list every field; the card shows details.`,
     },
   ];
 

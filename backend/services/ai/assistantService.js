@@ -1,7 +1,8 @@
 import { ObjectId } from "mongodb";
 import { buildIdQuery, isOwner, isParticipant } from "../trip.service.js";
 import { runAssistant } from "./runner.js";
-import { createChangeSet, PROPOSALS_COLLECTION } from "./changeset.js";
+import { PROPOSALS_COLLECTION } from "./changeset.js";
+import { settleChatProposal } from "./replyGuard.js";
 import { getUserProfile, maybeUpdateProfile } from "./memory.js";
 import { messageToContextLine, messageToGroupHistoryLine, sanitizeLokaReplyText } from "./messageFormat.js";
 
@@ -300,25 +301,17 @@ export async function generateAiReply(db, {
     onToken,
   });
 
-  let changeSet = null;
-  if (result.operations.length > 0) {
-    changeSet = await createChangeSet(db, {
-      tripId: result.createsTrip ? null : result.targetTripId,
-      tripName: result.tripName,
-      createsTrip: result.createsTrip,
-      chatId,
-      userId,
-      source: "chat",
-      rationale: result.rationale,
-      operations: result.operations,
-    });
-  }
+  const { changeSet, text } = await settleChatProposal(db, {
+    result,
+    chatId,
+    userId,
+  });
 
   const saved = isGroupChat
-    ? await postGroupChatAssistantMessage(db, { text: result.text, changeSet, chatId })
+    ? await postGroupChatAssistantMessage(db, { text, changeSet, chatId })
     : await postAssistantMessage(db, {
         userId,
-        text: result.text,
+        text,
         changeSet,
         chatId,
       });
@@ -328,7 +321,7 @@ export async function generateAiReply(db, {
   maybeUpdateProfile(
     db,
     userId,
-    [...history, { role: "assistant", content: result.text }],
+    [...history, { role: "assistant", content: text }],
     userMessage,
   );
 
@@ -627,24 +620,16 @@ export async function generateEphemeralAiReply(db, { user, userMessage, history 
 
   const result = await runAssistant({ history: convo, trips, profile, activeTripId: null, onToken });
 
-  let changeSet = null;
-  if (result.operations.length > 0) {
-    changeSet = await createChangeSet(db, {
-      tripId: result.createsTrip ? null : result.targetTripId,
-      tripName: result.tripName,
-      createsTrip: result.createsTrip,
-      chatId: null,
-      userId,
-      source: "chat",
-      rationale: result.rationale,
-      operations: result.operations,
-    });
-  }
+  const { changeSet, text } = await settleChatProposal(db, {
+    result,
+    chatId: null,
+    userId,
+  });
 
   maybeUpdateProfile(
     db,
     userId,
-    [...convo, { role: "assistant", content: result.text }],
+    [...convo, { role: "assistant", content: text }],
     userMessage,
   );
 
@@ -653,7 +638,7 @@ export async function generateEphemeralAiReply(db, { user, userMessage, history 
     chatId: null,
     senderId: "loka-bot",
     senderName: "Loka",
-    text: result.text,
+    text,
     changeSet: embedChangeSet(changeSet),
     timestamp: new Date().toISOString(),
     readBy: [],
