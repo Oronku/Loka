@@ -138,6 +138,18 @@ function ensureItemId(item) {
   return payload;
 }
 
+/** Dated Loka adds belong on the plan, not in Ideas. */
+function normalizeAddAfter(entity, item) {
+  const payload = ensureItemId(item);
+  if (entity === "attraction" && payload.scheduledDate && payload.status !== "booked") {
+    payload.status = "planned";
+  }
+  if (entity === "hotel") {
+    payload.isIdea = false;
+  }
+  return payload;
+}
+
 function itemExistsOnTrip(trip, entity, itemId) {
   const field = ENTITY_FIELD[entity];
   if (!field || !itemId) return false;
@@ -148,7 +160,7 @@ function itemExistsOnTrip(trip, entity, itemId) {
 async function pushItem(db, trip, entity, item) {
   const field = ENTITY_FIELD[entity];
   if (!field) return { matched: 0, modified: 0 };
-  const payload = ensureItemId(item);
+  const payload = normalizeAddAfter(entity, item);
   const result = await db.collection("trips").updateOne(tripService.buildIdQuery(canonicalTripId(trip)), {
     $push: { [field]: payload },
     $set: { updatedAt: new Date().toISOString() },
@@ -215,7 +227,7 @@ function preflightFailedOps(trip, operations) {
     if (!op || op.entity === "trip") continue;
     if (!ENTITY_FIELD[op.entity]) continue;
     if (op.op === "add") {
-      const payload = ensureItemId(op.after);
+      const payload = normalizeAddAfter(op.entity, op.after);
       op.after = payload;
       if (payload.id) added.add(`${op.entity}:${payload.id}`);
       continue;

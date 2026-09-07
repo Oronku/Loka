@@ -71,7 +71,11 @@ function attractionItem(args, place) {
     scheduledTime,
     timeConfidence,
     status:
-      args.status === "planned" || args.status === "booked" ? args.status : "idea",
+      args.status === "booked"
+        ? "booked"
+        : args.status === "planned" || args.date
+          ? "planned"
+          : "idea",
     notes: args.notes || "",
     rating: place?.rating ?? null,
     placeId: place?.placeId || null,
@@ -257,7 +261,9 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
           }),
         );
         break;
-      case "add_hotel":
+      case "add_hotel": {
+        const checkIn = a.checkIn || targetTrip?.startDate || "";
+        const checkOut = a.checkOut || targetTrip?.endDate || checkIn;
         operations.push(
           newOperation({
             op: "add",
@@ -266,16 +272,18 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
               id: randomUUID(),
               name: a.name,
               address: a.address || "",
-              checkIn: a.checkIn,
-              checkOut: a.checkOut,
-              nights: nightsBetween(a.checkIn, a.checkOut),
+              checkIn,
+              checkOut,
+              nights: nightsBetween(checkIn, checkOut),
               arrivalTime: a.arrivalTime || "15:00",
+              isIdea: false,
               createdAt: new Date(),
             },
-            label: `${a.name} (${a.checkIn} → ${a.checkOut})`,
+            label: `${a.name} (${checkIn} → ${checkOut})`,
           }),
         );
         break;
+      }
       case "add_ride":
         operations.push(
           newOperation({
