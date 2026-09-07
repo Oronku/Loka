@@ -111,14 +111,22 @@ function attractionBounds(attraction) {
   const explicitEnd = attraction.endDateTime || null;
   const date = attraction.scheduledDate || null;
   const time = clockTime(attraction.scheduledTime);
+  const dateTimeMatchesDate =
+    explicitStart &&
+    date &&
+    String(explicitStart).slice(0, 10) === String(date).slice(0, 10);
 
+  // scheduledDate is the source of truth for the day. A leftover
+  // scheduledDateTime from an earlier save must not pin the event.
   let start = null;
-  if (explicitStart) {
-    start = explicitStart;
-  } else if (date && time) {
+  if (date && time) {
     start = combineDateAndTime(date, time);
+  } else if (date && dateTimeMatchesDate) {
+    start = explicitStart;
   } else if (date) {
     start = date;
+  } else if (explicitStart) {
+    start = explicitStart;
   }
 
   if (explicitEnd) return { start, end: explicitEnd };

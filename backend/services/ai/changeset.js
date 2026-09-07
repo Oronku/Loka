@@ -1,7 +1,11 @@
 import { randomUUID } from "crypto";
 import { ObjectId } from "mongodb";
 import * as tripService from "../trip.service.js";
-import { scheduleTimelineRebuild } from "../timeline/index.js";
+import {
+  buildPendingSnapshot,
+  markTripTimelinePending,
+  scheduleTimelineRebuild,
+} from "../timeline/index.js";
 import { skipDuplicateProposal } from "./proposalDedup.js";
 
 export const PROPOSALS_COLLECTION = "ai_proposals";
@@ -156,18 +160,32 @@ async function pushItem(db, trip, entity, item) {
  * Query includes the embedded item id so matchedCount is 0 when no element matches.
  * @returns {{ matched: number, modified: number }}
  */
+function normalizeItemChanges(changes) {
+  const next = { ...(changes || {}) };
+  if (next.date && !next.scheduledDate) next.scheduledDate = next.date;
+  if (next.time && !next.scheduledTime) next.scheduledTime = next.time;
+  delete next.date;
+  delete next.time;
+  return next;
+}
+
 async function updateItem(db, trip, entity, itemId, changes) {
   const field = ENTITY_FIELD[entity];
   if (!field || !itemId) return { matched: 0, modified: 0 };
+  const patch = normalizeItemChanges(changes);
   const setFields = {};
-  for (const [k, v] of Object.entries(changes || {})) {
+  for (const [k, v] of Object.entries(patch)) {
     if (k === "id") continue;
     setFields[`${field}.$[el].${k}`] = v;
   }
   setFields.updatedAt = new Date().toISOString();
+  const update = { $set: setFields };
+  if (patch.scheduledDate != null || patch.scheduledTime != null) {
+    update.$unset = { [`${field}.$[el].scheduledDateTime`]: "" };
+  }
   const result = await db.collection("trips").updateOne(
     { ...tripService.buildIdQuery(canonicalTripId(trip)), [`${field}.id`]: itemId },
-    { $set: setFields },
+    update,
     { arrayFilters: [{ "el.id": itemId }] },
   );
   return { matched: result.matchedCount ?? 0, modified: result.modifiedCount ?? 0 };
@@ -214,7 +232,8 @@ function preflightFailedOps(trip, operations) {
 /**
  * Apply a pending ChangeSet to the database. Creates the trip first if the
  * changeset contains a `trip` add op, then applies every embedded-item op,
- * then schedules a timeline rebuild. Idempotent-ish: refuses to re-apply.
+ * persists a pending timeline snapshot, and schedules a travel-time rebuild.
+ * Idempotent-ish: refuses to re-apply.
  *
  * @param {object} db
  * @param {string} id changeset id
@@ -336,12 +355,22 @@ export async function applyChangeSet(db, id, user) {
     { $set: { status: "applied", appliedAt: new Date(), tripId } },
   );
 
-  if (tripId) scheduleTimelineRebuild(tripId);
+  const fresh = tripId
+    ? tripService.normalizeDocument(await tripService.findById(tripId))
+    : trip;
+  let tripWithTimeline = fresh;
+  if (tripId && fresh) {
+    // Same contract as respondWithTimeline: persist a cheap pending snapshot
+    // so the plan list updates immediately, then rebuild travel times.
+    const snapshot =
+      (await markTripTimelinePending(fresh)) || buildPendingSnapshot(fresh);
+    scheduleTimelineRebuild(tripId);
+    tripWithTimeline = { ...fresh, timelineSnapshot: snapshot };
+  }
 
-  const fresh = tripId ? tripService.normalizeDocument(await tripService.findById(tripId)) : trip;
   return {
     ok: true,
-    trip: fresh,
+    trip: tripWithTimeline,
     changeSet: { ...changeSet, status: "applied", tripId },
   };
 }

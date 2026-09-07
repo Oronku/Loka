@@ -329,6 +329,10 @@ async function buildOperations(toolCalls, { trips, activeTripId }) {
         if (changes.time && !changes.scheduledTime) {
           changes.scheduledTime = changes.time;
         }
+        if (changes.date && !changes.scheduledDate) {
+          changes.scheduledDate = changes.date;
+        }
+        delete changes.date;
         if (changes.sourceUrl && !changes.bookingUrl) {
           changes.bookingUrl = changes.sourceUrl;
         }

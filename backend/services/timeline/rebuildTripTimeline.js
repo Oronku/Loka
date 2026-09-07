@@ -1,5 +1,5 @@
 import { memoryStore } from "../../config/memoryStore.js";
-import { findById, getTripsCollection } from "../trip.service.js";
+import { buildIdQuery, findById, getTripsCollection } from "../trip.service.js";
 import { buildTimeline } from "./buildTimeline.js";
 import { recalculateTimeline } from "./engine/TimelineEngine.js";
 
@@ -51,7 +51,7 @@ async function persistSnapshot(tripId, snapshot) {
   const collection = getTripsCollection();
   if (collection) {
     await collection.updateOne(
-      { id: tripId },
+      buildIdQuery(tripId),
       { $set: { timelineSnapshot: snapshot } }
     );
   } else {
